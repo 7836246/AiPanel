@@ -5,6 +5,7 @@
   "projectId": "db34d547-80b3-422c-bb9b-c5bc7fced4a8",
   "buildCmd": "pnpm --filter @aipanel/ui build",
   "cssEntry": "dist/styles.css",
+  "extraFonts": ["fonts.css"],
   "readmeHeader": ".design-sync/conventions.md",
   "componentSrcMap": {
     "CardHeader": "src/components/primitives/Card.tsx",

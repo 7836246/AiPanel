@@ -16,7 +16,7 @@ Repo-specific gotchas for future syncs. Read this first.
 ## Known render warns (triaged, expected)
 
 - `[RENDER_SKIPPED]` — render check is intentionally OFF. No chromium/playwright is installed in this environment; the user chose to review previews in their own browser (`.review.html`). **Previews are not machine-verified.** A future run with chromium should drop `--no-render-check` and run the full render check + `package-capture` grading.
-- `[FONT_MISSING]` "Inter", "JetBrains Mono" — tokens name these families but the repo ships no font files, so the bundle renders in the fallback stack (`ui-sans-serif`/`system-ui`, `ui-monospace`). This is currently **accepted** (the token fallbacks are intentional). To ship the real brand fonts later: add the `.woff2` + `@font-face` and point `cfg.extraFonts` at them. Surface this to the user on each sync until resolved.
+- `[FONT_MISSING]` — **RESOLVED.** Inter (400/500/600) + JetBrains Mono (400/500), latin-subset woff2 from fontsource, live in `packages/ui/fonts/` with `packages/ui/fonts.css` (`@font-face`). Shipped to the DS bundle via `cfg.extraFonts: ["fonts.css"]`, and to the desktop app via `@import "@aipanel/ui/fonts.css"`. If you bump the package version and the fonts change, re-download the same weights. Subset is latin-only — non-latin glyphs fall back.
 
 ## Styling model (for the conventions header)
 
@@ -26,6 +26,6 @@ Repo-specific gotchas for future syncs. Read this first.
 ## Re-sync risks (watch-list)
 
 - **Previews never machine-rendered** (no chromium). If a component's API changed, its authored `.design-sync/previews/<Name>.tsx` could silently break the card — re-verify visually, or install chromium and run the render check.
-- **FONT_MISSING unresolved** — every design renders in fallback fonts until brand fonts are wired.
+- **Brand fonts are vendored** (`packages/ui/fonts/*.woff2`, committed) — not fetched at build time, so they're stable; latin subset only.
 - **Preview content is illustrative** (server names, commands, exit codes) and tied to the current component props. If a domain component's prop shape changes (e.g. `PlanStep`, `ServerCardProps`), update the matching preview.
 - The `style?: react.CSSProperties` lowercase-namespace quirk in emitted `.d.ts` is cosmetic (only the `style` prop) and passes the parse gate; left as-is rather than hand-writing `dtsPropsFor` for all 17.
