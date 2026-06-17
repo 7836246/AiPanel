@@ -178,10 +178,11 @@ export function Dashboard({
   const total = servers.length;
 
   return (
-    <div className="flex flex-col gap-4">
-      {/* 顶部：标题 + 小统计 + 刷新全部 */}
-      <div className="flex flex-wrap items-center gap-3">
-        <h2 className="text-base font-semibold">服务器概览</h2>
+    <section className="cx-scroll min-h-0 flex-1 overflow-y-auto">
+      <div className="mx-auto flex max-w-[920px] flex-col gap-4 px-6 pb-8 pt-5">
+        {/* 顶部：标题 + 小统计 + 刷新全部 */}
+        <div className="flex flex-wrap items-center gap-3 border-b border-border pb-3">
+          <h2 className="text-base font-semibold">服务器概览</h2>
         <div className="flex items-center gap-3 text-[12px] text-fg-muted">
           <span className="inline-flex items-center gap-1.5">
             <span className="h-1.5 w-1.5 rounded-full bg-risk-low" />
@@ -226,7 +227,8 @@ export function Dashboard({
           <div className="text-[12px] text-fg-subtle">先在左侧添加一台以开始概览。</div>
         </div>
       )}
-    </div>
+      </div>
+    </section>
   );
 }
 
