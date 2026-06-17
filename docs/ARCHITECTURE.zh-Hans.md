@@ -1,59 +1,143 @@
 # AiPanel 架构设计
 
-AiPanel 是本地优先的 AI 运维客户端。核心架构围绕自然语言输入、AI 任务规划、风险审查、SSH 执行和本地审计展开。
+AiPanel 是本地优先的 AI 运维客户端。新的架构原则是：**Codex 负责 Agent 对话能力，AiPanel 负责服务器运维安全边界**。
+
+这不是 Codex CLI 套壳。AiPanel 会把 Codex app-server 作为 Agent Runtime，用来承接多轮对话、上下文管理、模型调用、流式事件和工具调用；服务器、SSH、风险审查、执行和审计由 AiPanel 自己掌控。
 
 ## 核心组件
 
 ```text
-Local Desktop / CLI
+AiPanel Desktop
+  Tauri v2 + React + TypeScript
+        |
+        | JSON-RPC / stdio
+        v
+Codex App Server
+  Agent Runtime
+        |
+        | tool calls
+        v
+AiPanel Tools
+  server.list / server.doctor / ssh.run_readonly / task.execute_confirmed
         |
         v
-User Intent
+AiPanel Core
+  Risk Reviewer / SSH Executor / Audit Log / SQLite / Keychain
         |
         v
-AI Planner
-        |
-        v
-Risk Reviewer
-        |
-        v
-SSH Executor
-        |
-        v
-Result Collector
-        |
-        v
-Audit Log + Summary
+Remote Server
 ```
 
-## Local Client
+## 技术选型
 
-本地客户端负责：
+- 桌面端：Tauri v2 + React + TypeScript；
+- Agent Runtime：Codex app-server；
+- Agent 通信：JSON-RPC / stdio；
+- 模型配置：AiPanel Provider Manager；
+- 工具系统：AiPanel MCP / JSON-RPC Tools；
+- SSH 执行：AiPanel 自己实现；
+- 风险审查：AiPanel 自己实现；
+- 审计记录：AiPanel 自己实现；
+- 本地存储：SQLite；
+- 密钥存储：系统 Keychain。
 
-- 管理服务器连接配置；
-- 管理本地密钥和凭据；
+## AiPanel Desktop
+
+桌面端负责：
+
+- 展示服务器列表；
 - 接收用户自然语言输入；
-- 展示 AI 任务计划；
-- 展示命令输出和执行结果；
-- 保存本地审计记录。
+- 展示 Codex Agent 的计划和结果；
+- 展示命令输出和执行状态；
+- 提供模型供应商配置；
+- 提供权限模式选择；
+- 提供用户确认和二次确认交互。
 
 AiPanel 的默认设计是不在服务器上安装常驻面板程序。
 
-## AI Planner
+## Codex Agent Runtime
 
-AI Planner 负责把用户输入转成结构化任务计划。
+AiPanel 不从零重造对话 Agent。底层对话、上下文、多轮推理、模型调用和流式事件优先交给 Codex app-server。
+
+Codex Agent Runtime 负责：
+
+- 多轮对话；
+- 任务理解；
+- 模型选择；
+- 上下文管理；
+- 计划生成；
+- 日志解释；
+- 结果总结。
+
+Codex 不直接持有 SSH 凭据，也不直接裸跑 SSH 命令。Codex 只能通过 AiPanel 暴露的安全工具访问服务器能力。
+
+## AiPanel Provider Manager
+
+Provider Manager 负责模型供应商配置和自动选择。
+
+第一阶段支持：
+
+- Codex app-server；
+- OpenAI-compatible API；
+- 自定义 Base URL；
+- 自定义 API Key；
+- 自定义模型名；
+- 自动选择模型。
+
+后续可扩展：
+
+- OpenRouter；
+- OneAPI；
+- Ollama；
+- LM Studio；
+- 国产兼容接口；
+- 私有模型网关。
+
+自动选择策略可以按任务类型区分：
+
+- 普通问答：低成本模型；
+- 日志分析：长上下文模型；
+- 命令计划：强推理模型；
+- 高风险任务：强推理模型 + 严格结构化输出；
+- 总结报告：普通模型。
+
+## AiPanel Tools
+
+Codex 通过工具调用使用 AiPanel 能力。工具可以通过 MCP 或 JSON-RPC 暴露。
+
+示例工具：
+
+- `server.list`：列出本地保存的服务器；
+- `server.info`：读取服务器基础信息；
+- `server.doctor.readonly`：执行只读体检；
+- `ssh.run_readonly`：执行只读 SSH 命令；
+- `task.plan`：生成结构化任务计划；
+- `task.review`：审查计划风险；
+- `task.execute_confirmed`：执行用户确认后的任务；
+- `audit.write`：写入审计记录。
+
+工具边界：
+
+- 不暴露原始 SSH 私钥；
+- 不提供无限制 shell；
+- 写操作必须经过 AiPanel 风险审查和用户确认；
+- 高风险操作必须二次确认。
+
+## Plan Engine
+
+Plan Engine 负责把 Codex 输出转成 AiPanel 可审查、可执行的结构化计划。
 
 计划应包含：
 
 - 任务目标；
 - 执行步骤；
-- 每一步的命令；
+- 每一步的命令或工具调用；
 - 是否只读；
 - 风险等级；
 - 预期输出；
 - 失败处理建议。
 
-AI Planner 不直接执行命令，所有命令必须经过 Risk Reviewer。
+Codex 生成的自然语言计划不能直接执行，必须转换成结构化 Plan 并经过 Risk Reviewer。
 
 ## Risk Reviewer
 
@@ -85,18 +169,6 @@ SSH Executor 负责通过 SSH 执行用户确认后的命令。
 - 敏感信息脱敏；
 - 不把密钥写入日志。
 
-## Result Collector
-
-Result Collector 负责把命令输出转成可理解结果。
-
-它应提供：
-
-- 原始输出；
-- 结构化状态；
-- 错误归因；
-- 下一步建议；
-- 是否需要继续执行。
-
 ## Audit Log
 
 审计记录保存在本地。
@@ -104,10 +176,10 @@ Result Collector 负责把命令输出转成可理解结果。
 建议记录：
 
 - 用户输入；
-- AI 计划；
-- 风险审查结果；
+- Codex Agent 计划；
+- AiPanel 风险审查结果；
 - 用户确认时间；
-- 执行命令；
+- 实际工具调用或执行命令；
 - 退出码；
 - 脱敏后的输出；
 - 最终总结。
@@ -123,7 +195,8 @@ Result Collector 负责把命令输出转成可理解结果。
 
 AiPanel 应默认遵循：
 
-- 凭据保存在本地；
+- 凭据保存在本地 Keychain；
+- SQLite 只保存非敏感配置和审计索引；
 - 服务器状态按需采集；
 - AI 请求尽量不包含密钥和敏感日志；
 - 用户明确授权后才执行写操作；

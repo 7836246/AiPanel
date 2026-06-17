@@ -14,4 +14,4 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - gpt-image-2 generated logo and README preview assets.
 - Open-source community files.
 - Roadmap, architecture, and security model documents.
-
+- Technical stack document with Codex app-server as Agent Runtime.

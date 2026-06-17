@@ -62,6 +62,7 @@ aipanel ask "Check why this website is unreachable. Do not delete anything."
 - [中文文档](./docs/README.zh-Hans.md)
 - [Roadmap](./docs/ROADMAP.zh-Hans.md)
 - [Architecture](./docs/ARCHITECTURE.zh-Hans.md)
+- [Tech Stack](./docs/TECH_STACK.zh-Hans.md)
 - [Security Model](./docs/SECURITY_MODEL.zh-Hans.md)
 - [Security Policy](./SECURITY.md)
 - [Contributing](./CONTRIBUTING.md)
