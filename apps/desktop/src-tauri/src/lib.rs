@@ -19,11 +19,13 @@ pub mod tools;
 
 use tauri::Manager;
 
+use credentials::{default_credential_store, CredentialStore};
 use store::Store;
 
 /// Shared application state, managed by Tauri and injected into commands.
 pub struct AppState {
     pub store: Store,
+    pub credentials: Box<dyn CredentialStore>,
 }
 
 /// Backend version, surfaced to the frontend so the UI can show what it's talking to.
@@ -40,7 +42,8 @@ pub fn run() {
             let dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&dir)?;
             let store = Store::open(&dir.join("aipanel.sqlite3"))?;
-            app.manage(AppState { store });
+            let credentials = default_credential_store();
+            app.manage(AppState { store, credentials });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -50,6 +53,8 @@ pub fn run() {
             commands::create_server,
             commands::update_server,
             commands::delete_server,
+            commands::set_server_secret,
+            commands::credential_backend,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

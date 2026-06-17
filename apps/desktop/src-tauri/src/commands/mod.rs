@@ -35,5 +35,32 @@ pub fn update_server(
 
 #[tauri::command]
 pub fn delete_server(state: State<'_, AppState>, id: String) -> AppResult<()> {
+    // Remove the secret first so deleting a server never orphans a credential.
+    if let Ok(profile) = state.store.get_server(&id) {
+        if let Some(reference) = &profile.credential_ref {
+            let _ = state.credentials.delete_secret(reference);
+        }
+    }
     state.store.delete_server(&id)
+}
+
+/// Store an SSH secret (password or private key) for a server. The secret goes
+/// straight to the credential store and is never logged, persisted to SQLite, or
+/// written to the audit log.
+#[tauri::command]
+pub fn set_server_secret(state: State<'_, AppState>, id: String, secret: String) -> AppResult<()> {
+    let profile = state.store.get_server(&id)?;
+    let reference = profile.credential_ref.ok_or_else(|| {
+        crate::core::error::AppError::Validation(
+            "this server's auth method does not use a stored secret".into(),
+        )
+    })?;
+    state.credentials.put_secret(&reference, &secret)
+}
+
+/// Which credential backend is active ("keychain" or "mock"), so the UI can warn
+/// when secrets are only in memory.
+#[tauri::command]
+pub fn credential_backend(state: State<'_, AppState>) -> String {
+    state.credentials.backend().to_string()
 }
