@@ -1,0 +1,10 @@
+Use case: logo-brand
+Asset type: README horizontal brand logo
+Primary request: Create a horizontal brand logo for "AiPanel", a Chinese open-source local AI server operations client.
+Subject: A distinctive app icon on the left, with the brand text "AiPanel" and the Chinese tagline "本地 AI 运维客户端" on the right.
+Style/medium: polished vector-like brand lockup, clean open-source project identity, high contrast, production quality.
+Composition/framing: wide horizontal logo, transparent-looking clean background, icon and wordmark aligned, readable in a GitHub README header.
+Color palette: deep graphite, emerald green, teal, cyan highlights, white and slate text.
+Text (verbatim): "AiPanel" and "本地 AI 运维客户端".
+Constraints: Chinese text must be clear and correctly written; no copyrighted logos; no resemblance to 1Panel, BaoTa, Docker, GitHub, OpenAI, Apple, or existing brand marks; no watermark.
+Avoid: distorted text, extra slogans, busy dashboard screenshots, generic robot head, shield-only icon, cloud-only icon.

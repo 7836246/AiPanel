@@ -1,0 +1,12 @@
+Use case: ui-mockup
+Asset type: README hero preview image
+Primary request: Create a polished Chinese product preview image for AiPanel, a local AI server operations desktop client.
+Scene/backdrop: clean desktop software interface on a light background.
+Subject: The UI shows a server list on the left, an AI task plan in the center, and SSH execution output on the right.
+Style/medium: high-fidelity product UI mockup, modern open-source project README hero image.
+Composition/framing: 16:9 landscape, centered interface, readable panels, no excessive decoration.
+Lighting/mood: crisp, trustworthy, technical, lightweight.
+Color palette: white, slate, emerald green, teal, cyan accents.
+Text: use short Chinese interface labels only: "服务器", "AI 任务计划", "SSH 执行", "风险：低", "确认执行", "只读检查", "端口与服务", "日志诊断".
+Constraints: Chinese text must be clear and correctly written; no real company logos, no brand names other than AiPanel, no screenshots of existing products, no tiny unreadable paragraphs.
+Avoid: cyberpunk style, dark-only UI, stock server room photos, 3D robots, cluttered dashboards.

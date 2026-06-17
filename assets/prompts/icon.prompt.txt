@@ -1,0 +1,11 @@
+Use case: logo-brand
+Asset type: app icon
+Primary request: Create a modern app icon for "AiPanel", a local AI server operations client that connects to Linux servers over SSH.
+Subject: A distinctive square app icon combining a terminal prompt, AI node graph, and lightweight server panel concept.
+Style/medium: polished vector-like 3D app icon, clean SaaS/open-source branding, high contrast, production quality.
+Composition/framing: centered square icon, readable at small sizes, generous padding, no tiny details.
+Color palette: deep graphite, emerald green, teal, cyan highlights, white foreground accents.
+Materials/textures: smooth glassy surfaces, soft depth, subtle shadow, no noisy texture.
+Text: no text inside the image.
+Constraints: no copyrighted logos, no resemblance to 1Panel, BaoTa, Docker, GitHub, OpenAI, Apple, or existing brand marks; no Chinese characters; no watermark; no mockup device frame.
+Avoid: busy dashboard screenshots, generic robot head, shield-only icon, cloud-only icon, gradients that overpower the mark.
