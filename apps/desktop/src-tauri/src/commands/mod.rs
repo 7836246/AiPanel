@@ -5,10 +5,10 @@
 
 use tauri::State;
 
-use crate::core::error::AppResult;
+use crate::core::error::{AppError, AppResult};
 use crate::core::types::{
     AuditRecord, CommandExecution, DoctorReport, Plan, RiskReview, ServerInput, ServerProfile,
-    ServerStatus,
+    ServerStatus, TaskStatus,
 };
 use crate::AppState;
 
@@ -150,4 +150,73 @@ pub fn list_audit_records(state: State<'_, AppState>, limit: Option<u32>) -> App
 #[tauri::command]
 pub fn get_audit_record(state: State<'_, AppState>, id: String) -> AppResult<AuditRecord> {
     state.store.get_audit_record(&id)
+}
+
+/// Turn a natural-language intent into a structured, reviewable plan.
+#[tauri::command]
+pub fn create_plan(
+    state: State<'_, AppState>,
+    intent: String,
+    server_id: Option<String>,
+) -> AppResult<Plan> {
+    state.plan_engine.create_plan(&intent, server_id.as_deref())
+}
+
+/// Execute a plan the user confirmed. The plan is ALWAYS re-reviewed server-side
+/// (never trust the client): blocked steps are rejected, and the required
+/// confirmation level is enforced before anything runs. Every run is audited.
+#[tauri::command]
+pub async fn execute_confirmed_plan(
+    state: State<'_, AppState>,
+    plan: Plan,
+    confirmed: bool,
+    double_confirmed: bool,
+    read_only_mode: bool,
+) -> AppResult<AuditRecord> {
+    let server_id = plan
+        .server_id
+        .clone()
+        .ok_or_else(|| AppError::Validation("plan has no target server".into()))?;
+    let (server, secret) = load_server_and_secret(&state, &server_id)?;
+
+    let review = crate::risk::review_plan(&plan, read_only_mode);
+    if review.blocked {
+        return Err(AppError::Blocked("plan contains blocked steps".into()));
+    }
+    if review.requires_confirmation && !confirmed {
+        return Err(AppError::Blocked("plan requires confirmation".into()));
+    }
+    if review.requires_double_confirmation && !double_confirmed {
+        return Err(AppError::Blocked("plan requires a second confirmation".into()));
+    }
+
+    let mut executions = Vec::new();
+    let mut failed = false;
+    for step in &plan.steps {
+        let res = if step.read_only {
+            crate::ssh::run_readonly(&server, secret.as_deref(), &step.command, crate::ssh::DEFAULT_TIMEOUT).await
+        } else {
+            crate::ssh::run_command(&server, secret.as_deref(), &step.command, crate::ssh::DEFAULT_TIMEOUT).await
+        };
+        match res {
+            Ok(exec) => {
+                let bad = exec.exit_code != 0;
+                executions.push(exec);
+                if bad {
+                    failed = true;
+                    break;
+                }
+            }
+            Err(_) => {
+                failed = true;
+                break;
+            }
+        }
+    }
+
+    let status = if failed { TaskStatus::Failed } else { TaskStatus::Completed };
+    let intent = plan.goal.clone();
+    let record = crate::audit::record_for_plan(Some(&server_id), &intent, plan, review, executions, status);
+    state.store.insert_audit_record(&record)?;
+    Ok(record)
 }

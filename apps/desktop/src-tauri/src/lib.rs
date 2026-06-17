@@ -12,6 +12,7 @@ pub mod audit;
 pub mod commands;
 pub mod credentials;
 pub mod doctor;
+pub mod plan;
 pub mod risk;
 pub mod ssh;
 pub mod store;
@@ -26,6 +27,7 @@ use store::Store;
 pub struct AppState {
     pub store: Store,
     pub credentials: Box<dyn CredentialStore>,
+    pub plan_engine: Box<dyn plan::PlanEngine>,
 }
 
 /// Backend version, surfaced to the frontend so the UI can show what it's talking to.
@@ -43,7 +45,8 @@ pub fn run() {
             std::fs::create_dir_all(&dir)?;
             let store = Store::open(&dir.join("aipanel.sqlite3"))?;
             let credentials = default_credential_store();
-            app.manage(AppState { store, credentials });
+            let plan_engine: Box<dyn plan::PlanEngine> = Box::new(plan::MockPlanEngine);
+            app.manage(AppState { store, credentials, plan_engine });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -62,6 +65,8 @@ pub fn run() {
             commands::run_server_doctor,
             commands::list_audit_records,
             commands::get_audit_record,
+            commands::create_plan,
+            commands::execute_confirmed_plan,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

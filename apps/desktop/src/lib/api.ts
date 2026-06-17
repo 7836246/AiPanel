@@ -213,6 +213,53 @@ export async function getAuditRecord(id: string): Promise<AuditRecord> {
   return invoke<AuditRecord>("get_audit_record", { id });
 }
 
+export async function createPlan(intent: string, serverId?: string): Promise<Plan> {
+  if (!isTauri())
+    return {
+      id: "mock-plan",
+      serverId,
+      goal: `诊断：${intent.slice(0, 40)}`,
+      steps: [
+        { summary: "检查 nginx 服务状态", command: "systemctl status nginx --no-pager", risk: "low", readOnly: true },
+        { summary: "检查监听端口", command: "ss -ltn", risk: "low", readOnly: true },
+        { summary: "查看 nginx 最近错误日志", command: "journalctl -u nginx -n 50 --no-pager", risk: "low", readOnly: true },
+      ],
+      createdAt: new Date().toISOString(),
+    };
+  return invoke<Plan>("create_plan", { intent, serverId });
+}
+
+export async function executeConfirmedPlan(
+  plan: Plan,
+  opts: { confirmed?: boolean; doubleConfirmed?: boolean; readOnlyMode?: boolean } = {}
+): Promise<AuditRecord> {
+  if (!isTauri())
+    return {
+      id: "mock-audit",
+      serverId: plan.serverId,
+      intent: plan.goal,
+      plan,
+      executions: plan.steps.map((s) => ({
+        command: s.command,
+        exitCode: 0,
+        stdout: "(browser mock)",
+        stderr: "",
+        durationMs: 30,
+        startedAt: new Date().toISOString(),
+      })),
+      summary: `${plan.steps.length}/${plan.steps.length} 步成功`,
+      status: "completed",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+  return invoke<AuditRecord>("execute_confirmed_plan", {
+    plan,
+    confirmed: opts.confirmed ?? true,
+    doubleConfirmed: opts.doubleConfirmed ?? false,
+    readOnlyMode: opts.readOnlyMode ?? false,
+  });
+}
+
 export async function serverDoctorPlan(id: string): Promise<Plan> {
   if (!isTauri())
     return {

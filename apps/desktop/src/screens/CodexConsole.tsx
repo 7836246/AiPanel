@@ -7,13 +7,17 @@ import {
   type TerminalLine,
 } from "@aipanel/ui";
 import {
+  createPlan,
+  executeConfirmedPlan,
   listAuditRecords,
   listServers,
   runServerDoctor,
   RISK_META,
   type AppError,
   type AuditRecord,
+  type CommandExecution,
   type DoctorReport,
+  type Plan,
   type RiskLevel,
   type ServerProfile,
   type ServerStatus,
@@ -23,18 +27,20 @@ import "./codex-console.css";
 const errMsg = (e: unknown): string =>
   e && typeof e === "object" && "message" in e ? (e as AppError).message : String(e);
 
-function reportToLines(r: DoctorReport): TerminalLine[] {
+function execsToLines(executions: CommandExecution[], extra: string[] = []): TerminalLine[] {
   const lines: TerminalLine[] = [];
-  for (const ex of r.executions) {
+  for (const ex of executions) {
     lines.push({ text: `$ ${ex.command}`, tone: "prompt" });
     for (const l of (ex.stdout || ex.stderr).split("\n").slice(0, 6)) {
       if (l.trim()) lines.push({ text: l, tone: ex.exitCode === 0 ? "default" : "danger" });
     }
   }
-  for (const w of r.warnings) lines.push({ text: `⚠ ${w}`, tone: "danger" });
+  for (const w of extra) lines.push({ text: `⚠ ${w}`, tone: "danger" });
   if (lines.length === 0) lines.push({ text: "(无输出)", tone: "muted" });
   return lines;
 }
+
+const reportToLines = (r: DoctorReport): TerminalLine[] => execsToLines(r.executions, r.warnings);
 
 const statusDot = (s: ServerStatus): string =>
   s === "online" ? "bg-risk-low" : s === "offline" ? "bg-risk-blocked" : "bg-fg-subtle";
@@ -396,8 +402,62 @@ export default function CodexConsole() {
   const [doctorLines, setDoctorLines] = useState<TerminalLine[] | null>(null);
   const [view, setView] = useState<"console" | "audit">("console");
   const [audits, setAudits] = useState<AuditRecord[]>([]);
-  const steps = buildSteps(running);
+  const [genPlan, setGenPlan] = useState<Plan | null>(null);
+  const [intentValue, setIntentValue] = useState("");
+  const [planState, setPlanState] = useState<"idle" | "running" | "done" | "failed">("idle");
+  const mockSteps = buildSteps(running);
   const selected = servers.find((s) => s.id === selectedServerId);
+
+  const planStepState = (): StepState =>
+    planState === "running" ? "running" : planState === "done" ? "done" : "await";
+
+  const displaySteps: Step[] = genPlan
+    ? genPlan.steps.map((s, i) => ({
+        n: i + 1,
+        title: s.summary,
+        dur: "",
+        cmd: s.command,
+        risk: s.risk,
+        state: planStepState(),
+        showResult: false,
+        checks: [],
+      }))
+    : mockSteps;
+
+  async function submitIntent() {
+    const intent = intentValue.trim();
+    if (!intent) return;
+    try {
+      const plan = await createPlan(intent, selectedServerId ?? undefined);
+      setGenPlan(plan);
+      setPlanState("idle");
+      setDoctorLines(null);
+      setIntentValue("");
+      setView("console");
+    } catch (e) {
+      setDoctorLines([{ text: `生成计划失败: ${errMsg(e)}`, tone: "danger" }]);
+      setTerminalOpen(true);
+    }
+  }
+
+  async function runPlan() {
+    if (!genPlan) return;
+    setRunning(true);
+    setPlanState("running");
+    setTerminalOpen(true);
+    setDoctorLines([{ text: "执行中…", tone: "muted" }]);
+    try {
+      const rec = await executeConfirmedPlan(genPlan);
+      setDoctorLines(execsToLines(rec.executions));
+      setPlanState(rec.status === "completed" ? "done" : "failed");
+      setServers(await listServers());
+    } catch (e) {
+      setDoctorLines([{ text: `执行失败: ${errMsg(e)}`, tone: "danger" }]);
+      setPlanState("failed");
+    } finally {
+      setRunning(false);
+    }
+  }
 
   function openAudit() {
     setView("audit");
@@ -520,19 +580,11 @@ export default function CodexConsole() {
                 <ListIcon size={16} />
               </div>
               <div className="min-w-0 flex-1">
-                <div className="text-sm font-semibold">执行计划 · 3 个步骤</div>
-                <div className="mt-1 flex flex-wrap items-center gap-3 text-[12.5px] text-fg-muted">
-                  <span className="inline-flex items-center gap-1.5">
-                    <span className="h-[7px] w-[7px] rounded-full bg-risk-low" />1 完成
-                  </span>
-                  <span className="inline-flex items-center gap-1.5">
-                    <span className="h-[7px] w-[7px] rounded-full bg-risk-medium" />
-                    {running ? "1 进行中" : "1 待确认"}
-                  </span>
-                  <span className="inline-flex items-center gap-1.5">
-                    <span className="h-[7px] w-[7px] rounded-full bg-fg-subtle" />1 待执行
-                  </span>
-                  <span className="text-fg-subtle">· 只读诊断,不会修改服务器</span>
+                <div className="text-sm font-semibold">
+                  执行计划 · {displaySteps.length} 个步骤
+                </div>
+                <div className="mt-1 text-[12.5px] text-fg-muted">
+                  {genPlan ? genPlan.goal : "只读诊断,不会修改服务器"}
                 </div>
               </div>
               <div className="flex flex-none items-center gap-1.5">
@@ -545,7 +597,7 @@ export default function CodexConsole() {
                   <Button
                     variant="primary"
                     size="sm"
-                    onClick={runDoctor}
+                    onClick={genPlan ? runPlan : runDoctor}
                     disabled={!selectedServerId}
                   >
                     <Play /> 确认执行
@@ -556,7 +608,7 @@ export default function CodexConsole() {
 
             {/* steps */}
             <div className="mt-3.5 flex flex-col gap-2.5">
-              {steps.map((s) => (
+              {displaySteps.map((s) => (
                 <StepRow key={s.n} step={s} />
               ))}
             </div>
@@ -567,7 +619,15 @@ export default function CodexConsole() {
         <div className="flex-none bg-bg px-6 pb-3.5 pt-1.5">
           <div className="mx-auto max-w-[680px] rounded-lg border border-border-strong bg-surface-1 px-3 pb-2.5 pl-4 pt-3 shadow-sm">
             <input
-              placeholder="向当前运行追加指令,例如「顺便看看 80 端口的响应头」"
+              value={intentValue}
+              onChange={(e) => setIntentValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  submitIntent();
+                }
+              }}
+              placeholder="描述运维任务生成计划,例如「检查这个网站为什么打不开,不要删除任何文件」"
               className="w-full border-none bg-transparent pb-2.5 pt-0.5 text-sm outline-none placeholder:text-fg-subtle"
             />
             <div className="flex items-center justify-between gap-2.5">
@@ -585,7 +645,9 @@ export default function CodexConsole() {
                 </button>
                 <button
                   aria-label="发送"
-                  className="flex h-[30px] w-[30px] flex-none items-center justify-center rounded-full bg-brand text-brand-fg"
+                  onClick={submitIntent}
+                  className="flex h-[30px] w-[30px] flex-none items-center justify-center rounded-full bg-brand text-brand-fg transition-opacity hover:opacity-90 disabled:opacity-40"
+                  disabled={!intentValue.trim()}
                 >
                   <SendArrow />
                 </button>

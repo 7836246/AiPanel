@@ -37,6 +37,33 @@ pub fn record_for_doctor(
     }
 }
 
+/// Build an audit record for a confirmed plan execution.
+pub fn record_for_plan(
+    server_id: Option<&str>,
+    intent: &str,
+    plan: Plan,
+    review: RiskReview,
+    executions: Vec<crate::core::types::CommandExecution>,
+    status: TaskStatus,
+) -> AuditRecord {
+    let ok = executions.iter().filter(|e| e.exit_code == 0).count();
+    let summary = format!("{}/{} 步成功", ok, executions.len());
+    let ts = now();
+    AuditRecord {
+        id: new_id(),
+        server_id: server_id.map(|s| s.to_string()),
+        intent: intent.to_string(),
+        plan: Some(plan),
+        risk_review: Some(review),
+        confirmed_at: Some(ts),
+        executions,
+        summary: Some(summary),
+        status,
+        created_at: ts,
+        updated_at: ts,
+    }
+}
+
 fn doctor_summary(report: &DoctorReport) -> String {
     let mut parts = Vec::new();
     if let Some(os) = &report.os {
