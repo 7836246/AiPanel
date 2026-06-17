@@ -335,6 +335,15 @@ export default function SettingsPanel() {
                 className="h-9 rounded-md border border-border bg-surface-2 px-2 text-sm text-fg outline-none focus-visible:border-brand"
               >
                 <option value="">（未选择）</option>
+                {/* 默认指向一个已禁用/不存在的供应商时，额外渲染一个禁用 option
+                    保留该陈旧选择的可见性，避免下拉静默空白。 */}
+                {policy.defaultProviderId &&
+                !enabledProviders.some((p) => p.id === policy.defaultProviderId) ? (
+                  <option value={policy.defaultProviderId} disabled>
+                    {(providers.find((p) => p.id === policy.defaultProviderId)?.name ??
+                      policy.defaultProviderId) + "（已停用/不存在）"}
+                  </option>
+                ) : null}
                 {enabledProviders.map((p) => (
                   <option key={p.id} value={p.id}>
                     {p.name}

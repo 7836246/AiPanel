@@ -30,20 +30,48 @@ fn contains(haystack: &str, needle: &str) -> bool {
 /// 跳过 `sudo` 前缀与 `VAR=value` 形式的环境变量赋值前缀，返回剩下的首个 token。
 /// 例如 `sudo FOO=1 mkfs.ext4 /dev/sdb` -> `mkfs.ext4`；`echo hi` -> `echo`。
 fn segment_head(segment: &str) -> &str {
-    for tok in segment.split_whitespace() {
-        // 跳过 sudo（提权前缀，真正执行的命令在其后）。
-        if tok == "sudo" {
-            continue;
-        }
-        // 跳过 `env`（`env VAR=v cmd` 同样会改写环境后执行 cmd）。
-        if tok == "env" {
-            continue;
-        }
-        // 跳过 `VAR=value` 形式的环境变量赋值前缀（不含 `/`，避免误吞路径；等号在首字符之后）。
+    // 透传型「启动器」：它们本身无害，真正执行的命令在其参数之后。必须把它们看穿，
+    // 否则 `xargs rm -rf /`、`nohup rm -rf / &`、`timeout 5 rm -rf /etc`、`nice rm -rf /var`
+    // 等会把危险命令藏在参数里，使段首匹配漏判（安全闸门被绕过）。
+    const LAUNCHERS: &[&str] = &[
+        "sudo", "env", "nohup", "setsid", "time", "timeout", "nice", "ionice", "stdbuf", "watch",
+        "xargs", "doas",
+    ];
+    let toks: Vec<&str> = segment.split_whitespace().collect();
+    let mut i = 0;
+    while i < toks.len() {
+        let tok = toks[i];
+        // `VAR=value` 环境变量赋值前缀（不含 `/`，避免误吞路径）。
         if let Some(eq) = tok.find('=') {
             if eq > 0 && !tok[..eq].contains('/') {
+                i += 1;
                 continue;
             }
+        }
+        if LAUNCHERS.contains(&tok) {
+            i += 1;
+            // 跳过该启动器自带的选项；对需要取值的常见短选项再多吞一个非选项值（保守）。
+            while i < toks.len() && toks[i].starts_with('-') {
+                let needs_val = matches!(
+                    toks[i],
+                    "-i" | "-I" | "-n" | "-P" | "-s" | "-c" | "-o" | "-e" | "-O" | "-d" | "-N" | "-u" | "-w" | "-L"
+                );
+                i += 1;
+                if needs_val && i < toks.len() && !toks[i].starts_with('-') {
+                    i += 1;
+                }
+            }
+            // timeout 的时长 / nice 的级别等「首个纯数字（或带时长后缀）」参数也要跳过。
+            if i < toks.len() {
+                let t = toks[i];
+                let numeric = !t.is_empty()
+                    && t.chars().next().map_or(false, |ch| ch.is_ascii_digit())
+                    && t.chars().all(|ch| ch.is_ascii_digit() || matches!(ch, '.' | 's' | 'm' | 'h' | 'd'));
+                if numeric {
+                    i += 1;
+                }
+            }
+            continue;
         }
         return tok;
     }
@@ -65,7 +93,13 @@ fn command_heads(cmd: &str) -> Vec<String> {
         .replace("||", "\n")
         .replace('|', "\n")
         .replace('&', "\n")
-        .replace(';', "\n");
+        .replace(';', "\n")
+        // 命令替换 / 子shell：把 $(...)、``、(...) 的边界也切开，使内部命令成为独立段，
+        // 其段首命令同样会被检查（如 `echo $(reboot)`、`(rm -rf /)`）。
+        .replace("$(", "\n")
+        .replace('`', "\n")
+        .replace('(', "\n")
+        .replace(')', "\n");
     unified
         .split('\n')
         .map(|seg| segment_head(seg).to_string())
@@ -126,11 +160,16 @@ const SYSTEM_ROOTS: &[&str] = &[
 
 /// 判断命令中是否有裸参数指向某个系统根路径。
 fn rm_targets_system_root(cmd: &str) -> bool {
-    // 任一裸 token 等于某个系统根路径（可带 /*）。
-    cmd.split_whitespace().any(|t| {
-        let t = t.trim_end_matches("/*");
-        let t = if t.is_empty() { "/" } else { t };
-        SYSTEM_ROOTS.contains(&t) || SYSTEM_ROOTS.contains(&format!("{t}/*").as_str())
+    // 任一裸 token 等于某个系统根路径（可带 /*）。同时按括号切分，避免子shell
+    // `(rm -rf /)` 把 `/` 粘成 `/)` 而漏判。
+    cmd.split(|ch: char| ch.is_whitespace() || ch == '(' || ch == ')').any(|t| {
+        if t.is_empty() {
+            return false; // 跳过括号切分产生的空段，避免误当作 "/"
+        }
+        // 把 `/*` 归约为 `/`（仅当该 token 本身非空，如裸 `/*`）。
+        let base = t.trim_end_matches("/*");
+        let base = if base.is_empty() { "/" } else { base };
+        SYSTEM_ROOTS.contains(&base) || SYSTEM_ROOTS.contains(&format!("{base}/*").as_str())
     })
 }
 
@@ -211,10 +250,18 @@ pub fn classify_command(command: &str) -> Classification {
         if invokes_any(&c, &halt_cmds) && !is_cancel {
             return mk(RiskLevel::Blocked, "shutdown", "system shutdown/reboot/halt");
         }
-        // `init 0`（关机）/ `init 6`（重启）：必须是 init 在执行且参数为 0/6。
+        // `init 0`（关机）/ `init 6`（重启）：限定在「段首命令为 init 且该段含 0/6」的段，
+        // 避免 `echo init && echo 6` 这类跨段巧合被误判。
         if invokes(&c, "init") {
-            let toks: Vec<&str> = c.split_whitespace().collect();
-            if toks.iter().any(|t| *t == "0" || *t == "6") {
+            let init_halt = c
+                .replace("&&", "\n")
+                .replace("||", "\n")
+                .replace('|', "\n")
+                .replace('&', "\n")
+                .replace(';', "\n")
+                .split('\n')
+                .any(|seg| segment_head(seg) == "init" && seg.split_whitespace().any(|t| t == "0" || t == "6"));
+            if init_halt {
                 return mk(RiskLevel::Blocked, "shutdown", "init 0/6 halts or reboots the system");
             }
         }
@@ -254,6 +301,16 @@ pub fn classify_command(command: &str) -> Classification {
     // 递归/强制删除：必须是 rm 在执行（非系统根，否则上面已 Blocked）。
     if invokes(&c, "rm") && (contains(&c, "-r") || contains(&c, "-f")) {
         return mk(RiskLevel::High, "delete", "recursive/forced file deletion");
+    }
+    // `git clean -f[d][x]` 会不可恢复地删除未跟踪/被忽略文件（构建产物、本地配置等）。
+    // git 不带 force 标志会拒绝执行，故仅在带 -f/--force 时判 High。
+    if invokes(&c, "git")
+        && c.split_whitespace().any(|t| t == "clean")
+        && c.split_whitespace().any(|t| {
+            t == "--force" || (t.starts_with('-') && !t.starts_with("--") && t.contains('f'))
+        })
+    {
+        return mk(RiskLevel::High, "delete", "git clean force-deletes untracked files");
     }
     // 递归改权限/属主：必须是 chmod/chown 在执行，且递归标志（-R/-r/--recursive）作为独立 token 出现。
     if invokes_any(&c, &["chmod", "chown"])
@@ -354,7 +411,9 @@ pub fn classify_command(command: &str) -> Classification {
     if invokes(&c, "mkswap") {
         return mk(RiskLevel::High, "disk", "mkswap writes a swap signature");
     }
-    if writes_to(&c, &["/etc", "/usr", "/boot"]) {
+    // 写系统配置路径，以及内核/运行时可调参数子树（/proc/sys、/sys）——后者等同于在线
+    // 改写内核参数，按 High 处理。
+    if writes_to(&c, &["/etc", "/usr", "/boot", "/proc/sys", "/sys"]) {
         return mk(RiskLevel::High, "system-write", "writes to a system configuration path");
     }
 
@@ -461,6 +520,43 @@ pub fn classify_command(command: &str) -> Classification {
     }
     if contains(&c, "sudo ") || c.starts_with("sudo") {
         return mk(RiskLevel::Medium, "privileged", "runs with elevated privileges");
+    }
+
+    // ---- 透传/包装上下文兜底 -------------------------------------
+    // 有些上下文会把危险命令作为「参数」携带，而非段首命令，从而绕过上面所有
+    // 基于段首的判定：`find ... -exec rm -rf {} +`、`sh -c "rm -rf /"`、
+    // `ssh host rm -rf /`。这里在落到 Low 之前做一次保守的全 token 扫描：只要这类
+    // 上下文里出现了危险命令名，就上调风险（命中系统根/块设备则 Blocked，否则 High）。
+    let exec_context = (invokes(&c, "find")
+        && c.split_whitespace().any(|t| t == "-exec" || t == "-execdir"))
+        || invokes(&c, "ssh")
+        || (invokes_any(&c, &["sh", "bash", "dash", "zsh", "ksh", "ash", "busybox"])
+            && c.split_whitespace().any(|t| t == "-c"));
+    if exec_context {
+        const DANGER: &[&str] = &[
+            "rm", "chmod", "chown", "mkfs", "dd", "shred", "wipefs", "truncate", "userdel",
+            "usermod", "passwd", "shutdown", "reboot", "halt", "poweroff", "crontab", "iptables",
+            "ip6tables", "chattr", "mkswap", "fdisk", "parted",
+        ];
+        // 去掉引号/反引号，使被引号包裹的命令（`sh -c "rm -rf /"`）也能被 token 扫描命中。
+        let dequoted = c.replace(|ch: char| matches!(ch, '"' | '\'' | '`'), " ");
+        let has_danger = dequoted.split_whitespace().any(|t| {
+            DANGER.contains(&t) || DANGER.iter().any(|d| t.starts_with(&format!("{d}.")))
+        });
+        if has_danger {
+            if rm_targets_system_root(&dequoted) || contains(&dequoted, "of=/dev/") {
+                return mk(
+                    RiskLevel::Blocked,
+                    "wrapped-destructive",
+                    "destructive command wrapped via exec/ssh targeting a system path/device",
+                );
+            }
+            return mk(
+                RiskLevel::High,
+                "wrapped-destructive",
+                "potentially destructive command wrapped via find -exec / ssh / sh -c",
+            );
+        }
     }
 
     // ---- Low：只读 / 检查类 ----------------------------------
@@ -764,6 +860,41 @@ mod tests {
         assert_eq!(lvl("shutdown -h now"), RiskLevel::Blocked);
         // 用 vim/emacs 编辑 sshd_config 仍判为 High。
         assert_eq!(lvl("vim /etc/ssh/sshd_config"), RiskLevel::High);
+    }
+
+    #[test]
+    fn wrapper_and_subshell_bypasses_are_caught() {
+        // 启动器把危险命令藏在参数里：段首透传后应识别出真实命令。
+        assert_eq!(lvl("nohup rm -rf / &"), RiskLevel::Blocked);
+        assert_eq!(lvl("timeout 5 rm -rf /etc"), RiskLevel::Blocked);
+        assert_eq!(lvl("nice rm -rf /var"), RiskLevel::Blocked);
+        assert_eq!(lvl("nice -n 19 rm -rf /var"), RiskLevel::Blocked);
+        assert_eq!(lvl("ionice -c3 rm -rf /home"), RiskLevel::Blocked);
+        assert_eq!(lvl("xargs rm -rf /"), RiskLevel::Blocked);
+        assert_eq!(lvl("cat /tmp/x | xargs -I{} rm -rf /"), RiskLevel::Blocked);
+        assert_eq!(lvl("sudo -u root rm -rf /etc"), RiskLevel::Blocked);
+        // 非系统根的包装删除仍至少 High（递归删除）。
+        assert_eq!(lvl("nohup rm -rf /opt/app/data"), RiskLevel::High);
+        // find -exec / sh -c / ssh 把危险命令当参数：兜底扫描应上调。
+        assert_eq!(lvl("find / -name '*.tmp' -exec rm -rf {} +"), RiskLevel::Blocked);
+        assert_eq!(lvl("find . -name x -exec chmod -R 777 {} +"), RiskLevel::High);
+        assert_eq!(lvl("sh -c \"rm -rf /\""), RiskLevel::Blocked);
+        assert_eq!(lvl("bash -c 'shutdown -h now'"), RiskLevel::High);
+        assert_eq!(lvl("ssh root@db rm -rf /"), RiskLevel::Blocked);
+        // 命令替换 / 子shell 里的危险命令。
+        assert_eq!(lvl("echo $(reboot)"), RiskLevel::Blocked);
+        assert_eq!(lvl("(rm -rf /)"), RiskLevel::Blocked);
+        // git clean -f 强制删除未跟踪文件。
+        assert_eq!(lvl("git clean -xdf"), RiskLevel::High);
+        assert_eq!(lvl("git clean -fd"), RiskLevel::High);
+        // /proc/sys、/sys 写入按内核参数处理为 High。
+        assert_eq!(lvl("echo 1 > /proc/sys/net/ipv4/ip_forward"), RiskLevel::High);
+        // 反例：把这些词当作只读参数 / 文本，仍保持 Low。
+        assert_eq!(lvl("git clean -n"), RiskLevel::Low); // dry-run 不删除
+        assert_eq!(lvl("echo 'nohup rm -rf /'"), RiskLevel::Low);
+        assert_eq!(lvl("grep -r reboot /var/log"), RiskLevel::Low);
+        assert_eq!(lvl("ssh root@host uptime"), RiskLevel::Low);
+        assert_eq!(lvl("timeout 5 systemctl status nginx"), RiskLevel::Low);
     }
 
     /// 测试辅助：用命令列表构造一份计划。

@@ -50,23 +50,17 @@ pub async fn run_server_doctor_stream(
         None => None,
     };
 
-    // doctor 的探针全部是只读且短小的命令。run_doctor_streamed 内部按探针逐个调用
-    // 只读流式执行器，无法在不改动 doctor 模块的前提下把 cancel 透传进去；这里改为
-    // 在整段 doctor future 与 cancel 之间二选一。一旦取消，doctor future 被 drop，
-    // 其正在执行的子进程随之被 kill_on_drop 杀掉（配合 -tt 也会终止远端）。
-    // 把回调绑定到局部变量，避免临时闭包在 select 借用期间被释放（E0716）。
+    // 取消被下推到 doctor 的探针循环：把已登记的 cancel 直接传给 run_doctor_streamed。
+    // 取消时它会停止后续探针，并用「已执行的部分」构建报告正常返回——因此无论正常
+    // 完成还是中途取消，都用返回的（可能是部分的）报告统一收尾：设置服务器状态、
+    // 构建并写入审计记录（已执行探针照常入审计）。
     let on_doctor_event = |ev| {
         // 发送失败（例如通道被丢弃）不能中断本次执行。
         let _ = on_event.send(ev);
     };
-    let report = tokio::select! {
-        res = crate::doctor::run_doctor_streamed(&server, secret.as_deref(), &on_doctor_event) => res?,
-        _ = cancel.notified() => {
-            // 取消时尚无完整报告可返回；以一个良性的 ssh 错误结束。已发出的流式
-            // 事件保持原样，调用方据此知道运行已停止。
-            return Err(AppError::Ssh("doctor run cancelled by user".into()));
-        }
-    };
+    let report =
+        crate::doctor::run_doctor_streamed(&server, secret.as_deref(), &on_doctor_event, &cancel)
+            .await?;
 
     let succeeded = report.executions.iter().any(|e| e.exit_code == 0);
     let status = if succeeded { ServerStatus::Online } else { ServerStatus::Offline };

@@ -20,6 +20,7 @@ import {
   cancelRun,
   checkSshConnection,
   createPlan,
+  getModelSelectionPolicy,
   reviewPlan,
   runAgentTurn,
   runConfirmedPlanStream,
@@ -33,6 +34,7 @@ import {
   RISK_META,
   type AppError,
   type CommandExecution,
+  type ModelSelectionPolicy,
   type ProviderConfig,
   type RiskLevel,
   type RiskReview,
@@ -236,6 +238,21 @@ export default function CodexConsole() {
   const [readOnlyMode, setReadOnlyMode] = useState(
     () => localStorage.getItem(READONLY_DEFAULT_KEY) !== "false"
   );
+  // 在控制台里切换只读优先：写入状态的同时回写 localStorage，与设置页保持一致。
+  // 支持传入布尔值或更新函数（与 setState 用法对齐）。
+  const setReadOnly = (next: boolean | ((v: boolean) => boolean)) => {
+    setReadOnlyMode((prev) => {
+      const v = typeof next === "function" ? next(prev) : next;
+      try {
+        localStorage.setItem(READONLY_DEFAULT_KEY, v ? "true" : "false");
+      } catch {
+        // 隐私模式等场景下 localStorage 可能不可写，静默忽略。
+      }
+      return v;
+    });
+  };
+  // 模型选择策略：用于决定输入区展示的供应商与后端实际选用保持一致。
+  const [policy, setPolicy] = useState<ModelSelectionPolicy>({ auto: true });
   // 命令面板（⌘K）开关。
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [intentValue, setIntentValue] = useState("");
@@ -254,8 +271,13 @@ export default function CodexConsole() {
   const { toasts, push, dismiss } = useToasts();
 
   const selected = servers.find((s) => s.id === selectedServerId) ?? null;
-  // 当前可用于 AI 诊断的供应商（启用且非 custom）。
-  const aiProvider = providers.find((p) => p.enabled && p.kind !== "custom") ?? null;
+  // 当前可用于 AI 诊断的供应商：优先采用模型选择策略里的默认供应商
+  // （命中且已启用时），与后端实际选用保持一致；否则回退到首个「启用且非 custom」。
+  const policyDefault = policy.defaultProviderId
+    ? providers.find((p) => p.id === policy.defaultProviderId && p.enabled)
+    : undefined;
+  const aiProvider =
+    policyDefault ?? providers.find((p) => p.enabled && p.kind !== "custom") ?? null;
   const filteredServers = servers.filter(
     (s) => !serverQuery || s.name.toLowerCase().includes(serverQuery.toLowerCase()) || s.host.includes(serverQuery)
   );
@@ -263,6 +285,7 @@ export default function CodexConsole() {
   useEffect(() => {
     listServers().then((s) => { setServers(s); setSelectedServerId((cur) => cur ?? s[0]?.id ?? null); }).catch(() => {});
     listProviders().then(setProviders).catch(() => {});
+    getModelSelectionPolicy().then(setPolicy).catch(() => {});
   }, []);
 
   // 选中服务器变化时：加载其运行历史，并重置当前打开的运行。
@@ -276,9 +299,12 @@ export default function CodexConsole() {
     listTasks(selectedServerId).then(setTasks).catch(() => setTasks([]));
   }, [selectedServerId]);
 
-  // 从设置返回时重新拉取供应商，刷新顶部横幅与模型选择器。
+  // 从设置返回时重新拉取供应商与模型选择策略，刷新顶部横幅与模型选择器。
   useEffect(() => {
-    if (view !== "settings") listProviders().then(setProviders).catch(() => {});
+    if (view !== "settings") {
+      listProviders().then(setProviders).catch(() => {});
+      getModelSelectionPolicy().then(setPolicy).catch(() => {});
+    }
   }, [view]);
 
   // 选中服务器后静默做一次 SSH 连通性检查，更新在线状态点。
@@ -523,7 +549,7 @@ export default function CodexConsole() {
     { id: "settings", label: "打开设置", group: "导航", run: () => setView("settings") },
     { id: "theme", label: "切换浅色/深色", group: "界面", run: () => toggleTheme() },
     { id: "terminal", label: "切换终端", group: "界面", run: () => setTerminalOpen((o) => !o) },
-    { id: "readonly", label: readOnlyMode ? "关闭只读优先" : "开启只读优先", group: "界面", run: () => setReadOnlyMode((v) => !v) },
+    { id: "readonly", label: readOnlyMode ? "关闭只读优先" : "开启只读优先", group: "界面", run: () => setReadOnly((v) => !v) },
     ...servers.map((s) => ({ id: `srv-${s.id}`, label: `切换到 ${s.name}`, hint: s.host, group: "服务器", run: () => setSelectedServerId(s.id) })),
   ];
 
@@ -711,7 +737,7 @@ export default function CodexConsole() {
                 <div className="flex items-center justify-between gap-2.5">
                   <div className="flex items-center gap-2">
                     <button
-                      onClick={() => setReadOnlyMode((v) => !v)}
+                      onClick={() => setReadOnly((v) => !v)}
                       title="开启后,生成的写操作步骤会被阻止"
                       className={`inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[13px] transition-colors hover:bg-hover ${readOnlyMode ? "text-risk-medium" : "text-fg-subtle"}`}
                     >

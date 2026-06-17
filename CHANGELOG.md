@@ -8,6 +8,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- Command palette (⌘K / Ctrl-K): searchable, keyboard-reachable quick actions
+  (new ask, doctor, audit, settings, theme/terminal toggle, read-only toggle,
+  switch server).
+- Doctor v2: structured metrics parsed from probes (memory used/total, root-disk %,
+  load, service/container/port counts) surfaced as facts + a server overview with
+  threshold-colored progress bars; extra read-only probes.
+- Real run cancellation: stopping a doctor / plan execution now actually terminates
+  the remote command (cancel registry + cancel_run + forced tty so the remote gets
+  SIGHUP), not just stops listening.
+- Audit search + JSON export, and task (run history) search.
+- Hardened Risk Reviewer: command-name detection is now segment-aware (matches the
+  head command of each pipeline segment), so keywords inside grep/echo/pipes/quotes
+  no longer cause false positives; SQL-destructive statements only flag in an actual
+  SQL execution context; real dangerous commands and read-only carve-outs unchanged.
+- Settings: default-provider selector (model policy), credential-backend indicator
+  (keychain/mock warning), clearer connection-test feedback, default read-only toggle.
 - Toast notifications (success/error) surfaced across the app instead of only the
   terminal; SSH connectivity auto-checked when a server is selected (live status).
 - Broader Risk Reviewer coverage (shutdown/reboot, disk wipe, PID 1 kill,

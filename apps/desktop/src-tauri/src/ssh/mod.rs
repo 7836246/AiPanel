@@ -89,6 +89,15 @@ fn redact_live_line(line: &str, in_key_block: &mut bool) -> Option<String> {
     Some(sanitize(line))
 }
 
+/// 判断是否为 ssh 客户端自身在连接结束时打印的噪声行（如
+/// `Connection to host closed.`）。因为流式执行用 `-tt` 强制分配 tty，
+/// ssh 会把这类提示写到合并的 tty 流里——它不属于远端命令的真实输出，
+/// 既不应回调给 `on_line`，也不应计入累积缓冲区/审计。
+fn is_ssh_noise_line(line: &str) -> bool {
+    let trimmed = line.trim();
+    trimmed.starts_with("Connection to ") && trimmed.contains("closed")
+}
+
 /// 临时私钥文件，在 drop 时删除。
 struct KeyFile {
     path: std::path::PathBuf,
@@ -370,6 +379,13 @@ pub async fn run_command_streamed_cancellable(
 /// 流式执行的共享核心：并发按行读取子进程的 stdout/stderr，通过 `on_line` 转发
 /// 每一条脱敏后的行并累积完整输出，同时受超时与 `cancel` 约束。
 ///
+/// 注意（合并 tty 流的限制）：流式执行用 `-tt` 强制分配伪终端（取消传播 / 远端
+/// SIGHUP 需要它），而 tty 会把远端的 stderr 合并进 stdout。因此**流式输出本质上
+/// 是一条合并的 tty 流，逐行的 stderr 标记对流式步骤并不保证精确**——例如远端
+/// 写到 stderr 的内容会从 stdout 这一路读出、被标记为非 stderr。这是 `-tt` 的固有
+/// 取舍；保留 `-tt` 是为了取消时能可靠地把远端命令一并终止。`run_command`
+/// 的阻塞式路径不加 `-tt`，stdout/stderr 仍是分开的、标记可靠。
+///
 /// 三种结束方式：
 /// - 正常结束：两个流都读完，等待子进程退出并返回 `Ok(Some(execution))`；
 /// - 超时：返回 `Ssh` 错误（沿用既有文案）；
@@ -397,7 +413,10 @@ async fn stream_child(
 
     // 并发读取两个流，通过回调转发每一条脱敏后的行，同时累积完整输出。
     // 内层 future 返回 `Ok(None)` 表示被取消，`Ok(Some(..))` 表示正常读完。
-    let mut in_key_block = false;
+    // 私钥块屏蔽状态按路独立维护：stdout 与 stderr 各用一个布尔，避免两路
+    // 交错时一路的 BEGIN/END 影响另一路的判定而漏过某一行私钥内容。
+    let mut out_key_block = false;
+    let mut err_key_block = false;
     let stream = async {
         let mut out_reader = BufReader::new(stdout).lines();
         let mut err_reader = BufReader::new(stderr).lines();
@@ -415,10 +434,13 @@ async fn stream_child(
                     Ok(Some(line)) => {
                         // 因为加了 `-tt`（tty），行尾可能多出 \r；按行展示前去掉它。
                         let line = line.strip_suffix('\r').unwrap_or(&line);
+                        // 过滤 ssh 客户端自身在连接结束时打印的噪声行（合并 tty 流的产物）：
+                        // 既不回调、也不计入缓冲区。
+                        if is_ssh_noise_line(line) { continue; }
                         // 实时回调拿到的是按行（行内范围）脱敏的结果，用于临时展示；
                         // 存储的缓冲区保留原始行，以便最后做一次整缓冲区脱敏
                         //（私钥等跨行的敏感信息只有跨行才能匹配——见 core::sanitize）。
-                        if let Some(t) = redact_live_line(line, &mut in_key_block) { on_line(&t, false); }
+                        if let Some(t) = redact_live_line(line, &mut out_key_block) { on_line(&t, false); }
                         out_buf.push_str(line);
                         out_buf.push('\n');
                     }
@@ -428,7 +450,8 @@ async fn stream_child(
                 line = err_reader.next_line(), if !err_done => match line {
                     Ok(Some(line)) => {
                         let line = line.strip_suffix('\r').unwrap_or(&line);
-                        if let Some(t) = redact_live_line(line, &mut in_key_block) { on_line(&t, true); }
+                        if is_ssh_noise_line(line) { continue; }
+                        if let Some(t) = redact_live_line(line, &mut err_key_block) { on_line(&t, true); }
                         err_buf.push_str(line);
                         err_buf.push('\n');
                     }

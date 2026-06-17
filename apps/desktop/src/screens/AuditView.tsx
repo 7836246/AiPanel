@@ -38,17 +38,27 @@ export default function AuditView({
 }): JSX.Element {
   const [records, setRecords] = useState<AuditRecord[]>([]);
   const [query, setQuery] = useState("");
+  // 防抖后的查询：实际触发后端请求的值，避免每次按键都打请求。
+  const [debouncedQuery, setDebouncedQuery] = useState("");
   const [filter, setFilter] = useState<StatusFilter>("all");
   const [loading, setLoading] = useState(true);
   const [openId, setOpenId] = useState<string | null>(null);
 
+  // 搜索防抖：输入停止 ~250ms 后才把 query 同步给 debouncedQuery。
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedQuery(query), 250);
+    return () => clearTimeout(timer);
+  }, [query]);
+
   // 加载审计记录：有查询走 searchAuditRecords,空查询走 listAuditRecords。
-  // query 变化即触发(输入即搜索);首次挂载时 query 为空,等价于列表加载。
+  // debouncedQuery 变化即触发(输入即搜索,经防抖);首次挂载时为空,等价于列表加载。
+  // 当按状态筛选(非全部)时,过滤在客户端进行,故请求更大的 limit 以免计数不全。
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    const q = query.trim();
-    const load = q ? searchAuditRecords(q) : listAuditRecords();
+    const q = debouncedQuery.trim();
+    const limit = filter !== "all" ? 500 : 100;
+    const load = q ? searchAuditRecords(q, limit) : listAuditRecords(limit);
     load
       .then((rs) => {
         if (!cancelled) setRecords(rs);
@@ -67,10 +77,14 @@ export default function AuditView({
     };
     // onNotify 由父级稳定提供,无需纳入依赖。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query]);
+  }, [debouncedQuery, filter]);
 
-  // 导出全部审计为 JSON 字符串并写入剪贴板。
+  // 导出全部审计为 JSON 字符串并写入剪贴板（剪贴板不可用时给出明确提示）。
   async function handleExport() {
+    if (!navigator.clipboard?.writeText) {
+      onNotify?.("danger", "当前环境不支持剪贴板,请改用其他方式导出");
+      return;
+    }
     try {
       const json = await exportAuditJson();
       await navigator.clipboard.writeText(json);

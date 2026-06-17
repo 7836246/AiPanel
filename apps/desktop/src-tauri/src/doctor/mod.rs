@@ -32,7 +32,6 @@ const PROBES: &[(&str, &str, &str)] = &[
         "systemctl list-units --type=service --state=running --no-pager --no-legend",
     ),
     ("docker", "Docker", "docker ps --format '{{.Names}} {{.Status}}'"),
-    ("who", "在线用户", "who"),
 ];
 
 /// 体检将要执行的只读计划，用于在运行前展示给用户。
@@ -154,10 +153,14 @@ fn record_probe(
 /// 以便流式调用方能够展示。
 fn check_disk_pressure(out: &BTreeMap<&str, String>, warnings: &mut Vec<String>) -> Option<String> {
     if let Some(disk) = out.get("disk") {
-        if disk_under_pressure(disk) {
-            let w = "磁盘使用率偏高（≥90%）".to_string();
-            warnings.push(w.clone());
-            return Some(w);
+        // 只依据已解析的「根分区」使用率判定，避免扫描所有分区（含 tmpfs / 只读层）
+        // 造成的误报。阈值沿用既有 ≥90%。
+        if let Some(pct) = parse_root_disk_percent(disk) {
+            if disk_under_pressure(pct) {
+                let w = "磁盘使用率偏高（≥90%）".to_string();
+                warnings.push(w.clone());
+                return Some(w);
+            }
         }
     }
     None
@@ -185,11 +188,17 @@ pub async fn run_doctor(
 
 /// [`run_doctor`] 的流式版本：运行时通过 `on_event` 发出按步骤 / 按行的事件，
 /// 最后返回与之相同结构的 [`DoctorReport`]。只读安全性不变——每个探针仍然
-/// 走 [`crate::ssh::run_readonly_streamed`]。
+/// 走 [`crate::ssh::run_readonly_streamed_cancellable`]。
+///
+/// 取消是协作式的，并被**下推到探针循环**：一旦某次探针在执行期间被取消（返回
+/// `Ok(None)`），就停止后续探针，并用「已执行的部分」构建报告**正常返回**——
+/// 取消不是错误，已执行的探针照常被调用方落库 / 审计。阻塞版 [`run_doctor`] 不
+/// 关心取消，使用一个永不唤醒的 Notify 即可保持兼容。
 pub async fn run_doctor_streamed(
     server: &ServerProfile,
     secret: Option<&str>,
     on_event: &(dyn Fn(DoctorStreamEvent) + Sync + Send),
+    cancel: &tokio::sync::Notify,
 ) -> AppResult<DoctorReport> {
     let mut executions: Vec<CommandExecution> = Vec::new();
     let mut warnings: Vec<String> = Vec::new();
@@ -204,7 +213,7 @@ pub async fn run_doctor_streamed(
             status: "running".to_string(),
         });
 
-        let result = crate::ssh::run_readonly_streamed(
+        let result = crate::ssh::run_readonly_streamed_cancellable(
             server,
             secret,
             cmd,
@@ -212,13 +221,33 @@ pub async fn run_doctor_streamed(
             &|line: &str, stderr: bool| {
                 on_event(DoctorStreamEvent::Line { text: line.to_string(), stderr });
             },
+            cancel,
         )
         .await;
 
+        // 本次探针被取消（Ok(None)）：停止后续探针，用已执行的部分正常返回。
+        if matches!(&result, Ok(None)) {
+            on_event(DoctorStreamEvent::Step {
+                index,
+                total,
+                summary: summary.to_string(),
+                status: "failed".to_string(),
+            });
+            break;
+        }
+
+        // 把 Ok(Some(exec)) 归一为 record_probe 期望的 AppResult<CommandExecution>。
+        // 此处 result 必为 Ok(Some(_)) 或 Err(_)（Ok(None) 已在上方处理）。
+        let probe_result = match result {
+            Ok(Some(exec)) => Ok(exec),
+            Ok(None) => unreachable!("Ok(None) handled above"),
+            Err(e) => Err(e),
+        };
+
         // 本次探针是否成功？沿用 run_doctor 的记账逻辑：docker 非零退出是良性的
         //（docker 经常缺失），因此不将其标记为失败。
-        let ok = matches!(&result, Ok(exec) if exec.exit_code == 0) || *key == "docker";
-        let emitted = record_probe(*key, result, &mut out, &mut warnings, &mut executions);
+        let ok = matches!(&probe_result, Ok(exec) if exec.exit_code == 0) || *key == "docker";
+        let emitted = record_probe(*key, probe_result, &mut out, &mut warnings, &mut executions);
         for message in emitted {
             on_event(DoctorStreamEvent::Warning { message });
         }
@@ -350,14 +379,10 @@ fn count_containers(docker_output: &str) -> usize {
     docker_output.lines().filter(|l| !l.trim().is_empty()).count()
 }
 
-/// 判断 df 输出中是否存在任一分区使用率达到或超过 90%。
-fn disk_under_pressure(df_output: &str) -> bool {
-    df_output.split_whitespace().any(|tok| {
-        tok.strip_suffix('%')
-            .and_then(|n| n.parse::<u32>().ok())
-            .map(|pct| pct >= 90)
-            .unwrap_or(false)
-    })
+/// 判断根分区使用率是否达到或超过 90%。入参为已解析出的根分区使用率百分比，
+/// 避免扫描所有分区（含 tmpfs / 只读层）导致误报。
+fn disk_under_pressure(root_percent: u64) -> bool {
+    root_percent >= 90
 }
 
 #[cfg(test)]
@@ -470,8 +495,36 @@ mod tests {
 
     #[test]
     fn detects_disk_pressure() {
-        assert!(disk_under_pressure("/dev/sda1  50G  47G  3G  94% /"));
-        assert!(!disk_under_pressure("/dev/sda1  50G  20G  30G  40% /"));
+        // 现在只依据根分区使用率判定。
+        assert!(disk_under_pressure(94));
+        assert!(disk_under_pressure(90));
+        assert!(!disk_under_pressure(40));
+    }
+
+    #[test]
+    fn disk_pressure_uses_root_only() {
+        // tmpfs / 只读层即使满载也不应触发告警；仅看根分区。
+        let mut out: BTreeMap<&str, String> = BTreeMap::new();
+        out.insert(
+            "disk",
+            "Filesystem Size Used Avail Use% Mounted on\n\
+             /dev/sda1 50G 20G 30G 40% /\n\
+             overlay 1G 1G 0 100% /var/lib/docker/overlay2\n\
+             tmpfs 1G 1G 0 99% /run".to_string(),
+        );
+        let mut warnings = Vec::new();
+        assert_eq!(check_disk_pressure(&out, &mut warnings), None);
+        assert!(warnings.is_empty());
+
+        // 根分区告急时应触发。
+        let mut out2: BTreeMap<&str, String> = BTreeMap::new();
+        out2.insert(
+            "disk",
+            "Filesystem Size Used Avail Use% Mounted on\n/dev/sda1 50G 47G 3G 94% /".to_string(),
+        );
+        let mut warnings2 = Vec::new();
+        assert!(check_disk_pressure(&out2, &mut warnings2).is_some());
+        assert_eq!(warnings2.len(), 1);
     }
 
     #[test]
