@@ -152,7 +152,9 @@ pub async fn run_turn(
                         ("该工具需用户确认,自动诊断回路不执行写操作。".to_string(), false)
                     } else {
                         match crate::tools::dispatch(state, &name, args).await {
-                            Ok(v) => (truncate(&v.to_string(), 4000), true),
+                            // Sanitize tool results before they go back to the model
+                            // (redacts IPs/secrets in server.list / server.info / output).
+                            Ok(v) => (truncate(&crate::core::sanitize::sanitize(&v.to_string()), 4000), true),
                             Err(e) => (format!("工具错误: {}", e), false),
                         }
                     };

@@ -4,7 +4,7 @@
 
 ## 当前状态
 
-AiPanel 已是一个**可运行的 Desktop MVP**：桌面端能启动，左侧服务器列表来自持久化数据，可添加服务器（凭据进 Keychain）、做 SSH 连通性测试、执行只读体检、把自然语言转成结构化计划并经风险审查后执行、查看本地审计、配置模型供应商。下面记录的架构和技术选型都是**已经定下的决策**——直接遵循，不要重新推导。
+AiPanel 已是一个**可运行的 Desktop MVP，并已接通真实 AI**：桌面端能启动，左侧服务器列表来自持久化数据，可添加/编辑/删除服务器（凭据进 Keychain）、做 SSH 连通性测试、执行**流式**只读体检（终端逐行刷新）、用自然语言生成结构化计划（配置 OpenAI 兼容供应商后是**真实 LLM 规划**，否则回退到本地 Mock）、执行前经风险审查弹**确认/二次确认**对话框、让 AI 用只读工具**自动诊断**并总结、查看本地审计、配置模型供应商。Codex app-server 走 JSON-RPC/stdio 桥接（transport + initialize 已就绪，turn/工具回路开发中）。下面记录的架构和技术选型都是**已经定下的决策**——直接遵循，不要重新推导。
 
 Rust 后端按模块实现在 `apps/desktop/src-tauri/src/`（不拆独立 crate），边界见下方「后端结构」。所有涉及 SSH / 凭据 / 远程命令的改动必须符合 `docs/SECURITY_MODEL.zh-Hans.md`。
 
@@ -25,13 +25,13 @@ pnpm workspace 单仓库（`pnpm-workspace.yaml`）：
 - `store/` —— SQLite（rusqlite bundled）：服务器、供应商、模型策略、审计的持久化 + 迁移（`user_version`）。**只存非敏感数据 + 凭据引用**。
 - `credentials/` —— `CredentialStore` trait + 系统 Keychain 实现 + 内存 mock 兜底。**密钥只在这里**，绝不进 SQLite/日志/审计。
 - `risk/` —— Risk Reviewer：把命令分级 Low/Medium/High/Blocked；只读模式把非检查命令升级为 Blocked。
-- `ssh/` —— 用系统 OpenSSH 执行；超时、脱敏、临时密钥文件 0600；`run_readonly` 受风险审查门控（仅 Low）。
-- `doctor/` —— 只读体检（10 条探测命令）生成 `DoctorReport`。
+- `ssh/` —— 用系统 OpenSSH 执行；超时、脱敏、临时密钥文件 0600；`run_readonly` 受风险审查门控（仅 Low）。`build_invocation`/`spawn_child` 为阻塞版 `run_command`/`run_readonly` 与流式版 `run_readonly_streamed` 共用。
+- `doctor/` —— 只读体检（10 条探测命令）生成 `DoctorReport`；`run_doctor_streamed` + `DoctorStreamEvent` 提供流式版本（与阻塞版共用 `build_report`/`record_probe`）。
 - `audit/` —— 从体检/计划执行构建审计记录（持久化在 store）。
-- `plan/` —— `PlanEngine` trait + `MockPlanEngine`（关键词路由，仅产出只读诊断）。
-- `agent/` —— `AgentProvider` trait + Mock / OpenAI 兼容 / Codex app-server 桥接（入口 + 健康检查；JSON-RPC 工具回路待接通）。
+- `plan/` —— `PlanEngine` trait + `MockPlanEngine`（关键词路由，仅产出只读诊断，离线兜底）。
+- `agent/` —— `AgentProvider` trait + 实现：`OpenAiCompatibleProvider`（真实 `/chat/completions`：chat/plan/summarize，plan 用结构化 JSON 输出且**风险由 AiPanel 重新判定、不信模型**）、`MockAgentProvider`、`CodexAppServerProvider`。`agent/codex.rs` 是 Codex app-server 的 JSON-RPC/stdio transport（spawn + initialize，只暴露 AiPanel Tools）。`agent/agent_loop.rs` 是**只读自动诊断回路**（OpenAI function-calling，只给只读工具，写操作永不暴露给自动回路）。
 - `tools/` —— AiPanel Tools：Agent 唯一能触达服务器的入口（`server.list`/`server.info`/`server.doctor.readonly`/`ssh.run_readonly`/`task.plan`/`task.review`/`task.execute_confirmed`/`audit.write`），每个工具带权限与审计策略；写操作需用户确认，Agent 不能自行授权。
-- `commands/` —— Tauri 命令薄层（前端 ↔ Core）：`list/create/update/delete/get_server`、`set_server_secret`、`check_ssh_connection`、`run_readonly_command`、`server_doctor_plan`、`run_server_doctor`、`review_plan`、`create_plan`、`execute_confirmed_plan`、`list/get_audit_records`、`list/save/delete/test_provider`、`get/save_model_selection_policy`、`list_tools`、`credential_backend`、`app_version`。
+- `commands/` —— Tauri 命令薄层（前端 ↔ Core）：`list/create/update/delete/get_server`、`set_server_secret`、`check_ssh_connection`、`run_readonly_command`、`server_doctor_plan`、`run_server_doctor`、`commands/stream.rs` 里的 `run_server_doctor_stream`（经 `tauri::ipc::Channel` 流式）、`review_plan`、`create_plan`（优先用配置的供应商，失败回退 Mock）、`execute_confirmed_plan`（服务端再审查并强制确认级别）、`run_agent_turn`（只读自动诊断）、`list/get_audit_records`、`list/save/delete/test_provider`、`get/save_model_selection_policy`、`list_tools`、`credential_backend`、`app_version`。
 
 前端通过 `apps/desktop/src/lib/api.ts` 调用这些命令（不在 Tauri 环境时回退到 mock，便于 `pnpm dev` 在浏览器里渲染）。主界面 `src/screens/CodexConsole.tsx`（+ `SettingsPanel`/`AddServerDialog`）。
 

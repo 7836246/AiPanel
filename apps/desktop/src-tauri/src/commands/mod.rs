@@ -175,7 +175,7 @@ fn pick_provider(state: &AppState) -> AppResult<Option<ProviderConfig>> {
 /// configured AI provider when available; falls back to the offline mock engine
 /// if none is configured or the provider call fails (so the app always works).
 #[tauri::command]
-pub fn create_plan(
+pub async fn create_plan(
     state: State<'_, AppState>,
     intent: String,
     server_id: Option<String>,
@@ -186,7 +186,16 @@ pub fn create_plan(
                 .credential_ref
                 .as_ref()
                 .and_then(|r| state.credentials.get_secret(r).ok().flatten());
-            match crate::agent::plan_with_provider(&provider, key, &intent, server_id.as_deref()) {
+            // The provider call is blocking HTTP — run it off the UI thread.
+            let p = provider.clone();
+            let intent2 = intent.clone();
+            let sid = server_id.clone();
+            let res = tokio::task::spawn_blocking(move || {
+                crate::agent::plan_with_provider(&p, key, &intent2, sid.as_deref())
+            })
+            .await
+            .map_err(|e| AppError::Provider(format!("plan task failed: {e}")))?;
+            match res {
                 Ok(plan) => return Ok(plan),
                 Err(e) => eprintln!("[plan] provider '{}' failed ({}); falling back to mock", provider.name, e.code()),
             }
@@ -279,18 +288,26 @@ pub async fn run_agent_turn(
 /// The API key comes from the call (a key being typed in the form) or, failing
 /// that, from the credential store for an already-saved provider.
 #[tauri::command]
-pub fn test_provider(
+pub async fn test_provider(
     state: State<'_, AppState>,
     config: ProviderConfig,
     api_key: Option<String>,
-) -> ProviderTestResult {
+) -> AppResult<ProviderTestResult> {
     let key = api_key.or_else(|| {
         config
             .credential_ref
             .as_ref()
             .and_then(|r| state.credentials.get_secret(r).ok().flatten())
     });
-    crate::agent::test_provider(&config, key)
+    // The probe is blocking HTTP — keep it off the UI thread. A join failure is
+    // surfaced as a non-ok result (not a rejected promise) so the UI shows it inline.
+    Ok(tokio::task::spawn_blocking(move || crate::agent::test_provider(&config, key))
+        .await
+        .unwrap_or_else(|e| ProviderTestResult {
+            ok: false,
+            message: format!("测试任务失败: {e}"),
+            detail: None,
+        }))
 }
 
 /// The AiPanel Tools surface the agent may call (names, permissions, audit policy).

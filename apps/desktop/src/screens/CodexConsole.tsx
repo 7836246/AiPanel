@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   Button,
   IconButton,
@@ -414,6 +414,8 @@ export default function CodexConsole() {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [confirmReview, setConfirmReview] = useState<RiskReview | null>(null);
   const [editing, setEditing] = useState<ServerProfile | null>(null);
+  // Identifies the in-flight run; Stop bumps it so stale stream events are ignored.
+  const runIdRef = useRef(0);
   const mockSteps = buildSteps(running);
   const selected = servers.find((s) => s.id === selectedServerId);
 
@@ -476,7 +478,13 @@ export default function CodexConsole() {
   async function runPlan() {
     if (!genPlan) return;
     try {
-      setConfirmReview(await reviewPlan(genPlan));
+      const review = await reviewPlan(genPlan);
+      // Purely read-only (low) plans need no confirmation — execute directly.
+      if (review.overall === "low" && !review.requiresConfirmation && !review.blocked) {
+        await confirmExecute(true, false);
+        return;
+      }
+      setConfirmReview(review);
       setConfirmOpen(true);
     } catch (e) {
       setDoctorLines([{ text: `风险审查失败: ${errMsg(e)}`, tone: "danger" }]);
@@ -512,12 +520,14 @@ export default function CodexConsole() {
 
   async function runDoctor() {
     if (!selectedServerId) return;
+    const myId = ++runIdRef.current;
     setRunning(true);
     setTerminalOpen(true);
     const lines: TerminalLine[] = [{ text: `正在体检 ${selected?.name ?? ""} …`, tone: "muted" }];
     setDoctorLines([...lines]);
     try {
       await runServerDoctorStream(selectedServerId, (ev) => {
+        if (runIdRef.current !== myId) return; // stopped / superseded — ignore stale events
         if (ev.type === "step") {
           const label = ev.status === "running" ? "进行中" : ev.status === "done" ? "完成" : "失败";
           lines.push({
@@ -531,12 +541,14 @@ export default function CodexConsole() {
         }
         setDoctorLines([...lines]);
       });
+      if (runIdRef.current !== myId) return;
       setServers(await listServers());
     } catch (e) {
+      if (runIdRef.current !== myId) return;
       lines.push({ text: `体检失败: ${errMsg(e)}`, tone: "danger" });
       setDoctorLines([...lines]);
     } finally {
-      setRunning(false);
+      if (runIdRef.current === myId) setRunning(false);
     }
   }
 
@@ -673,7 +685,14 @@ export default function CodexConsole() {
               <div className="flex flex-none items-center gap-1.5">
                 <Button variant="ghost" size="sm">查看输出</Button>
                 {running ? (
-                  <Button variant="secondary" size="sm" onClick={() => setRunning(false)}>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => {
+                      runIdRef.current += 1; // invalidate the in-flight run
+                      setRunning(false);
+                    }}
+                  >
                     停止
                   </Button>
                 ) : (

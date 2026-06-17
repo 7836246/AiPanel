@@ -8,6 +8,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- Real AI: OpenAI-compatible provider over HTTP (chat / structured-output planning
+  / summarize), with AiPanel re-classifying every step's risk; create_plan uses the
+  configured provider and falls back to the offline mock engine.
+- Autonomous read-only diagnosis: the agent investigates via read-only AiPanel
+  Tools (OpenAI function calling) and summarizes; write tools are never exposed to
+  the autonomous loop.
+- Codex app-server bridge: JSON-RPC/stdio transport (spawn + initialize advertising
+  only the AiPanel Tools surface).
+- Live streaming server doctor over a Tauri channel — the console terminal fills in
+  per-step / per-line as it runs.
+- Execute-confirmation dialog (medium = confirm, high = double-confirm checkbox,
+  blocked = refused); server-side re-review enforces it.
+- Server management UI: edit, update secret, and delete servers.
 - Desktop MVP backend (Tauri v2, Rust): Core types + error layer, SQLite store
   with migrations, Keychain-backed credential store (mock fallback), Risk
   Reviewer, SSH executor over system OpenSSH with output sanitization, read-only

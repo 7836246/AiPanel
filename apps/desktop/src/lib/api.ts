@@ -290,8 +290,14 @@ export async function runServerDoctorStream(
   onEvent: (ev: DoctorStreamEvent) => void
 ): Promise<DoctorReport> {
   if (!isTauri()) {
-    onEvent({ type: "line", text: "(浏览器 mock — 无流式)", stderr: false });
-    return runServerDoctor(id);
+    const report = await runServerDoctor(id);
+    for (const ex of report.executions) {
+      onEvent({ type: "line", text: `$ ${ex.command}`, stderr: false });
+      if (ex.stdout) for (const l of ex.stdout.split("\n")) onEvent({ type: "line", text: l, stderr: false });
+      if (ex.stderr) onEvent({ type: "line", text: ex.stderr, stderr: true });
+    }
+    for (const w of report.warnings) onEvent({ type: "warning", message: w });
+    return report;
   }
   const ch = new Channel<DoctorStreamEvent>();
   ch.onmessage = onEvent;

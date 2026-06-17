@@ -147,7 +147,10 @@ export default function EditServerDialog({
           <label className={labelCls}>认证方式</label>
           <select
             value={authKind}
-            onChange={(e) => setAuthKind(e.target.value as AuthKind)}
+            onChange={(e) => {
+              setAuthKind(e.target.value as AuthKind);
+              setSecret(""); // don't keep a typed credential after switching auth method
+            }}
             className="h-9 rounded-md border border-border bg-surface-2 px-2 text-sm text-fg outline-none focus-visible:border-brand"
           >
             <option value="password">密码</option>

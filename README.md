@@ -54,10 +54,14 @@ approve and execute it, and review the local audit trail.
 - [x] Desktop client (Tauri v2 + React) with the AiPanel UI design system
 - [x] SSH connection manager (add servers, connectivity test)
 - [x] Read-only server doctor
-- [x] AI task planning (structured plans; mock engine, Codex bridge entry point)
-- [x] Command risk review (Low / Medium / High / Blocked) + local audit log
-- [x] Model provider manager
-- [ ] Codex app-server tool-call loop
+- [x] AI task planning — real LLM via an OpenAI-compatible provider (structured
+      output), with an offline mock fallback
+- [x] Autonomous read-only diagnosis (the agent investigates via read-only tools)
+- [x] Command risk review (Low / Medium / High / Blocked) with confirm / second
+      confirm before write actions + local audit log
+- [x] Live streaming command/doctor output
+- [x] Model provider manager; Codex app-server JSON-RPC bridge (transport + handshake)
+- [ ] Codex app-server tool-call loop (turns)
 - [ ] Docker app deployment workflows
 
 ## Documentation

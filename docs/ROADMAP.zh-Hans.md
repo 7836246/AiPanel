@@ -4,7 +4,9 @@ AiPanel 的目标不是复刻传统服务器面板，而是做一个本地运行
 
 ## 当前进展（Desktop MVP）
 
-实现路径改为**桌面端优先**（不做独立 CLI）。已落地的安全执行闭环与桌面客户端骨架：服务器配置持久化（SQLite）、凭据进系统 Keychain、SSH 连通性测试、只读服务器体检、命令风险分级（Low/Medium/High/Blocked）、写操作确认 / 高风险二次确认、本地审计、自然语言→结构化计划（Mock Plan Engine）、Agent Provider 抽象与 Codex app-server 入口、AiPanel Tools 安全工具层、模型供应商管理。下面 M3/M4 的多数条目已完成；M2 的 AI 规划目前是 Mock，待接通 Codex app-server。
+实现路径改为**桌面端优先**（不做独立 CLI）。已落地的安全执行闭环与桌面客户端：服务器配置持久化（SQLite）、增删改、凭据进系统 Keychain、SSH 连通性测试、**流式**只读体检、命令风险分级（Low/Medium/High/Blocked）、写操作确认 / 高风险二次确认对话框、本地审计、AiPanel Tools 安全工具层、模型供应商管理。
+
+**AI 已接通真实模型**：配置 OpenAI 兼容供应商后，自然语言经真实 LLM 产出结构化计划（风险仍由 AiPanel 重判），并可让 Agent 用只读工具自动诊断并总结；无供应商时回退到本地 Mock。Codex app-server 走 JSON-RPC/stdio 桥接，transport + initialize 已就绪，turn/工具回路开发中。下面 M2/M3/M4 多数条目已完成。
 
 ## M0：项目定义
 

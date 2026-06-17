@@ -192,8 +192,9 @@ pub async fn run_doctor_streamed(
         )
         .await;
 
-        // Did this probe succeed? Mirror run_doctor's success rule (exit 0).
-        let ok = matches!(&result, Ok(exec) if exec.exit_code == 0);
+        // Did this probe succeed? Mirror run_doctor's bookkeeping: a non-zero
+        // docker exit is benign (docker is often absent), so don't mark it failed.
+        let ok = matches!(&result, Ok(exec) if exec.exit_code == 0) || *key == "docker";
         let emitted = record_probe(*key, result, &mut out, &mut warnings, &mut executions);
         for message in emitted {
             on_event(DoctorStreamEvent::Warning { message });

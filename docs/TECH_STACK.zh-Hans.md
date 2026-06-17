@@ -110,7 +110,9 @@ audit.write
 - 高风险操作必须二次确认；
 - 所有执行写入审计记录。
 
-**实现状态**：工具层已落地在 `apps/desktop/src-tauri/src/tools/`，当前为**内部 JSON-RPC 形态**的 `dispatch(name, args)`（MCP 适配后置）。每个工具声明权限（ReadOnly/Write）与是否审计；`ssh.run_readonly` 受 Risk Reviewer 门控（仅 Low 可过），`task.execute_confirmed` 在缺少用户确认时拒绝执行。Codex app-server 桥接在 `agent/` 提供入口与健康检查，JSON-RPC 工具回路尚在接通中。
+**实现状态**：工具层已落地在 `apps/desktop/src-tauri/src/tools/`，当前为**内部 JSON-RPC 形态**的 `dispatch(name, args)`（MCP 适配后置）。每个工具声明权限（ReadOnly/Write）与是否审计；`ssh.run_readonly` 受 Risk Reviewer 门控（仅 Low 可过），`task.execute_confirmed` 在缺少用户确认时拒绝执行。
+
+供应商侧：**OpenAI 兼容供应商已真实接通**（`agent/` 中的 `OpenAiCompatibleProvider`：真实 `/chat/completions` 做 chat/规划/总结，规划用结构化 JSON 输出，风险由 AiPanel 重判）；`agent/agent_loop.rs` 是只读自动诊断回路（OpenAI function-calling，只暴露只读工具）。Codex app-server 走 `agent/codex.rs` 的 JSON-RPC/stdio transport（spawn + initialize，只广告 AiPanel Tools 工具面），turn/工具回路开发中。
 
 ## 目标架构
 

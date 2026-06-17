@@ -250,9 +250,13 @@ pub async fn run_readonly_streamed(
             tokio::select! {
                 line = out_reader.next_line(), if !out_done => match line {
                     Ok(Some(line)) => {
-                        let clean = sanitize(&line);
-                        on_line(&clean, false);
-                        out_buf.push_str(&clean);
+                        // Live callback gets per-line (line-scoped) redaction for
+                        // ephemeral display; the stored buffer keeps the RAW line
+                        // so it can be whole-buffer sanitized once at the end
+                        // (multi-line secrets like private keys only match across
+                        // lines — see core::sanitize).
+                        on_line(&sanitize(&line), false);
+                        out_buf.push_str(&line);
                         out_buf.push('\n');
                     }
                     Ok(None) => out_done = true,
@@ -260,9 +264,8 @@ pub async fn run_readonly_streamed(
                 },
                 line = err_reader.next_line(), if !err_done => match line {
                     Ok(Some(line)) => {
-                        let clean = sanitize(&line);
-                        on_line(&clean, true);
-                        err_buf.push_str(&clean);
+                        on_line(&sanitize(&line), true);
+                        err_buf.push_str(&line);
                         err_buf.push('\n');
                     }
                     Ok(None) => err_done = true,
@@ -288,10 +291,11 @@ pub async fn run_readonly_streamed(
     Ok(CommandExecution {
         command: command.to_string(),
         exit_code: status.code().unwrap_or(-1),
-        // Lines were sanitized as they streamed; trim the trailing newline so the
-        // stored output matches run_command's (which sanitizes the whole buffer).
-        stdout: out_buf.trim_end_matches('\n').to_string(),
-        stderr: err_buf.trim_end_matches('\n').to_string(),
+        // Sanitize the WHOLE accumulated buffer once (matching run_command), so
+        // multi-line secrets are redacted before the output is stored/audited.
+        // The per-line callback above only weakly redacts the live stream.
+        stdout: sanitize(out_buf.trim_end_matches('\n')),
+        stderr: sanitize(err_buf.trim_end_matches('\n')),
         duration_ms: start.elapsed().as_millis() as u64,
         started_at,
     })
