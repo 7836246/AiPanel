@@ -17,6 +17,15 @@ pub mod ssh;
 pub mod store;
 pub mod tools;
 
+use tauri::Manager;
+
+use store::Store;
+
+/// Shared application state, managed by Tauri and injected into commands.
+pub struct AppState {
+    pub store: Store,
+}
+
 /// Backend version, surfaced to the frontend so the UI can show what it's talking to.
 #[tauri::command]
 fn app_version() -> String {
@@ -27,7 +36,21 @@ fn app_version() -> String {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![app_version])
+        .setup(|app| {
+            let dir = app.path().app_data_dir()?;
+            std::fs::create_dir_all(&dir)?;
+            let store = Store::open(&dir.join("aipanel.sqlite3"))?;
+            app.manage(AppState { store });
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            app_version,
+            commands::list_servers,
+            commands::get_server,
+            commands::create_server,
+            commands::update_server,
+            commands::delete_server,
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
