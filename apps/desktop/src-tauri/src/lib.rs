@@ -55,6 +55,7 @@ pub fn run() {
             commands::delete_server,
             commands::set_server_secret,
             commands::credential_backend,
+            commands::review_plan,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

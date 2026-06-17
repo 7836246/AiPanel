@@ -6,7 +6,7 @@
 use tauri::State;
 
 use crate::core::error::AppResult;
-use crate::core::types::{ServerInput, ServerProfile};
+use crate::core::types::{Plan, RiskReview, ServerInput, ServerProfile};
 use crate::AppState;
 
 #[tauri::command]
@@ -63,4 +63,11 @@ pub fn set_server_secret(state: State<'_, AppState>, id: String, secret: String)
 #[tauri::command]
 pub fn credential_backend(state: State<'_, AppState>) -> String {
     state.credentials.backend().to_string()
+}
+
+/// Review a plan's risk. `readOnlyMode` escalates any non-inspection step to
+/// Blocked. Pure function — no side effects, no state needed.
+#[tauri::command]
+pub fn review_plan(plan: Plan, read_only_mode: bool) -> RiskReview {
+    crate::risk::review_plan(&plan, read_only_mode)
 }

@@ -42,6 +42,48 @@ export interface AppError {
   message: string;
 }
 
+export type RiskLevel = "low" | "medium" | "high" | "blocked";
+
+export interface PlanStep {
+  summary: string;
+  command: string;
+  risk: RiskLevel;
+  readOnly: boolean;
+  tool?: string;
+}
+
+export interface Plan {
+  id: string;
+  serverId?: string;
+  goal: string;
+  steps: PlanStep[];
+  createdAt: string;
+}
+
+export interface RiskFinding {
+  stepIndex: number;
+  category: string;
+  level: RiskLevel;
+  message: string;
+}
+
+export interface RiskReview {
+  overall: RiskLevel;
+  requiresConfirmation: boolean;
+  requiresDoubleConfirmation: boolean;
+  blocked: boolean;
+  findings: RiskFinding[];
+  stepLevels: RiskLevel[];
+}
+
+/** Display metadata for a risk level (Chinese label + token-driven colors). */
+export const RISK_META: Record<RiskLevel, { label: string; dot: string; text: string }> = {
+  low: { label: "低风险", dot: "bg-risk-low", text: "text-risk-low" },
+  medium: { label: "中风险", dot: "bg-risk-medium", text: "text-risk-medium" },
+  high: { label: "高风险", dot: "bg-risk-high", text: "text-risk-high" },
+  blocked: { label: "已阻止", dot: "bg-risk-blocked", text: "text-risk-blocked" },
+};
+
 // ---- browser-dev mocks (only used when not under Tauri) -------------------
 
 const MOCK_SERVERS: ServerProfile[] = [
@@ -93,6 +135,28 @@ export async function updateServer(id: string, input: ServerInput): Promise<Serv
 export async function deleteServer(id: string): Promise<void> {
   if (!isTauri()) return;
   return invoke<void>("delete_server", { id });
+}
+
+export async function reviewPlan(plan: Plan, readOnlyMode = false): Promise<RiskReview> {
+  if (!isTauri()) return mockReview(plan, readOnlyMode);
+  return invoke<RiskReview>("review_plan", { plan, readOnlyMode });
+}
+
+const RISK_ORDER: RiskLevel[] = ["low", "medium", "high", "blocked"];
+function mockReview(plan: Plan, readOnlyMode: boolean): RiskReview {
+  const levels = plan.steps.map((s) =>
+    readOnlyMode && s.risk !== "low" ? ("blocked" as RiskLevel) : s.risk
+  );
+  const overall =
+    levels.reduce<RiskLevel>((acc, l) => (RISK_ORDER.indexOf(l) > RISK_ORDER.indexOf(acc) ? l : acc), "low");
+  return {
+    overall,
+    requiresConfirmation: RISK_ORDER.indexOf(overall) >= 1,
+    requiresDoubleConfirmation: levels.includes("high"),
+    blocked: levels.includes("blocked"),
+    findings: [],
+    stepLevels: levels,
+  };
 }
 
 export async function appVersion(): Promise<string> {

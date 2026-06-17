@@ -6,7 +6,13 @@ import {
   Terminal,
   type TerminalLine,
 } from "@aipanel/ui";
-import { listServers, type ServerProfile, type ServerStatus } from "../lib/api";
+import {
+  listServers,
+  RISK_META,
+  type RiskLevel,
+  type ServerProfile,
+  type ServerStatus,
+} from "../lib/api";
 import "./codex-console.css";
 
 const statusDot = (s: ServerStatus): string =>
@@ -124,6 +130,7 @@ interface Step {
   title: string;
   dur: string;
   cmd: string;
+  risk: RiskLevel;
   state: StepState;
   showResult: boolean;
   checks: { t: string; s: CheckState }[];
@@ -136,6 +143,7 @@ function buildSteps(running: boolean): Step[] {
       title: "只读检查",
       dur: "00:18",
       cmd: "systemctl status ai-server --no-pager",
+      risk: "low",
       state: "done",
       showResult: true,
       checks: [
@@ -149,6 +157,7 @@ function buildSteps(running: boolean): Step[] {
       title: "端口与服务",
       dur: running ? "00:12" : "待开始",
       cmd: "ss -ltnp | grep -E ':22|:80|:443|:8000'",
+      risk: "low",
       state: running ? "running" : "await",
       showResult: false,
       checks: [
@@ -162,6 +171,7 @@ function buildSteps(running: boolean): Step[] {
       title: "日志诊断",
       dur: "待执行",
       cmd: 'journalctl -u ai-server --since "1 hour ago" --no-pager',
+      risk: "low",
       state: "pending",
       showResult: false,
       checks: [
@@ -225,8 +235,8 @@ function StepRow({ step }: { step: Step }) {
         )}
         <span className="min-w-0 flex-1 text-[13.5px] font-semibold">{step.title}</span>
         <span className="inline-flex items-center gap-1.5 text-[11.5px] text-fg-muted">
-          <span className="h-1.5 w-1.5 rounded-full bg-risk-low" />
-          低风险
+          <span className={`h-1.5 w-1.5 rounded-full ${RISK_META[step.risk].dot}`} />
+          {RISK_META[step.risk].label}
         </span>
         <span className="font-mono text-[11.5px] text-fg-subtle">{step.dur}</span>
       </div>
