@@ -8,6 +8,7 @@ use tauri::State;
 pub mod search;
 pub mod stream;
 pub mod tasks;
+pub mod terminal;
 
 use crate::core::error::{AppError, AppResult};
 use crate::core::types::{

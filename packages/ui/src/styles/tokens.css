@@ -28,41 +28,44 @@
   --radius-xl: 1rem;
 
   /* ---- LIGHT (default) ---- */
-  --color-bg: #ffffff;
-  --color-surface-1: #ffffff;
-  --color-surface-2: #f8f8f7;
-  --color-surface-3: #f0efed;
-  --color-hover: #f0efed;
-  --color-selected: #e9e8e4;
-  --color-border: #ececeb;
-  --color-border-strong: #e0e0dd;
+  /* 暖中性层级：页面近白，surface 逐档变浅形成侧栏感，去蓝偏暖灰 */
+  --color-bg: #fbfbfa;
+  --color-surface-1: #f7f7f5;
+  --color-surface-2: #f2f1ef;
+  --color-surface-3: #ededea;
+  --color-hover: #f0efec;
+  --color-selected: #e8e7e3;
+  /* 很淡的中性灰发丝边框 */
+  --color-border: #ececea;
+  --color-border-strong: #e3e3e1;
 
-  --color-fg: #1c1c1a;
-  --color-fg-muted: #6c6c69;
-  --color-fg-subtle: #a3a39e;
+  /* 文字近黑主 / 暖灰 muted / 更浅 subtle */
+  --color-fg: #0d0d0d;
+  --color-fg-muted: #5b5b5b;
+  --color-fg-subtle: #8a8a87;
 
-  /* Near-black primary (Codex "send"), no chroma */
-  --color-brand: #2f2f2d;
-  --color-brand-strong: #1c1c1a;
-  --color-brand-fg: #ffffff;
-  --color-accent: #2f2f2d;
-  --color-accent-strong: #1c1c1a;
+  /* 强调色收敛为近黑（Codex "send"），不靠彩色强调 */
+  --color-brand: #1a1a1a;
+  --color-brand-strong: #0d0d0d;
+  --color-brand-fg: #fbfbfa;
+  --color-accent: #1a1a1a;
+  --color-accent-strong: #0d0d0d;
 
-  /* Risk scale — Low / Medium / High / Blocked */
-  --color-risk-low: #1a7f37;
-  --color-risk-low-soft: #dafbe1;
-  --color-risk-medium: #9a6700;
-  --color-risk-medium-soft: #fff8c5;
-  --color-risk-high: #bc4c00;
-  --color-risk-high-soft: #ffe7d4;
-  --color-risk-blocked: #cf222e;
-  --color-risk-blocked-soft: #ffebe9;
+  /* Risk scale — Low / Medium / High / Blocked（略降饱和，中性底上不刺眼） */
+  --color-risk-low: #2a7d45;
+  --color-risk-low-soft: #e3f3e8;
+  --color-risk-medium: #8a6a16;
+  --color-risk-medium-soft: #f7efd6;
+  --color-risk-high: #b15324;
+  --color-risk-high-soft: #f7e6da;
+  --color-risk-blocked: #c23b43;
+  --color-risk-blocked-soft: #f7e3e3;
 
   /* Generic status */
-  --color-success: #1a7f37;
-  --color-warning: #9a6700;
-  --color-danger: #cf222e;
-  --color-info: #0969da;
+  --color-success: #2a7d45;
+  --color-warning: #8a6a16;
+  --color-danger: #c23b43;
+  --color-info: #3a6ea5;
 }
 
 /* Default color-scheme (form controls, scrollbars). */
@@ -74,36 +77,39 @@
 .dark {
   color-scheme: dark;
 
-  --color-bg: #1b1b19;
-  --color-surface-1: #212120;
-  --color-surface-2: #161614;
-  --color-surface-3: #262624;
-  --color-hover: #262624;
-  --color-selected: #2f2f2b;
-  --color-border: #2e2e2b;
-  --color-border-strong: #3b3b37;
+  /* 近黑层级：bg 最深，surface 逐档提亮，发丝边框中性 */
+  --color-bg: #0d0d0d;
+  --color-surface-1: #1a1a1a;
+  --color-surface-2: #1f1f1f;
+  --color-surface-3: #242424;
+  --color-hover: #242424;
+  --color-selected: #2d2d2d;
+  --color-border: #2a2a2a;
+  --color-border-strong: #333333;
 
-  --color-fg: #e7e7e3;
-  --color-fg-muted: #9d9d98;
-  --color-fg-subtle: #6d6d68;
+  --color-fg: #ececec;
+  --color-fg-muted: #a0a0a0;
+  --color-fg-subtle: #6f6f6f;
 
-  --color-brand: #e7e7e3;
+  /* 深色下主按钮反相为近白 */
+  --color-brand: #ececec;
   --color-brand-strong: #ffffff;
-  --color-brand-fg: #1b1b19;
-  --color-accent: #e7e7e3;
+  --color-brand-fg: #0d0d0d;
+  --color-accent: #ececec;
   --color-accent-strong: #ffffff;
 
-  --color-risk-low: #3fb950;
-  --color-risk-low-soft: #0f2417;
-  --color-risk-medium: #d29922;
-  --color-risk-medium-soft: #2e2206;
-  --color-risk-high: #db6d28;
-  --color-risk-high-soft: #2e1a0a;
-  --color-risk-blocked: #f85149;
-  --color-risk-blocked-soft: #2d1213;
+  /* Risk scale（降饱和，近黑底上柔和） */
+  --color-risk-low: #4caf68;
+  --color-risk-low-soft: #14241a;
+  --color-risk-medium: #c79a3a;
+  --color-risk-medium-soft: #261f0e;
+  --color-risk-high: #cf7340;
+  --color-risk-high-soft: #261810;
+  --color-risk-blocked: #e0625b;
+  --color-risk-blocked-soft: #261516;
 
-  --color-success: #3fb950;
-  --color-warning: #d29922;
-  --color-danger: #f85149;
-  --color-info: #4493f8;
+  --color-success: #4caf68;
+  --color-warning: #c79a3a;
+  --color-danger: #e0625b;
+  --color-info: #5a92cc;
 }

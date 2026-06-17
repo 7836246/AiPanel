@@ -397,6 +397,42 @@ export async function cancelRun(runId: string): Promise<void> {
   return invoke<void>("cancel_run", { runId });
 }
 
+// ---- 交互式终端(用户自己操作的 SSH 终端;不暴露给 AI)------------------------
+
+/** 打开所选服务器的交互式终端,返回会话 id;终端输出通过 onOutput 流式回调。 */
+export async function terminalOpen(
+  serverId: string,
+  cols: number,
+  rows: number,
+  onOutput: (data: string) => void
+): Promise<string> {
+  if (!isTauri()) {
+    onOutput("\r\n[浏览器预览模式不支持真实终端,请在桌面端使用]\r\n");
+    return "mock";
+  }
+  const ch = new Channel<string>();
+  ch.onmessage = onOutput;
+  return invoke<string>("terminal_open", { id: serverId, cols, rows, onOutput: ch });
+}
+
+/** 向终端会话写入(用户键入的数据)。 */
+export async function terminalWrite(sessionId: string, data: string): Promise<void> {
+  if (!isTauri() || sessionId === "mock") return;
+  return invoke<void>("terminal_write", { sessionId, data });
+}
+
+/** 终端尺寸变化时同步到远端 PTY。 */
+export async function terminalResize(sessionId: string, cols: number, rows: number): Promise<void> {
+  if (!isTauri() || sessionId === "mock") return;
+  return invoke<void>("terminal_resize", { sessionId, cols, rows });
+}
+
+/** 关闭终端会话(杀掉本地 ssh 子进程)。 */
+export async function terminalClose(sessionId: string): Promise<void> {
+  if (!isTauri() || sessionId === "mock") return;
+  return invoke<void>("terminal_close", { sessionId });
+}
+
 // ---- 审计/任务 搜索与导出 -------------------------------------
 
 /** 关键字搜索审计记录（意图/总结/命令的子串匹配）。空查询退化为列表。 */

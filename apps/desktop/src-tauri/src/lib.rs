@@ -15,6 +15,7 @@ pub mod plan;
 pub mod risk;
 pub mod ssh;
 pub mod store;
+pub mod terminal;
 pub mod tools;
 
 use tauri::Manager;
@@ -67,6 +68,10 @@ pub fn run() {
             commands::stream::run_server_doctor_stream,
             commands::stream::run_confirmed_plan_stream,
             commands::stream::cancel_run,
+            commands::terminal::terminal_open,
+            commands::terminal::terminal_write,
+            commands::terminal::terminal_resize,
+            commands::terminal::terminal_close,
             commands::tasks::list_tasks,
             commands::tasks::get_task,
             commands::tasks::save_task,

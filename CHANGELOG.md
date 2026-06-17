@@ -19,6 +19,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- Interactive SSH terminal ("终端"): a real, user-operated terminal for the selected
+  server (xterm.js front-end + a local PTY wrapping `ssh` via portable-pty, streamed
+  over a Tauri channel). User-driven and never exposed to the AI agent — the
+  "no raw shell for the agent" boundary is unchanged.
+- Codex-neutral color palette: warm off-white / near-black neutral grays with a
+  restrained monochrome accent (de-saturated risk colors), light + dark.
 - Editable plan execution: inspect and edit a generated plan before running —
   edit each step's command/summary, add/remove/reorder steps. Every edit is
   re-reviewed by the risk gate (server-side re-classification); blocked or empty
