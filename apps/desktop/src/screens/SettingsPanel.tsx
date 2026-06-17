@@ -161,7 +161,7 @@ export default function SettingsPanel() {
   function toggleReadonlyDefault(value: boolean) {
     setReadonlyDefault(value);
     writeReadonlyDefault(value);
-    push("info", value ? "已设为默认只读优先" : "已关闭默认只读优先");
+    push("info", value ? "已设为默认只读优先(下次启动新会话生效)" : "已关闭默认只读优先(下次启动新会话生效)");
   }
 
   const field = "mb-2 flex flex-col gap-1";

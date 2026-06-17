@@ -144,6 +144,12 @@ export default function AuditView({
       <div className="cx-scroll min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-[680px] px-6 pb-6 pt-5">
           <h2 className="mb-3 text-sm font-semibold">审计记录</h2>
+          {/* 状态筛选在客户端进行,且加载上限为 500 条;命中上限时提示结果可能不完整。 */}
+          {!loading && filter !== "all" && records.length >= 500 && (
+            <div className="mb-3 rounded-md border border-risk-medium/40 bg-risk-medium-soft px-3 py-2 text-[12px] text-risk-medium">
+              仅基于最近 500 条审计进行筛选,更早的记录未纳入;请用搜索或「导出全部 JSON」查看完整数据。
+            </div>
+          )}
           {loading ? (
             <div className="flex items-center justify-center gap-2 rounded-md border border-border bg-surface-1 px-4 py-6 text-[13px] text-fg-subtle">
               <Spinner size="sm" /> 加载中…

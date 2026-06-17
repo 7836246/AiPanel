@@ -223,8 +223,9 @@ export function Dashboard({
           className="ml-auto"
           onClick={onRefreshAll}
           disabled={refreshing}
+          title="仅刷新在线/离线状态;指标(负载/内存/磁盘)请用「只读体检」更新"
         >
-          {refreshing ? <Spinner size="sm" /> : <Refresh />} 刷新全部
+          {refreshing ? <Spinner size="sm" /> : <Refresh />} 刷新状态
         </Button>
       </div>
 

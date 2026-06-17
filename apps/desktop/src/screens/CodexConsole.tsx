@@ -776,7 +776,10 @@ export default function CodexConsole() {
   // 命令面板的动作集合：把主界面的关键操作集中为可搜索/键盘可达的快捷入口。
   const paletteCommands: PaletteCommand[] = [
     { id: "ask", label: "新建提问", hint: "聚焦输入框", group: "操作", run: () => { setView("console"); inputRef.current?.focus(); } },
-    { id: "doctor", label: "只读体检", hint: selected ? selected.name : "需选择服务器", group: "操作", run: () => { if (selectedServerId && !running) runDoctor(); } },
+    // 仅在可执行(已选服务器且未在运行)时出现,避免成为静默死动作。
+    ...(selectedServerId && !running
+      ? [{ id: "doctor", label: "只读体检", hint: selected?.name, group: "操作", run: () => runDoctor() }]
+      : []),
     { id: "audit", label: "打开审计", group: "导航", run: () => setView("audit") },
     { id: "settings", label: "打开设置", group: "导航", run: () => setView("settings") },
     { id: "theme", label: "切换浅色/深色", group: "界面", run: () => toggleTheme() },
@@ -804,7 +807,13 @@ export default function CodexConsole() {
   const canEditPlan = !!current?.plan && current.kind === "plan" && current.executions.length === 0 && !running;
   // 展示态下:计划是否为空 / 是否含被阻止步骤(据此禁用「确认执行」)。
   const planEmpty = !!current?.plan && current.plan.steps.length === 0;
-  const planBlocked = !!current?.plan && current.plan.steps.some((s) => s.risk === "blocked");
+  // 含真正 Blocked 的步骤(任何模式下都禁止)。
+  const planHardBlocked = !!current?.plan && current.plan.steps.some((s) => s.risk === "blocked");
+  // 只读优先开启时,任何非 Low(写/中/高)步骤都会被风险闸门升级为 Blocked——
+  // 提前在展示态体现,避免「按钮可点→确认弹窗里才被拦死」的困惑死路。
+  const planReadonlyBlocked =
+    readOnlyMode && !!current?.plan && current.plan.steps.some((s) => s.risk !== "low" && s.risk !== "blocked");
+  const planBlocked = planHardBlocked || planReadonlyBlocked;
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-bg text-fg" style={{ fontFamily: "var(--font-sans)" }}>
@@ -875,7 +884,7 @@ export default function CodexConsole() {
                           >
                             <span className="flex-none text-[11px] text-fg-subtle" title={t.kind}>{KIND_GLYPH[t.kind] ?? "❯"}</span>
                             <span className="min-w-0 flex-1 truncate">{t.title}</span>
-                            <IconButton aria-label="删除记录" size="sm" className="opacity-0 transition-opacity group-hover:opacity-100" onClick={async (e) => { e.stopPropagation(); if (currentRef.current?.id === t.id) { cancelBackend(); setRunning(false); } await deleteTask(t.id); if (current?.id === t.id) setCurrent(null); await refreshTasks(); }}>
+                            <IconButton aria-label="删除记录" size="sm" className="opacity-0 transition-opacity group-hover:opacity-100" onClick={async (e) => { e.stopPropagation(); if (currentRef.current?.id === t.id) { cancelBackend(); setRunning(false); } await deleteTask(t.id); if (currentRef.current?.id === t.id) setCurrent(null); await refreshTasks(); }}>
                               <Cross size={11} />
                             </IconButton>
                           </div>
@@ -973,10 +982,17 @@ export default function CodexConsole() {
                       </div>
                     </div>
 
-                    {/* 展示态:含被阻止步骤的提示 banner */}
+                    {/* 展示态:被阻止提示 banner。区分「真正 Blocked」与「只读优先拦截了写操作」,后者给出关掉只读优先的出路。 */}
                     {!planEditing && planBlocked && (
                       <div className="mt-2.5 flex items-center gap-2 rounded-md border border-risk-blocked/40 bg-risk-blocked/10 px-3 py-2 text-[12.5px] text-risk-blocked">
-                        <span className="flex-1">该计划含被风险策略阻止的步骤,无法执行。</span>
+                        <span className="flex-1">
+                          {planHardBlocked
+                            ? "该计划含被风险策略阻止的步骤,无法执行。"
+                            : "只读优先已开启,该计划的写操作步骤被拦截,无法执行。"}
+                        </span>
+                        {!planHardBlocked && (
+                          <button className="font-medium underline" onClick={() => setReadOnly(false)}>关闭只读优先</button>
+                        )}
                         {canEditPlan && <button className="font-medium underline" onClick={startEdit}>编辑计划</button>}
                       </div>
                     )}
@@ -1015,6 +1031,8 @@ export default function CodexConsole() {
                       <span className={`h-1.5 w-1.5 rounded-full ${current.status === "completed" ? "bg-risk-low" : current.status === "failed" ? "bg-risk-blocked" : "bg-fg-subtle"}`} />
                       <span className="text-sm font-semibold">{current.kind === "diagnose" ? "✦ " : ""}{current.title}</span>
                       <span className="ml-auto text-[11.5px] text-fg-subtle">{STATUS_LABEL[current.status] ?? current.status}</span>
+                      {/* 运行中(如 doctor 计划为空时落入此分支)仍要有「停止」入口,避免无处可停。 */}
+                      {running && <Button variant="secondary" size="sm" onClick={stop}>停止</Button>}
                     </div>
                     {/* AI 诊断：展示结构化的调查过程（工具轨迹）+ 结论 */}
                     {current.kind === "diagnose" && current.toolCalls && current.toolCalls.length > 0 && (
