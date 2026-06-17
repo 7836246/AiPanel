@@ -19,6 +19,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- Editable plan execution: inspect and edit a generated plan before running —
+  edit each step's command/summary, add/remove/reorder steps. Every edit is
+  re-reviewed by the risk gate (server-side re-classification); blocked or empty
+  plans can't run; the edited plan is persisted to task history; execution routes
+  each step by its re-classified risk (not the stale model flag).
 - Multi-server dashboard ("概览"): at-a-glance grid of all servers with live
   status, key metrics (load/memory/disk bars from the last doctor run), a
   "refresh all" that concurrently re-checks SSH connectivity, and click-to-open.

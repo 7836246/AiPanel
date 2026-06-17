@@ -126,6 +126,11 @@ pub async fn run_confirmed_plan_stream(
         None => None,
     };
 
+    // 空计划没有任何步骤可执行；提前拒绝，避免产生一条无内容的审计记录。
+    if plan.steps.is_empty() {
+        return Err(AppError::Validation("plan has no steps".into()));
+    }
+
     let review = crate::risk::review_plan(&plan, read_only_mode);
     if review.blocked {
         return Err(AppError::Blocked("plan contains blocked steps".into()));
@@ -151,13 +156,14 @@ pub async fn run_confirmed_plan_stream(
             })
             .ok();
 
-        // 只读步骤仍要过 Low 等级的校验门；其余步骤已在上方通过确认，走不带
-        // 校验门的流式执行器。两者都用可取消版本，把 cancel 句柄透传进流式循环。
+        // 按「服务端重判的等级」而非过时的客户端 step.read_only 路由：用户编辑某步后，
+        // step.read_only 可能已过时。Low 等级步骤仍要过 Low 校验门；其余步骤已在上方
+        // 通过确认，走不带校验门的流式执行器。两者都用可取消版本，把 cancel 句柄透传进流式循环。
         let on_line = |line: &str, stderr: bool| {
             // 发送失败（例如通道被丢弃）不能中断本次执行。
             on_event.send(PlanExecEvent::Line { text: line.to_string(), stderr }).ok();
         };
-        let res = if step.read_only {
+        let res = if review.step_levels[index] == crate::core::types::RiskLevel::Low {
             crate::ssh::run_readonly_streamed_cancellable(
                 &server,
                 secret.as_deref(),

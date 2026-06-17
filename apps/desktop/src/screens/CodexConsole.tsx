@@ -38,6 +38,8 @@ import {
   type AppError,
   type CommandExecution,
   type ModelSelectionPolicy,
+  type Plan,
+  type PlanStep,
   type ProviderConfig,
   type RiskLevel,
   type RiskReview,
@@ -193,47 +195,87 @@ const STATUS_LABEL: Record<string, string> = {
 };
 
 // 计划中的一行步骤：状态图标、摘要、风险标签，以及可复制的命令。
-function StepRow({ summary, command, risk, status }: {
-  summary: string; command: string; risk: RiskLevel; status: StepStatus;
+// 编辑态回调集合；传入即进入可编辑模式。
+type StepEdit = {
+  reviewing?: boolean;
+  onSummary: (v: string) => void;
+  onCommand: (v: string) => void;
+  onRemove: () => void;
+  onUp?: () => void;
+  onDown?: () => void;
+};
+
+function StepRow({ summary, command, risk, status, edit }: {
+  summary: string; command: string; risk: RiskLevel; status: StepStatus; edit?: StepEdit;
 }) {
   const meta = RISK_META[risk];
   const [copied, setCopied] = useState(false);
   return (
-    <div className="overflow-hidden rounded-md border border-border bg-surface-1">
+    <div className={`overflow-hidden rounded-md border bg-surface-1 ${edit ? "border-brand/50" : "border-border"}`}>
       <div className="flex items-center gap-2.5 px-3.5 py-3">
-        {status === "done" && <Check />}
-        {status === "failed" && <Cross />}
-        {status === "running" && <Spinner size="sm" />}
-        {status === "pending" && (
+        {!edit && status === "done" && <Check />}
+        {!edit && status === "failed" && <Cross />}
+        {!edit && status === "running" && <Spinner size="sm" />}
+        {!edit && status === "pending" && (
           <span className="h-3.5 w-3.5 rounded-full border-[1.5px] border-border-strong" />
         )}
-        <span className="min-w-0 flex-1 text-[13.5px] font-semibold">{summary}</span>
+        {edit ? (
+          <input
+            value={summary}
+            onChange={(e) => edit.onSummary(e.target.value)}
+            placeholder="步骤摘要"
+            className="min-w-0 flex-1 border-none bg-transparent text-[13.5px] font-semibold outline-none placeholder:text-fg-subtle"
+          />
+        ) : (
+          <span className="min-w-0 flex-1 text-[13.5px] font-semibold">{summary}</span>
+        )}
         <span className="inline-flex items-center gap-1.5 text-[11.5px] text-fg-muted">
-          <span className={`h-1.5 w-1.5 rounded-full ${meta.dot}`} />
+          {edit?.reviewing ? <Spinner size="sm" /> : <span className={`h-1.5 w-1.5 rounded-full ${meta.dot}`} />}
           {meta.label}
         </span>
+        {edit && (
+          <span className="flex flex-none items-center gap-0.5">
+            <button aria-label="上移" disabled={!edit.onUp} onClick={edit.onUp} className="px-1 text-[13px] leading-none text-fg-subtle transition-colors hover:text-fg disabled:opacity-30">↑</button>
+            <button aria-label="下移" disabled={!edit.onDown} onClick={edit.onDown} className="px-1 text-[13px] leading-none text-fg-subtle transition-colors hover:text-fg disabled:opacity-30">↓</button>
+            <IconButton aria-label="删除步骤" size="sm" onClick={edit.onRemove}><Cross size={12} /></IconButton>
+          </span>
+        )}
       </div>
       <div className="px-3.5 pb-3.5">
-        <div className="flex items-center gap-2.5 rounded-md bg-hover px-3 py-2 font-mono text-xs">
-          <span className="text-fg-subtle">$</span>
-          <span className="min-w-0 flex-1 truncate">{command}</span>
-          <IconButton
-            aria-label="复制命令"
-            size="sm"
-            onClick={async () => {
-              try {
-                if (!navigator.clipboard?.writeText) throw new Error("clipboard unavailable");
-                await navigator.clipboard.writeText(command);
-                setCopied(true);
-                setTimeout(() => setCopied(false), 1200);
-              } catch {
-                /* 复制失败：不显示「已复制」对勾 */
-              }
-            }}
-          >
-            {copied ? <Check size={12} /> : <Copy />}
-          </IconButton>
-        </div>
+        {edit ? (
+          <textarea
+            value={command}
+            onChange={(e) => edit.onCommand(e.target.value)}
+            placeholder="输入命令"
+            rows={Math.min(5, Math.max(1, command.split("\n").length))}
+            spellCheck={false}
+            className="w-full resize-y rounded-md bg-hover px-3 py-2 font-mono text-xs outline-none placeholder:text-fg-subtle focus-visible:ring-1 focus-visible:ring-brand"
+          />
+        ) : (
+          <div className="flex items-center gap-2.5 rounded-md bg-hover px-3 py-2 font-mono text-xs">
+            <span className="text-fg-subtle">$</span>
+            <span className="min-w-0 flex-1 truncate">{command}</span>
+            <IconButton
+              aria-label="复制命令"
+              size="sm"
+              onClick={async () => {
+                try {
+                  if (!navigator.clipboard?.writeText) throw new Error("clipboard unavailable");
+                  await navigator.clipboard.writeText(command);
+                  setCopied(true);
+                  setTimeout(() => setCopied(false), 1200);
+                } catch {
+                  /* 复制失败：不显示「已复制」对勾 */
+                }
+              }}
+            >
+              {copied ? <Check size={12} /> : <Copy />}
+            </IconButton>
+          </div>
+        )}
+        {edit && risk === "blocked" && (
+          <div className="mt-1.5 text-[11.5px] text-risk-blocked">该命令被风险策略阻止,需修改或删除后才能执行。</div>
+        )}
       </div>
     </div>
   );
@@ -245,6 +287,10 @@ export default function CodexConsole() {
   const [theme, toggleTheme] = useTheme();
   const [view, setView] = useState<"console" | "audit" | "settings" | "dashboard">("console");
   const [refreshing, setRefreshing] = useState(false);
+  // 计划编辑态：draftSteps 非 null 即处于编辑;draftReview 为草稿的服务端重判结果。
+  const [draftSteps, setDraftSteps] = useState<PlanStep[] | null>(null);
+  const [draftReview, setDraftReview] = useState<RiskReview | null>(null);
+  const [reviewing, setReviewing] = useState(false);
   const [servers, setServers] = useState<ServerProfile[]>([]);
   const [selectedServerId, setSelectedServerId] = useState<string | null>(null);
   const [serverQuery, setServerQuery] = useState("");
@@ -291,6 +337,9 @@ export default function CodexConsole() {
   const currentRef = useRef<TaskRecord | null>(null);
   // 服务器列表请求序号:用于丢弃过期的收藏/刷新结果(与 runIdRef 分开,避免误伤运行中的任务)。
   const serversReqRef = useRef(0);
+  // 计划草稿重判的请求序号与防抖定时器:与 runIdRef/cancelIdRef 完全分离,绝不参与运行/取消生命周期。
+  const reviewReqRef = useRef(0);
+  const reviewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // 轻量通知（错误/成功提示），替代仅在终端里报错。
   const { toasts, push, dismiss } = useToasts();
 
@@ -324,9 +373,14 @@ export default function CodexConsole() {
   // 保持 currentRef 与 current 同步。
   useEffect(() => { currentRef.current = current; }, [current]);
 
-  // 选中服务器变化时：真正取消进行中的运行（中断远端命令），再重置当前打开的运行并加载历史。
+  // 选中服务器变化时：真正取消进行中的运行（中断远端命令），丢弃未保存的计划编辑草稿，再重置并加载历史。
   useEffect(() => {
     cancelBackend();
+    if (reviewTimerRef.current) clearTimeout(reviewTimerRef.current);
+    reviewReqRef.current += 1;
+    setDraftSteps(null);
+    setDraftReview(null);
+    setReviewing(false);
     setRunning(false);
     setStepStatus([]);
     setCurrent(null);
@@ -370,6 +424,7 @@ export default function CodexConsole() {
   // 再回填步骤状态与终端输出，并切回控制台视图。
   function openTask(t: TaskRecord) {
     cancelBackend();
+    cancelEdit(); // 丢弃未保存的计划编辑草稿
     setRunning(false);
     setCurrent(t);
     setStepStatus((t.plan?.steps ?? []).map((_, i) => (t.executions[i] ? (t.executions[i].exitCode === 0 ? "done" : "failed") : "pending")));
@@ -517,8 +572,101 @@ export default function CodexConsole() {
   }
 
   // 先对生成的计划做风险审查，再决定确认（或纯只读时直接执行）。
-  async function startExecute() {
+  // ----- 计划编辑 -----
+  // 防抖触发对草稿计划的服务端重判（风险由后端判定,前端不臆断）。
+  function scheduleReview(steps: PlanStep[]) {
     if (!current?.plan) return;
+    const plan = current.plan;
+    if (reviewTimerRef.current) clearTimeout(reviewTimerRef.current);
+    const reqId = ++reviewReqRef.current;
+    setReviewing(true);
+    reviewTimerRef.current = setTimeout(async () => {
+      try {
+        const rv = await reviewPlan({ ...plan, steps }, readOnlyMode);
+        if (reviewReqRef.current === reqId) setDraftReview(rv);
+      } catch {
+        /* 重判失败:保留旧徽标,执行时服务端仍会再审查 */
+      } finally {
+        if (reviewReqRef.current === reqId) setReviewing(false);
+      }
+    }, 400);
+  }
+
+  function startEdit() {
+    if (!current?.plan || running) return;
+    const steps = current.plan.steps.map((s) => ({ ...s })); // 深拷贝,隔离草稿
+    setDraftSteps(steps);
+    setDraftReview(current.riskReview ?? null);
+    scheduleReview(steps);
+  }
+
+  function cancelEdit() {
+    if (reviewTimerRef.current) clearTimeout(reviewTimerRef.current);
+    reviewReqRef.current += 1; // 作废挂起的重判
+    setDraftSteps(null);
+    setDraftReview(null);
+    setReviewing(false);
+  }
+
+  // 完成编辑:对**最终提交的步骤**做一次同步重判(不依赖防抖中的旧结果),
+  // 据此回写每步风险/只读标志(以服务端为准),再写回计划并落库——
+  // 保证历史里的风险标注与「确认执行」禁用门都反映真正将要执行的内容。
+  async function commitEdit() {
+    if (!current?.plan || draftSteps === null) return;
+    if (reviewTimerRef.current) clearTimeout(reviewTimerRef.current);
+    reviewReqRef.current += 1; // 作废任何挂起的防抖重判
+    setReviewing(true);
+    const steps0 = draftSteps;
+    const rv = await reviewPlan({ ...current.plan, steps: steps0 }, readOnlyMode).catch(
+      () => draftReview ?? current!.riskReview ?? null
+    );
+    const levels = rv?.stepLevels ?? [];
+    const steps: PlanStep[] = steps0.map((s, i) => {
+      const lvl = levels[i];
+      return lvl ? { ...s, risk: lvl, readOnly: lvl === "low" } : { ...s };
+    });
+    const editedPlan: Plan = { ...current.plan, steps };
+    const updated: TaskRecord = {
+      ...current, plan: editedPlan, riskReview: rv ?? current.riskReview,
+      executions: [], status: "awaiting_confirmation", updatedAt: nowIso(),
+    };
+    setCurrent(updated);
+    setStepStatus(steps.map(() => "pending"));
+    setDraftSteps(null);
+    setDraftReview(null);
+    setReviewing(false);
+    await saveTask(updated).catch(() => {});
+    await refreshTasks();
+  }
+
+  // 草稿步骤的增删改/移动:更新草稿并触发重判。
+  function applyDraft(next: PlanStep[]) {
+    setDraftSteps(next);
+    scheduleReview(next);
+  }
+  function editStepSummary(i: number, v: string) {
+    if (draftSteps) applyDraft(draftSteps.map((s, idx) => (idx === i ? { ...s, summary: v } : s)));
+  }
+  function editStepCommand(i: number, v: string) {
+    if (draftSteps) applyDraft(draftSteps.map((s, idx) => (idx === i ? { ...s, command: v } : s)));
+  }
+  function removeStep(i: number) {
+    if (draftSteps) applyDraft(draftSteps.filter((_, idx) => idx !== i));
+  }
+  function addStep() {
+    if (draftSteps) applyDraft([...draftSteps, { summary: "新步骤", command: "", risk: "low", readOnly: true }]);
+  }
+  function moveStep(i: number, dir: -1 | 1) {
+    if (!draftSteps) return;
+    const j = i + dir;
+    if (j < 0 || j >= draftSteps.length) return;
+    const next = [...draftSteps];
+    [next[i], next[j]] = [next[j], next[i]];
+    applyDraft(next);
+  }
+
+  async function startExecute() {
+    if (!current?.plan || draftSteps !== null) return; // 编辑中不执行
     try {
       const review = await reviewPlan(current.plan, readOnlyMode);
       // 既未被阻止又无需确认（纯低风险）则直接执行，否则弹出确认对话框。
@@ -651,6 +799,12 @@ export default function CodexConsole() {
 
   const planExecuted = !!current && current.kind === "plan" && current.executions.length > 0;
   const topTitle = current ? current.title : selected ? selected.name : "AiPanel";
+  // 计划编辑态派生值。
+  const planEditing = draftSteps !== null;
+  const canEditPlan = !!current?.plan && current.kind === "plan" && current.executions.length === 0 && !running;
+  // 展示态下:计划是否为空 / 是否含被阻止步骤(据此禁用「确认执行」)。
+  const planEmpty = !!current?.plan && current.plan.steps.length === 0;
+  const planBlocked = !!current?.plan && current.plan.steps.some((s) => s.risk === "blocked");
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-bg text-fg" style={{ fontFamily: "var(--font-sans)" }}>
@@ -788,27 +942,71 @@ export default function CodexConsole() {
 
                 {current?.plan ? (
                   <>
-                    <div className="flex items-start gap-3 rounded-md border border-border bg-surface-1 px-4 py-3.5">
+                    <div className={`flex items-start gap-3 rounded-md border bg-surface-1 px-4 py-3.5 ${planEditing ? "border-brand/50 ring-1 ring-brand/30" : "border-border"}`}>
                       <div className="flex h-[30px] w-[30px] flex-none items-center justify-center rounded-md bg-hover text-fg-muted"><ListIcon size={16} /></div>
                       <div className="min-w-0 flex-1">
-                        <div className="text-sm font-semibold">执行计划 · {current.plan.steps.length} 个步骤</div>
+                        <div className="flex items-center gap-2 text-sm font-semibold">
+                          执行计划 · {(planEditing ? draftSteps! : current.plan.steps).length} 个步骤
+                          {planEditing && <span className="rounded bg-brand/15 px-1.5 py-0.5 text-[11px] font-medium text-brand">编辑中</span>}
+                        </div>
                         <div className="mt-1 text-[12.5px] text-fg-muted">{current.plan.goal}</div>
                       </div>
                       <div className="flex flex-none items-center gap-1.5">
-                        {current.executions.length > 0 && <Button variant="ghost" size="sm" onClick={() => setTerminalOpen(true)}>查看输出</Button>}
-                        {running ? (
+                        {planEditing ? (
+                          <>
+                            <Button variant="ghost" size="sm" onClick={cancelEdit}>取消</Button>
+                            <Button variant="primary" size="sm" onClick={commitEdit}>完成编辑</Button>
+                          </>
+                        ) : running ? (
                           <Button variant="secondary" size="sm" onClick={stop}>停止</Button>
-                        ) : planExecuted ? (
-                          <Button variant="secondary" size="sm" onClick={startExecute}>重新执行</Button>
                         ) : (
-                          <Button variant="primary" size="sm" onClick={startExecute}><Play /> 确认执行</Button>
+                          <>
+                            {current.executions.length > 0 && <Button variant="ghost" size="sm" onClick={() => setTerminalOpen(true)}>查看输出</Button>}
+                            {canEditPlan && <Button variant="ghost" size="sm" onClick={startEdit}><Pencil size={13} /> 编辑计划</Button>}
+                            {planExecuted ? (
+                              <Button variant="secondary" size="sm" onClick={startExecute}>重新执行</Button>
+                            ) : (
+                              <Button variant="primary" size="sm" onClick={startExecute} disabled={planEmpty || planBlocked} title={planBlocked ? "计划含被阻止步骤,请编辑或删除后再执行" : planEmpty ? "计划没有步骤" : undefined}><Play /> 确认执行</Button>
+                            )}
+                          </>
                         )}
                       </div>
                     </div>
+
+                    {/* 展示态:含被阻止步骤的提示 banner */}
+                    {!planEditing && planBlocked && (
+                      <div className="mt-2.5 flex items-center gap-2 rounded-md border border-risk-blocked/40 bg-risk-blocked/10 px-3 py-2 text-[12.5px] text-risk-blocked">
+                        <span className="flex-1">该计划含被风险策略阻止的步骤,无法执行。</span>
+                        {canEditPlan && <button className="font-medium underline" onClick={startEdit}>编辑计划</button>}
+                      </div>
+                    )}
+
                     <div className="mt-3.5 flex flex-col gap-2.5">
-                      {current.plan.steps.map((s, i) => (
-                        <StepRow key={i} summary={s.summary} command={s.command} risk={s.risk} status={stepStatus[i] ?? "pending"} />
+                      {(planEditing ? draftSteps! : current.plan.steps).map((s, i) => (
+                        <StepRow
+                          key={i}
+                          summary={s.summary}
+                          command={s.command}
+                          risk={planEditing ? (draftReview?.stepLevels[i] ?? s.risk) : s.risk}
+                          status={stepStatus[i] ?? "pending"}
+                          edit={planEditing ? {
+                            reviewing,
+                            onSummary: (v) => editStepSummary(i, v),
+                            onCommand: (v) => editStepCommand(i, v),
+                            onRemove: () => removeStep(i),
+                            onUp: i > 0 ? () => moveStep(i, -1) : undefined,
+                            onDown: i < draftSteps!.length - 1 ? () => moveStep(i, 1) : undefined,
+                          } : undefined}
+                        />
                       ))}
+                      {planEditing && draftSteps!.length === 0 && (
+                        <div className="rounded-md border border-dashed border-border px-4 py-4 text-center text-[12.5px] text-fg-subtle">计划暂无步骤,点「+ 添加步骤」开始</div>
+                      )}
+                      {planEditing && (
+                        <button onClick={addStep} className="rounded-md border border-dashed border-border-strong px-3 py-2 text-[13px] text-fg-muted transition-colors hover:bg-hover hover:text-fg">
+                          + 添加步骤
+                        </button>
+                      )}
                     </div>
                   </>
                 ) : current ? (

@@ -223,6 +223,11 @@ pub async fn execute_confirmed_plan(
         .ok_or_else(|| AppError::Validation("plan has no target server".into()))?;
     let (server, secret) = load_server_and_secret(&state, &server_id)?;
 
+    // 空计划没有任何步骤可执行；提前拒绝，避免产生一条无内容的审计记录。
+    if plan.steps.is_empty() {
+        return Err(AppError::Validation("plan has no steps".into()));
+    }
+
     let review = crate::risk::review_plan(&plan, read_only_mode);
     if review.blocked {
         return Err(AppError::Blocked("plan contains blocked steps".into()));
@@ -236,8 +241,10 @@ pub async fn execute_confirmed_plan(
 
     let mut executions = Vec::new();
     let mut failed = false;
-    for step in &plan.steps {
-        let res = if step.read_only {
+    for (index, step) in plan.steps.iter().enumerate() {
+        // 按「服务端重判的等级」而非过时的客户端 step.read_only 路由：用户编辑某步后，
+        // step.read_only 可能已过时。Low 等级走只读路径（带 Low 校验门），其余走写路径。
+        let res = if review.step_levels[index] == crate::core::types::RiskLevel::Low {
             crate::ssh::run_readonly(&server, secret.as_deref(), &step.command, crate::ssh::DEFAULT_TIMEOUT).await
         } else {
             crate::ssh::run_command(&server, secret.as_deref(), &step.command, crate::ssh::DEFAULT_TIMEOUT).await
