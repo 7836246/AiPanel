@@ -176,6 +176,30 @@ impl Default for ModelSelectionPolicy {
     }
 }
 
+/// Input for creating/updating a provider. The API key is passed separately to
+/// the command (straight to the credential store) — never in this struct.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderInput {
+    /// Present when updating an existing provider.
+    #[serde(default)]
+    pub id: Option<String>,
+    pub name: String,
+    pub kind: ProviderKind,
+    #[serde(default)]
+    pub base_url: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub codex_path: Option<String>,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
 /// Result of testing a provider's configuration / reachability.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

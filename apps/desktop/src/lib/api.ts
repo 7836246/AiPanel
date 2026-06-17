@@ -320,6 +320,111 @@ function mockReview(plan: Plan, readOnlyMode: boolean): RiskReview {
   };
 }
 
+// ---- providers / model selection ------------------------------------------
+
+export type ProviderKind = "codex_app_server" | "openai_compatible" | "custom";
+
+export interface ProviderConfig {
+  id: string;
+  name: string;
+  kind: ProviderKind;
+  baseUrl?: string;
+  model?: string;
+  codexPath?: string;
+  credentialRef?: string;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProviderInput {
+  id?: string;
+  name: string;
+  kind: ProviderKind;
+  baseUrl?: string;
+  model?: string;
+  codexPath?: string;
+  enabled: boolean;
+}
+
+export interface ModelSelectionPolicy {
+  auto: boolean;
+  defaultProviderId?: string;
+}
+
+export interface ProviderTestResult {
+  ok: boolean;
+  message: string;
+  detail?: string;
+}
+
+let mockProviders: ProviderConfig[] = [];
+
+export async function listProviders(): Promise<ProviderConfig[]> {
+  if (!isTauri()) return mockProviders;
+  return invoke<ProviderConfig[]>("list_providers");
+}
+
+export async function saveProvider(input: ProviderInput, apiKey?: string): Promise<ProviderConfig> {
+  if (!isTauri()) {
+    const cfg: ProviderConfig = {
+      id: input.id ?? `mock-${Date.now()}`,
+      name: input.name,
+      kind: input.kind,
+      baseUrl: input.baseUrl,
+      model: input.model,
+      codexPath: input.codexPath,
+      credentialRef: apiKey ? `provider:${input.id ?? "new"}` : undefined,
+      enabled: input.enabled,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    mockProviders = [...mockProviders.filter((p) => p.id !== cfg.id), cfg];
+    return cfg;
+  }
+  return invoke<ProviderConfig>("save_provider", { input, apiKey: apiKey ?? null });
+}
+
+export async function deleteProvider(id: string): Promise<void> {
+  if (!isTauri()) {
+    mockProviders = mockProviders.filter((p) => p.id !== id);
+    return;
+  }
+  return invoke<void>("delete_provider", { id });
+}
+
+export async function getModelSelectionPolicy(): Promise<ModelSelectionPolicy> {
+  if (!isTauri()) return { auto: true };
+  return invoke<ModelSelectionPolicy>("get_model_selection_policy");
+}
+
+export async function saveModelSelectionPolicy(policy: ModelSelectionPolicy): Promise<void> {
+  if (!isTauri()) return;
+  return invoke<void>("save_model_selection_policy", { policy });
+}
+
+export async function testProvider(input: ProviderInput): Promise<ProviderTestResult> {
+  const config: ProviderConfig = {
+    id: input.id ?? "test",
+    name: input.name,
+    kind: input.kind,
+    baseUrl: input.baseUrl,
+    model: input.model,
+    codexPath: input.codexPath,
+    enabled: input.enabled,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+  if (!isTauri())
+    return { ok: input.kind !== "openai_compatible" || !!input.baseUrl, message: "(browser mock) 配置检查" };
+  return invoke<ProviderTestResult>("test_provider", { config });
+}
+
+export async function credentialBackend(): Promise<string> {
+  if (!isTauri()) return "mock";
+  return invoke<string>("credential_backend");
+}
+
 export async function appVersion(): Promise<string> {
   if (!isTauri()) return "0.1.0-dev";
   return invoke<string>("app_version");

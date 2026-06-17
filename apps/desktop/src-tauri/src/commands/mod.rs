@@ -7,8 +7,9 @@ use tauri::State;
 
 use crate::core::error::{AppError, AppResult};
 use crate::core::types::{
-    AuditRecord, CommandExecution, DoctorReport, Plan, ProviderConfig, ProviderTestResult,
-    RiskReview, ServerInput, ServerProfile, ServerStatus, TaskStatus,
+    AuditRecord, CommandExecution, CredentialRef, DoctorReport, ModelSelectionPolicy, Plan,
+    ProviderConfig, ProviderInput, ProviderTestResult, RiskReview, ServerInput, ServerProfile,
+    ServerStatus, TaskStatus,
 };
 use crate::AppState;
 
@@ -231,4 +232,81 @@ pub fn test_provider(config: ProviderConfig) -> ProviderTestResult {
 #[tauri::command]
 pub fn list_tools() -> Vec<crate::tools::ToolSpec> {
     crate::tools::registry()
+}
+
+// ----- providers / model selection ---------------------------------------
+
+#[tauri::command]
+pub fn list_providers(state: State<'_, AppState>) -> AppResult<Vec<ProviderConfig>> {
+    state.store.list_providers()
+}
+
+/// Create or update a provider. The API key (if any) goes straight to the
+/// credential store; only a CredentialRef is persisted in SQLite.
+#[tauri::command]
+pub fn save_provider(
+    state: State<'_, AppState>,
+    input: ProviderInput,
+    api_key: Option<String>,
+) -> AppResult<ProviderConfig> {
+    if input.name.trim().is_empty() {
+        return Err(AppError::Validation("provider name is required".into()));
+    }
+    let now = crate::core::types::now();
+    let (id, created_at, existing_ref) = match &input.id {
+        Some(id) => {
+            let existing = state.store.get_provider(id).ok();
+            (
+                id.clone(),
+                existing.as_ref().map(|e| e.created_at).unwrap_or(now),
+                existing.and_then(|e| e.credential_ref),
+            )
+        }
+        None => (crate::core::types::new_id(), now, None),
+    };
+    let credential_ref = if api_key.is_some() {
+        Some(CredentialRef::for_provider(&id))
+    } else {
+        existing_ref
+    };
+    let config = ProviderConfig {
+        id,
+        name: input.name,
+        kind: input.kind,
+        base_url: input.base_url,
+        model: input.model,
+        codex_path: input.codex_path,
+        credential_ref,
+        enabled: input.enabled,
+        created_at,
+        updated_at: now,
+    };
+    state.store.upsert_provider(&config)?;
+    if let Some(key) = api_key {
+        state.credentials.put_secret(&CredentialRef::for_provider(&config.id), &key)?;
+    }
+    Ok(config)
+}
+
+#[tauri::command]
+pub fn delete_provider(state: State<'_, AppState>, id: String) -> AppResult<()> {
+    if let Ok(p) = state.store.get_provider(&id) {
+        if let Some(reference) = &p.credential_ref {
+            let _ = state.credentials.delete_secret(reference);
+        }
+    }
+    state.store.delete_provider(&id)
+}
+
+#[tauri::command]
+pub fn get_model_selection_policy(state: State<'_, AppState>) -> AppResult<ModelSelectionPolicy> {
+    state.store.get_policy()
+}
+
+#[tauri::command]
+pub fn save_model_selection_policy(
+    state: State<'_, AppState>,
+    policy: ModelSelectionPolicy,
+) -> AppResult<()> {
+    state.store.set_policy(&policy)
 }

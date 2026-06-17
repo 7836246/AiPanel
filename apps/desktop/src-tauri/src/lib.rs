@@ -69,6 +69,11 @@ pub fn run() {
             commands::execute_confirmed_plan,
             commands::test_provider,
             commands::list_tools,
+            commands::list_providers,
+            commands::save_provider,
+            commands::delete_provider,
+            commands::get_model_selection_policy,
+            commands::save_model_selection_policy,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

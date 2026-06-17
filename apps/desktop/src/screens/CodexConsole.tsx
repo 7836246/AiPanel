@@ -6,6 +6,7 @@ import {
   Terminal,
   type TerminalLine,
 } from "@aipanel/ui";
+import SettingsPanel from "./SettingsPanel";
 import {
   createPlan,
   executeConfirmedPlan,
@@ -400,7 +401,7 @@ export default function CodexConsole() {
   const [servers, setServers] = useState<ServerProfile[]>([]);
   const [selectedServerId, setSelectedServerId] = useState<string | null>(null);
   const [doctorLines, setDoctorLines] = useState<TerminalLine[] | null>(null);
-  const [view, setView] = useState<"console" | "audit">("console");
+  const [view, setView] = useState<"console" | "audit" | "settings">("console");
   const [audits, setAudits] = useState<AuditRecord[]>([]);
   const [genPlan, setGenPlan] = useState<Plan | null>(null);
   const [intentValue, setIntentValue] = useState("");
@@ -545,7 +546,12 @@ export default function CodexConsole() {
         </div>
 
         <div className="border-t border-border px-2 py-1.5">
-          <NavItem icon={<Gear />} label="设置" />
+          <NavItem
+            icon={<Gear />}
+            label="设置"
+            active={view === "settings"}
+            onClick={() => setView("settings")}
+          />
         </div>
       </aside>
 
@@ -569,6 +575,8 @@ export default function CodexConsole() {
 
         {view === "audit" ? (
           <AuditPanel records={audits} />
+        ) : view === "settings" ? (
+          <SettingsPanel />
         ) : (
         <>
         {/* run scroll */}

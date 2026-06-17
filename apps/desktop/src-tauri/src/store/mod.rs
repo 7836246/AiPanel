@@ -205,6 +205,80 @@ impl Store {
         Ok(())
     }
 
+    // ----- providers / model policy --------------------------------------
+
+    pub fn list_providers(&self) -> AppResult<Vec<ProviderConfig>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, name, kind, base_url, model, codex_path, credential_ref, enabled, \
+             created_at, updated_at FROM provider_configs ORDER BY created_at ASC",
+        )?;
+        let rows = stmt.query_map([], row_to_provider)?.collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    pub fn get_provider(&self, id: &str) -> AppResult<ProviderConfig> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT id, name, kind, base_url, model, codex_path, credential_ref, enabled, \
+             created_at, updated_at FROM provider_configs WHERE id = ?1",
+            params![id],
+            row_to_provider,
+        )
+        .optional()?
+        .ok_or_else(|| AppError::NotFound(format!("provider {id}")))
+    }
+
+    pub fn upsert_provider(&self, p: &ProviderConfig) -> AppResult<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT OR REPLACE INTO provider_configs (id, name, kind, base_url, model, codex_path, \
+             credential_ref, enabled, created_at, updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+            params![
+                p.id,
+                p.name,
+                provider_kind_str(p.kind),
+                p.base_url,
+                p.model,
+                p.codex_path,
+                p.credential_ref.as_ref().map(|c| c.0.clone()),
+                p.enabled as i64,
+                p.created_at.to_rfc3339(),
+                p.updated_at.to_rfc3339(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_provider(&self, id: &str) -> AppResult<()> {
+        let conn = self.conn.lock().unwrap();
+        let n = conn.execute("DELETE FROM provider_configs WHERE id = ?1", params![id])?;
+        if n == 0 {
+            return Err(AppError::NotFound(format!("provider {id}")));
+        }
+        Ok(())
+    }
+
+    pub fn get_policy(&self) -> AppResult<ModelSelectionPolicy> {
+        let conn = self.conn.lock().unwrap();
+        let data: Option<String> = conn
+            .query_row("SELECT data FROM model_selection_policy WHERE id = 1", [], |r| r.get(0))
+            .optional()?;
+        match data {
+            Some(d) => Ok(serde_json::from_str(&d)?),
+            None => Ok(ModelSelectionPolicy::default()),
+        }
+    }
+
+    pub fn set_policy(&self, p: &ModelSelectionPolicy) -> AppResult<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT OR REPLACE INTO model_selection_policy (id, data) VALUES (1, ?1)",
+            params![serde_json::to_string(p)?],
+        )?;
+        Ok(())
+    }
+
     // ----- audit ---------------------------------------------------------
 
     pub fn insert_audit_record(&self, rec: &AuditRecord) -> AppResult<()> {
@@ -289,6 +363,36 @@ fn row_to_server(row: &Row) -> rusqlite::Result<ServerProfile> {
         created_at: parse_ts(&row.get::<_, String>(9)?),
         updated_at: parse_ts(&row.get::<_, String>(10)?),
     })
+}
+
+fn row_to_provider(row: &Row) -> rusqlite::Result<ProviderConfig> {
+    Ok(ProviderConfig {
+        id: row.get(0)?,
+        name: row.get(1)?,
+        kind: parse_provider_kind(&row.get::<_, String>(2)?),
+        base_url: row.get(3)?,
+        model: row.get(4)?,
+        codex_path: row.get(5)?,
+        credential_ref: row.get::<_, Option<String>>(6)?.map(CredentialRef),
+        enabled: row.get::<_, i64>(7)? != 0,
+        created_at: parse_ts(&row.get::<_, String>(8)?),
+        updated_at: parse_ts(&row.get::<_, String>(9)?),
+    })
+}
+
+fn provider_kind_str(k: ProviderKind) -> &'static str {
+    match k {
+        ProviderKind::CodexAppServer => "codex_app_server",
+        ProviderKind::OpenAiCompatible => "openai_compatible",
+        ProviderKind::Custom => "custom",
+    }
+}
+fn parse_provider_kind(s: &str) -> ProviderKind {
+    match s {
+        "codex_app_server" => ProviderKind::CodexAppServer,
+        "openai_compatible" => ProviderKind::OpenAiCompatible,
+        _ => ProviderKind::Custom,
+    }
 }
 
 fn parse_ts(s: &str) -> DateTime<Utc> {
@@ -418,6 +522,38 @@ mod tests {
         let got = s.get_audit_record(&rec.id).unwrap();
         assert_eq!(got.summary.as_deref(), Some("ok"));
         assert_eq!(s.get_audit_record("missing").unwrap_err().code(), "not_found");
+    }
+
+    #[test]
+    fn providers_and_policy_persist() {
+        let s = Store::open_in_memory().unwrap();
+        assert_eq!(s.list_providers().unwrap().len(), 0);
+        // default policy when unset
+        assert!(s.get_policy().unwrap().auto);
+
+        let p = ProviderConfig {
+            id: new_id(),
+            name: "Codex".into(),
+            kind: ProviderKind::CodexAppServer,
+            base_url: None,
+            model: Some("gpt-5-codex".into()),
+            codex_path: Some("codex".into()),
+            credential_ref: None,
+            enabled: true,
+            created_at: now(),
+            updated_at: now(),
+        };
+        s.upsert_provider(&p).unwrap();
+        assert_eq!(s.list_providers().unwrap().len(), 1);
+        assert_eq!(s.get_provider(&p.id).unwrap().kind, ProviderKind::CodexAppServer);
+
+        s.set_policy(&ModelSelectionPolicy { auto: false, default_provider_id: Some(p.id.clone()) }).unwrap();
+        let pol = s.get_policy().unwrap();
+        assert!(!pol.auto);
+        assert_eq!(pol.default_provider_id.as_deref(), Some(p.id.as_str()));
+
+        s.delete_provider(&p.id).unwrap();
+        assert_eq!(s.list_providers().unwrap().len(), 0);
     }
 
     #[test]
