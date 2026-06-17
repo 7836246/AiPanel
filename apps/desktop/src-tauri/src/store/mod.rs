@@ -18,7 +18,7 @@ pub struct Store {
 }
 
 /// 当前数据库 schema 版本号。
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 
 impl Store {
     /// 打开（并迁移）位于 `path` 的数据库。
@@ -98,6 +98,12 @@ impl Store {
                 "ALTER TABLE tasks ADD COLUMN data TEXT NOT NULL DEFAULT '{}';",
             )?;
         }
+        if version < 3 {
+            // 服务器收藏：新增 favorite 列，默认 0（未收藏）。
+            conn.execute_batch(
+                "ALTER TABLE server_profiles ADD COLUMN favorite INTEGER NOT NULL DEFAULT 0;",
+            )?;
+        }
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         Ok(())
     }
@@ -109,7 +115,8 @@ impl Store {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT id, name, host, port, username, auth_kind, credential_ref, status, facts, \
-             created_at, updated_at FROM server_profiles ORDER BY created_at ASC",
+             created_at, updated_at, favorite FROM server_profiles \
+             ORDER BY favorite DESC, created_at ASC",
         )?;
         let rows = stmt
             .query_map([], row_to_server)?
@@ -122,7 +129,7 @@ impl Store {
         let conn = self.conn.lock().unwrap();
         conn.query_row(
             "SELECT id, name, host, port, username, auth_kind, credential_ref, status, facts, \
-             created_at, updated_at FROM server_profiles WHERE id = ?1",
+             created_at, updated_at, favorite FROM server_profiles WHERE id = ?1",
             params![id],
             row_to_server,
         )
@@ -148,6 +155,7 @@ impl Store {
             auth_kind: input.auth_kind,
             credential_ref,
             status: ServerStatus::Unknown,
+            favorite: false,
             facts: Default::default(),
             created_at: ts,
             updated_at: ts,
@@ -155,8 +163,8 @@ impl Store {
         let conn = self.conn.lock().unwrap();
         conn.execute(
             "INSERT INTO server_profiles (id, name, host, port, username, auth_kind, \
-             credential_ref, status, facts, created_at, updated_at) \
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
+             credential_ref, status, facts, created_at, updated_at, favorite) \
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
             params![
                 profile.id,
                 profile.name,
@@ -169,6 +177,7 @@ impl Store {
                 serde_json::to_string(&profile.facts)?,
                 profile.created_at.to_rfc3339(),
                 profile.updated_at.to_rfc3339(),
+                profile.favorite as i64,
             ],
         )?;
         Ok(profile)
@@ -538,12 +547,29 @@ impl Store {
                 "UPDATE server_profiles SET status=?2, facts=?3, updated_at=?4 WHERE id=?1",
                 params![id, status_str(status), serde_json::to_string(f)?, now().to_rfc3339()],
             )?,
+            // 仅更新状态（连通性检测）时不动 updated_at——它表示「facts 的新鲜度」，
+            // 概览页据此显示「更新于」，纯连通刷新不应让该时间戳跳到当前。
             None => conn.execute(
-                "UPDATE server_profiles SET status=?2, updated_at=?3 WHERE id=?1",
-                params![id, status_str(status), now().to_rfc3339()],
+                "UPDATE server_profiles SET status=?2 WHERE id=?1",
+                params![id, status_str(status)],
             )?,
         };
         Ok(())
+    }
+
+    /// 设置某台服务器的收藏状态，返回更新后的 ServerProfile。
+    pub fn set_server_favorite(&self, id: &str, favorite: bool) -> AppResult<ServerProfile> {
+        {
+            let conn = self.conn.lock().unwrap();
+            let n = conn.execute(
+                "UPDATE server_profiles SET favorite=?2, updated_at=?3 WHERE id=?1",
+                params![id, favorite as i64, now().to_rfc3339()],
+            )?;
+            if n == 0 {
+                return Err(AppError::NotFound(format!("server {id}")));
+            }
+        }
+        self.get_server(id)
     }
 }
 
@@ -562,6 +588,7 @@ fn row_to_server(row: &Row) -> rusqlite::Result<ServerProfile> {
         auth_kind: parse_auth_kind(&row.get::<_, String>(5)?),
         credential_ref: row.get::<_, Option<String>>(6)?.map(CredentialRef),
         status: parse_status(&row.get::<_, String>(7)?),
+        favorite: row.get::<_, i64>(11)? != 0,
         facts,
         created_at: parse_ts(&row.get::<_, String>(9)?),
         updated_at: parse_ts(&row.get::<_, String>(10)?),
@@ -833,6 +860,34 @@ mod tests {
 
         s.delete_provider(&p.id).unwrap();
         assert_eq!(s.list_providers().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn favorite_defaults_false_and_sorts_first() {
+        let s = Store::open_in_memory().unwrap();
+        // 先建 a（默认排在前），再建 b。
+        let a = s.create_server(input("a")).unwrap();
+        let b = s.create_server(input("b")).unwrap();
+        assert!(!a.favorite, "新建服务器默认未收藏");
+
+        // 收藏 b → 返回的 profile 标记为已收藏。
+        let updated = s.set_server_favorite(&b.id, true).unwrap();
+        assert!(updated.favorite);
+
+        // list_servers 中 b 已收藏并置顶（在 a 之前）。
+        let listed = s.list_servers().unwrap();
+        assert_eq!(listed.len(), 2);
+        assert_eq!(listed[0].id, b.id);
+        assert!(listed[0].favorite);
+        assert!(!listed[1].favorite);
+
+        // 取消收藏后恢复原有顺序（a 在前）。
+        s.set_server_favorite(&b.id, false).unwrap();
+        let listed = s.list_servers().unwrap();
+        assert_eq!(listed[0].id, a.id);
+
+        // 对不存在的服务器返回 NotFound。
+        assert_eq!(s.set_server_favorite("missing", true).unwrap_err().code(), "not_found");
     }
 
     #[test]

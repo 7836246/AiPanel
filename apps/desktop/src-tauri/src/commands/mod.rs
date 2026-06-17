@@ -393,3 +393,62 @@ pub fn save_model_selection_policy(
 ) -> AppResult<()> {
     state.store.set_policy(&policy)
 }
+
+// ----- 收藏 / 批量连通刷新 ------------------------------------------------
+
+/// 设置某台服务器的收藏状态，返回更新后的 ServerProfile。
+#[tauri::command]
+pub fn set_server_favorite(
+    state: State<'_, AppState>,
+    id: String,
+    favorite: bool,
+) -> AppResult<ServerProfile> {
+    state.store.set_server_favorite(&id, favorite)
+}
+
+/// 对所有服务器并发做 SSH 连通性检查，把各自状态更新为 online/offline，
+/// 最后返回刷新后的服务器列表（按收藏 / 创建时间排序）。
+/// 单台检查失败（无法连接、密钥读取出错等）一律记为 offline，绝不中断整体。
+#[tauri::command]
+pub async fn refresh_all_servers(state: State<'_, AppState>) -> AppResult<Vec<ServerProfile>> {
+    // 先在持有 store 的同步阶段把每台服务器及其密钥取出，得到可移动进并发任务的 owned 数据，
+    // 避免把 &State / 非 Send 的连接句柄带进 spawn。
+    let servers = state.store.list_servers()?;
+    let mut prepared: Vec<(String, ServerProfile, Option<String>)> = Vec::with_capacity(servers.len());
+    for server in servers {
+        // 密钥读取失败不应让整轮刷新失败：取不到就当作没有密钥，让连通性检查自然判定为离线。
+        let secret = match &server.credential_ref {
+            Some(reference) => state.credentials.get_secret(reference).ok().flatten(),
+            None => None,
+        };
+        prepared.push((server.id.clone(), server, secret));
+    }
+
+    // 并发执行连通性检查（每台一个 tokio 任务）。check_connection 内部已带超时。
+    let mut set = tokio::task::JoinSet::new();
+    for (id, server, secret) in prepared {
+        set.spawn(async move {
+            let online = matches!(
+                crate::ssh::check_connection(&server, secret.as_deref()).await,
+                Ok(true)
+            );
+            (id, online)
+        });
+    }
+
+    // 收集结果并各自落库；任务 panic 视为该服务器离线，但 id 已无从得知，故仅记录日志。
+    while let Some(joined) = set.join_next().await {
+        match joined {
+            Ok((id, online)) => {
+                let status = if online { ServerStatus::Online } else { ServerStatus::Offline };
+                // facts 传 None：仅刷新连通状态，保留上次体检缓存的 facts。
+                if let Err(e) = state.store.set_server_status(&id, status, None) {
+                    eprintln!("[refresh] failed to persist status for server {id}: {}", e.code());
+                }
+            }
+            Err(e) => eprintln!("[refresh] connectivity task panicked: {e}"),
+        }
+    }
+
+    state.store.list_servers()
+}

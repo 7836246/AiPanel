@@ -102,6 +102,9 @@ pub struct ServerProfile {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub credential_ref: Option<CredentialRef>,
     pub status: ServerStatus,
+    /// 是否被用户收藏。收藏的服务器在列表中置顶。
+    #[serde(default)]
+    pub favorite: bool,
     /// 上次体检（doctor）得到的缓存快速信息（操作系统、CPU 等）。
     #[serde(default)]
     pub facts: std::collections::BTreeMap<String, String>,

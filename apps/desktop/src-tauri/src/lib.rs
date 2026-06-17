@@ -53,6 +53,8 @@ pub fn run() {
             commands::list_servers,
             commands::get_server,
             commands::create_server,
+            commands::set_server_favorite,
+            commands::refresh_all_servers,
             commands::update_server,
             commands::delete_server,
             commands::set_server_secret,

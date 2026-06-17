@@ -13,6 +13,7 @@ import ConfirmExecuteDialog from "./ConfirmExecuteDialog";
 import EditServerDialog from "./EditServerDialog";
 import SettingsPanel, { READONLY_DEFAULT_KEY } from "./SettingsPanel";
 import AuditView from "./AuditView";
+import Dashboard from "./Dashboard";
 import ServerOverview from "./ServerOverview";
 import CommandPalette, { type PaletteCommand } from "./CommandPalette";
 import {
@@ -21,6 +22,8 @@ import {
   checkSshConnection,
   createPlan,
   getModelSelectionPolicy,
+  setServerFavorite,
+  refreshAllServers,
   reviewPlan,
   runAgentTurn,
   runConfirmedPlanStream,
@@ -86,6 +89,14 @@ const ListIcon = ({ size = 16 }: IconProps) => (
 const ServerIcon = ({ size = 15 }: IconProps) => (
   <svg width={size} height={size} viewBox="0 0 16 16" {...stroke} strokeWidth={1.4}>
     <path d="M2.5 5.5l1-2h9l1 2v6.5a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1z" />
+  </svg>
+);
+const Grid = ({ size = 16 }: IconProps) => (
+  <svg width={size} height={size} viewBox="0 0 16 16" {...stroke} strokeWidth={1.4}>
+    <rect x="2.5" y="2.5" width="4.5" height="4.5" rx="1" />
+    <rect x="9" y="2.5" width="4.5" height="4.5" rx="1" />
+    <rect x="2.5" y="9" width="4.5" height="4.5" rx="1" />
+    <rect x="9" y="9" width="4.5" height="4.5" rx="1" />
   </svg>
 );
 const Gear = ({ size = 16 }: IconProps) => (
@@ -232,7 +243,8 @@ function StepRow({ summary, command, risk, status }: {
 // 主控制台：左侧服务器/历史导航，右侧计划生成、执行、体检、诊断与终端输出。
 export default function CodexConsole() {
   const [theme, toggleTheme] = useTheme();
-  const [view, setView] = useState<"console" | "audit" | "settings">("console");
+  const [view, setView] = useState<"console" | "audit" | "settings" | "dashboard">("console");
+  const [refreshing, setRefreshing] = useState(false);
   const [servers, setServers] = useState<ServerProfile[]>([]);
   const [selectedServerId, setSelectedServerId] = useState<string | null>(null);
   const [serverQuery, setServerQuery] = useState("");
@@ -277,6 +289,8 @@ export default function CodexConsole() {
   const inputRef = useRef<HTMLInputElement>(null);
   // 镜像当前任务到 ref，便于在切换/停止时读取最新值而不受闭包陈旧影响。
   const currentRef = useRef<TaskRecord | null>(null);
+  // 服务器列表请求序号:用于丢弃过期的收藏/刷新结果(与 runIdRef 分开,避免误伤运行中的任务)。
+  const serversReqRef = useRef(0);
   // 轻量通知（错误/成功提示），替代仅在终端里报错。
   const { toasts, push, dismiss } = useToasts();
 
@@ -328,6 +342,12 @@ export default function CodexConsole() {
       listProviders().then(setProviders).catch(() => {});
       getModelSelectionPolicy().then(setPolicy).catch(() => {});
     }
+  }, [view]);
+
+  // 进入「概览」时自动刷新一次所有服务器连通状态，保证在线/离线计数实时。
+  useEffect(() => {
+    if (view === "dashboard" && servers.length > 0) refreshAll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view]);
 
   // 选中服务器后静默做一次 SSH 连通性检查，更新在线状态点。
@@ -579,6 +599,32 @@ export default function CodexConsole() {
     setView("audit");
   }
 
+  // 切换服务器收藏（收藏置顶,故改动后重新拉取以应用后端排序）。
+  async function toggleFavorite(id: string, favorite: boolean) {
+    const reqId = ++serversReqRef.current;
+    try {
+      await setServerFavorite(id, favorite);
+      const next = await listServers();
+      if (serversReqRef.current === reqId) setServers(next); // 丢弃过期结果
+    } catch (e) {
+      push("danger", `收藏失败: ${errMsg(e)}`);
+    }
+  }
+
+  // 并发刷新所有服务器的连通状态（概览页「刷新全部」）。
+  async function refreshAll() {
+    const reqId = ++serversReqRef.current;
+    setRefreshing(true);
+    try {
+      const next = await refreshAllServers();
+      if (serversReqRef.current === reqId) setServers(next); // 丢弃过期结果
+    } catch (e) {
+      push("danger", `刷新失败: ${errMsg(e)}`);
+    } finally {
+      setRefreshing(false);
+    }
+  }
+
   // 命令面板的动作集合：把主界面的关键操作集中为可搜索/键盘可达的快捷入口。
   const paletteCommands: PaletteCommand[] = [
     { id: "ask", label: "新建提问", hint: "聚焦输入框", group: "操作", run: () => { setView("console"); inputRef.current?.focus(); } },
@@ -616,6 +662,7 @@ export default function CodexConsole() {
         </div>
         <div className="flex flex-col gap-px px-2 pb-1">
           <NavItem icon={<Pencil />} label="提问" active={view === "console"} onClick={() => setView("console")} />
+          <NavItem icon={<Grid />} label="概览" active={view === "dashboard"} onClick={() => setView("dashboard")} />
           <NavItem icon={<ListIcon />} label="审计" active={view === "audit"} onClick={openAudit} />
         </div>
 
@@ -649,6 +696,13 @@ export default function CodexConsole() {
                   >
                     <ServerIcon />
                     <span className="flex-1 truncate">{srv.name}</span>
+                    <button
+                      aria-label={srv.favorite ? "取消收藏" : "收藏"}
+                      onClick={(e) => { e.stopPropagation(); toggleFavorite(srv.id, !srv.favorite); }}
+                      className={`flex-none text-[12px] leading-none transition-opacity ${srv.favorite ? "text-risk-medium" : "text-fg-subtle opacity-0 group-hover:opacity-100"}`}
+                    >
+                      {srv.favorite ? "★" : "☆"}
+                    </button>
                     <IconButton aria-label="编辑服务器" size="sm" className="opacity-0 transition-opacity group-hover:opacity-100" onClick={(e) => { e.stopPropagation(); setEditing(srv); }}>
                       <Pencil size={12} />
                     </IconButton>
@@ -706,6 +760,19 @@ export default function CodexConsole() {
           <AuditView onNotify={push} />
         ) : view === "settings" ? (
           <SettingsPanel />
+        ) : view === "dashboard" ? (
+          servers.length === 0 ? (
+            <FirstRun onAdd={() => setAddOpen(true)} />
+          ) : (
+            <Dashboard
+              servers={servers}
+              selectedServerId={selectedServerId}
+              onSelect={(id) => { setSelectedServerId(id); setView("console"); }}
+              onToggleFavorite={toggleFavorite}
+              onRefreshAll={refreshAll}
+              refreshing={refreshing}
+            />
+          )
         ) : servers.length === 0 ? (
           <FirstRun onAdd={() => setAddOpen(true)} />
         ) : (

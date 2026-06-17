@@ -521,6 +521,7 @@ mod tests {
             auth_kind: auth,
             credential_ref: None,
             status: ServerStatus::Unknown,
+            favorite: false,
             facts: Default::default(),
             created_at: now(),
             updated_at: now(),

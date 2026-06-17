@@ -19,6 +19,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- Multi-server dashboard ("概览"): at-a-glance grid of all servers with live
+  status, key metrics (load/memory/disk bars from the last doctor run), a
+  "refresh all" that concurrently re-checks SSH connectivity, and click-to-open.
+- Server favorites: star a server to pin it to the top of the dashboard and
+  sidebar (persisted; backend orders favorites first).
 - Structured AI-diagnosis result: a card showing the tool-call trace (args /
   result preview / errors, sanitized) plus the conclusion, persisted and
   restorable from history (no longer terminal-only).

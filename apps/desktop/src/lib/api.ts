@@ -26,6 +26,8 @@ export interface ServerProfile {
   credentialRef?: string;
   status: ServerStatus;
   facts: Record<string, string>;
+  /** 是否收藏（置顶到概览/侧栏靠前）。 */
+  favorite: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -93,7 +95,7 @@ export const RISK_META: Record<RiskLevel, { label: string; dot: string; text: st
 
 // ---- 浏览器开发模式的 mock 数据（仅在非 Tauri 环境使用） -------------------
 
-const MOCK_SERVERS: ServerProfile[] = [
+let MOCK_SERVERS: ServerProfile[] = [
   mockServer("prod-ai-01", "root@10.0.0.4:22", "online"),
   mockServer("dev-ai-02", "root@10.0.0.5:22", "online"),
   mockServer("edge-node-03", "root@10.0.0.9:22", "online"),
@@ -112,6 +114,7 @@ function mockServer(name: string, target: string, status: ServerStatus): ServerP
     authKind: "password",
     status,
     facts: {},
+    favorite: false,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
@@ -120,7 +123,7 @@ function mockServer(name: string, target: string, status: ServerStatus): ServerP
 // ---- 后端命令封装 -------------------------------------------------------------
 
 export async function listServers(): Promise<ServerProfile[]> {
-  if (!isTauri()) return MOCK_SERVERS;
+  if (!isTauri()) return [...MOCK_SERVERS]; // 返回新引用,保证 React 能感知更新
   return invoke<ServerProfile[]>("list_servers");
 }
 
@@ -148,6 +151,24 @@ export async function deleteServer(id: string): Promise<void> {
 export async function setServerSecret(id: string, secret: string): Promise<void> {
   if (!isTauri()) return;
   return invoke<void>("set_server_secret", { id, secret });
+}
+
+/** 设置/取消服务器收藏（置顶到概览/侧栏靠前）。 */
+export async function setServerFavorite(id: string, favorite: boolean): Promise<ServerProfile> {
+  if (!isTauri()) {
+    // 重建数组(不就地改原对象),并按收藏置顶,贴合后端排序与 React 重渲染。
+    MOCK_SERVERS = MOCK_SERVERS
+      .map((s) => (s.id === id ? { ...s, favorite } : s))
+      .sort((a, b) => Number(b.favorite) - Number(a.favorite));
+    return MOCK_SERVERS.find((s) => s.id === id)!;
+  }
+  return invoke<ServerProfile>("set_server_favorite", { id, favorite });
+}
+
+/** 并发刷新所有服务器的 SSH 连通状态，返回更新后的列表。 */
+export async function refreshAllServers(): Promise<ServerProfile[]> {
+  if (!isTauri()) return [...MOCK_SERVERS]; // 新引用,保证重渲染
+  return invoke<ServerProfile[]>("refresh_all_servers");
 }
 
 /** 一条命令的执行结果（含退出码与脱敏后的输出）。 */
