@@ -176,6 +176,16 @@ impl Default for ModelSelectionPolicy {
     }
 }
 
+/// Result of testing a provider's configuration / reachability.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderTestResult {
+    pub ok: bool,
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
 // ---------------------------------------------------------------------------
 // Plans / tasks
 // ---------------------------------------------------------------------------

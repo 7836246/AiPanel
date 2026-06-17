@@ -7,8 +7,8 @@ use tauri::State;
 
 use crate::core::error::{AppError, AppResult};
 use crate::core::types::{
-    AuditRecord, CommandExecution, DoctorReport, Plan, RiskReview, ServerInput, ServerProfile,
-    ServerStatus, TaskStatus,
+    AuditRecord, CommandExecution, DoctorReport, Plan, ProviderConfig, ProviderTestResult,
+    RiskReview, ServerInput, ServerProfile, ServerStatus, TaskStatus,
 };
 use crate::AppState;
 
@@ -219,4 +219,10 @@ pub async fn execute_confirmed_plan(
     let record = crate::audit::record_for_plan(Some(&server_id), &intent, plan, review, executions, status);
     state.store.insert_audit_record(&record)?;
     Ok(record)
+}
+
+/// Test an agent provider config (validity / reachability) without saving it.
+#[tauri::command]
+pub fn test_provider(config: ProviderConfig) -> ProviderTestResult {
+    crate::agent::test_provider(&config)
 }

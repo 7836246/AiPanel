@@ -67,6 +67,7 @@ pub fn run() {
             commands::get_audit_record,
             commands::create_plan,
             commands::execute_confirmed_plan,
+            commands::test_provider,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
