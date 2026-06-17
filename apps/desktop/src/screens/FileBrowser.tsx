@@ -189,7 +189,16 @@ export default function FileBrowser({ serverId, serverName }: { serverId: string
   }
 
   // 点击目录项：文件夹进入，文件打开。
+  const parent = parentPath(path);
+  const dirty = openFile !== null && content !== savedContent;
+
+  // 有未保存改动时,切文件/切目录前先确认,避免静默丢弃远端文件的编辑。
+  function confirmDiscard(): boolean {
+    return !dirty || window.confirm("有未保存的修改,确定放弃吗?");
+  }
+
   function onEntryClick(entry: FileEntry) {
+    if (!confirmDiscard()) return;
     const full = joinPath(path, entry.name);
     if (entry.kind === "dir") {
       setQuery(""); // 进入新目录时清空过滤词
@@ -198,9 +207,6 @@ export default function FileBrowser({ serverId, serverName }: { serverId: string
       openFileAt(full);
     }
   }
-
-  const parent = parentPath(path);
-  const dirty = openFile !== null && content !== savedContent;
 
   // 当前目录按「先文件夹后文件」排序，并按搜索框过滤名称。
   const visibleEntries = useMemo(() => {
@@ -242,7 +248,7 @@ export default function FileBrowser({ serverId, serverName }: { serverId: string
           aria-label="上一级"
           size="sm"
           disabled={!parent || loading}
-          onClick={() => parent && loadDir(parent)}
+          onClick={() => { if (parent && confirmDiscard()) loadDir(parent); }}
           title="上一级目录"
         >
           <CornerLeftUp size={15} />
@@ -252,7 +258,7 @@ export default function FileBrowser({ serverId, serverName }: { serverId: string
             <span key={`${c.target}-${i}`} className="inline-flex items-center gap-0.5">
               {i > 0 && <ChevronRight size={13} className="flex-none text-fg-subtle" />}
               <button
-                onClick={() => loadDir(c.target)}
+                onClick={() => { if (confirmDiscard()) loadDir(c.target); }}
                 className={`rounded px-1.5 py-0.5 transition-colors hover:bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/60 ${
                   i === crumbs.length - 1 ? "font-semibold text-fg" : "text-fg-muted"
                 }`}

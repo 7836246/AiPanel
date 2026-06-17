@@ -43,7 +43,7 @@
   /* 文字近黑略冷主 / 冷灰 muted / 更浅冷灰 subtle */
   --color-fg: #1a1a1c;
   --color-fg-muted: #6b6b73;
-  --color-fg-subtle: #9a9aa3;
+  --color-fg-subtle: #74747c;
 
   /* 强调色收敛为近黑（Codex "send"），不靠彩色强调 */
   --color-brand: #1a1a1c;

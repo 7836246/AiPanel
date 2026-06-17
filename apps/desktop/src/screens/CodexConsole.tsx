@@ -1033,6 +1033,7 @@ export default function CodexConsole() {
                   </div>
                 ) : (
                   <ServerOverview
+                    key={selected?.id}
                     server={selected}
                     running={running}
                     onDoctor={runDoctor}
