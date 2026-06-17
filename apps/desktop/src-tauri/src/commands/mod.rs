@@ -8,8 +8,8 @@ use tauri::State;
 use crate::core::error::{AppError, AppResult};
 use crate::core::types::{
     AuditRecord, CommandExecution, CredentialRef, DoctorReport, ModelSelectionPolicy, Plan,
-    ProviderConfig, ProviderInput, ProviderTestResult, RiskReview, ServerInput, ServerProfile,
-    ServerStatus, TaskStatus,
+    ProviderConfig, ProviderInput, ProviderKind, ProviderTestResult, RiskReview, ServerInput,
+    ServerProfile, ServerStatus, TaskStatus,
 };
 use crate::AppState;
 
@@ -153,13 +153,43 @@ pub fn get_audit_record(state: State<'_, AppState>, id: String) -> AppResult<Aud
     state.store.get_audit_record(&id)
 }
 
-/// Turn a natural-language intent into a structured, reviewable plan.
+/// The provider to use for planning: the policy default if enabled, else the
+/// first enabled provider, else None (→ fall back to the offline mock engine).
+fn pick_provider(state: &AppState) -> AppResult<Option<ProviderConfig>> {
+    let enabled: Vec<ProviderConfig> =
+        state.store.list_providers()?.into_iter().filter(|p| p.enabled).collect();
+    if enabled.is_empty() {
+        return Ok(None);
+    }
+    if let Some(id) = state.store.get_policy()?.default_provider_id {
+        if let Some(p) = enabled.iter().find(|p| p.id == id) {
+            return Ok(Some(p.clone()));
+        }
+    }
+    Ok(enabled.into_iter().next())
+}
+
+/// Turn a natural-language intent into a structured, reviewable plan. Uses the
+/// configured AI provider when available; falls back to the offline mock engine
+/// if none is configured or the provider call fails (so the app always works).
 #[tauri::command]
 pub fn create_plan(
     state: State<'_, AppState>,
     intent: String,
     server_id: Option<String>,
 ) -> AppResult<Plan> {
+    if let Some(provider) = pick_provider(&state)? {
+        if !matches!(provider.kind, ProviderKind::Custom) {
+            let key = provider
+                .credential_ref
+                .as_ref()
+                .and_then(|r| state.credentials.get_secret(r).ok().flatten());
+            match crate::agent::plan_with_provider(&provider, key, &intent, server_id.as_deref()) {
+                Ok(plan) => return Ok(plan),
+                Err(e) => eprintln!("[plan] provider '{}' failed ({}); falling back to mock", provider.name, e.code()),
+            }
+        }
+    }
     state.plan_engine.create_plan(&intent, server_id.as_deref())
 }
 
@@ -223,9 +253,21 @@ pub async fn execute_confirmed_plan(
 }
 
 /// Test an agent provider config (validity / reachability) without saving it.
+/// The API key comes from the call (a key being typed in the form) or, failing
+/// that, from the credential store for an already-saved provider.
 #[tauri::command]
-pub fn test_provider(config: ProviderConfig) -> ProviderTestResult {
-    crate::agent::test_provider(&config)
+pub fn test_provider(
+    state: State<'_, AppState>,
+    config: ProviderConfig,
+    api_key: Option<String>,
+) -> ProviderTestResult {
+    let key = api_key.or_else(|| {
+        config
+            .credential_ref
+            .as_ref()
+            .and_then(|r| state.credentials.get_secret(r).ok().flatten())
+    });
+    crate::agent::test_provider(&config, key)
 }
 
 /// The AiPanel Tools surface the agent may call (names, permissions, audit policy).

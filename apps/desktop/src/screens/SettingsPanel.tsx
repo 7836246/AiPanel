@@ -197,7 +197,7 @@ export default function SettingsPanel() {
               <Button
                 variant="secondary"
                 size="sm"
-                onClick={async () => setTestResult(await testProvider(form))}
+                onClick={async () => setTestResult(await testProvider(form, apiKey || undefined))}
               >
                 测试连接
               </Button>

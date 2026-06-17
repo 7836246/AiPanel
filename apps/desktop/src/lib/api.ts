@@ -409,7 +409,7 @@ export async function saveModelSelectionPolicy(policy: ModelSelectionPolicy): Pr
   return invoke<void>("save_model_selection_policy", { policy });
 }
 
-export async function testProvider(input: ProviderInput): Promise<ProviderTestResult> {
+export async function testProvider(input: ProviderInput, apiKey?: string): Promise<ProviderTestResult> {
   const config: ProviderConfig = {
     id: input.id ?? "test",
     name: input.name,
@@ -423,7 +423,7 @@ export async function testProvider(input: ProviderInput): Promise<ProviderTestRe
   };
   if (!isTauri())
     return { ok: input.kind !== "openai_compatible" || !!input.baseUrl, message: "(browser mock) 配置检查" };
-  return invoke<ProviderTestResult>("test_provider", { config });
+  return invoke<ProviderTestResult>("test_provider", { config, apiKey: apiKey ?? null });
 }
 
 export async function credentialBackend(): Promise<string> {
