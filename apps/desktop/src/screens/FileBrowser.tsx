@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type JSX } from "rea
 import {
   ChevronRight,
   CornerLeftUp,
+  Download,
   File as FileIcon,
   FileCode,
   FileText,
@@ -10,12 +11,15 @@ import {
   RefreshCw,
   Save,
   Search,
+  Upload,
 } from "lucide-react";
 import { Button, IconButton, Input, Spinner } from "@aipanel/ui";
 import {
   fsList,
   fsRead,
   fsWrite,
+  fsUpload,
+  fsDownload,
   type DirListing,
   type FileEntry,
   type FileContent,
@@ -208,6 +212,25 @@ export default function FileBrowser({ serverId, serverName }: { serverId: string
     }
   }
 
+  // 上传:选本地文件 → scp 到当前目录 → 刷新列表。
+  async function handleUpload() {
+    try {
+      const name = await fsUpload(serverId, path);
+      if (name) loadDir(path);
+    } catch (e) {
+      setError(`上传失败: ${errMsg(e)}`);
+    }
+  }
+
+  // 下载:把某个远端文件 scp 到本地(弹保存对话框)。
+  async function handleDownload(entry: FileEntry) {
+    try {
+      await fsDownload(serverId, joinPath(path, entry.name));
+    } catch (e) {
+      setError(`下载失败: ${errMsg(e)}`);
+    }
+  }
+
   // 当前目录按「先文件夹后文件」排序，并按搜索框过滤名称。
   const visibleEntries = useMemo(() => {
     const sorted = sortEntries(listing?.entries ?? []);
@@ -274,6 +297,9 @@ export default function FileBrowser({ serverId, serverName }: { serverId: string
         <IconButton aria-label="刷新" size="sm" disabled={loading} onClick={() => loadDir(path)} title="刷新当前目录">
           <RefreshCw size={15} className={loading ? "animate-spin" : undefined} />
         </IconButton>
+        <Button variant="secondary" size="sm" onClick={handleUpload} title="上传本地文件到当前目录">
+          <Upload size={13} /> 上传
+        </Button>
       </div>
 
       {/* 主区：左列表 + 右编辑器 */}
@@ -337,6 +363,17 @@ export default function FileBrowser({ serverId, serverName }: { serverId: string
                     <span className="hidden flex-none text-[11px] text-fg-subtle lg:inline">
                       {formatMtime(entry.mtime)}
                     </span>
+                    {entry.kind !== "dir" && (
+                      <IconButton
+                        aria-label="下载"
+                        size="sm"
+                        className="flex-none opacity-0 transition-opacity group-hover:opacity-100"
+                        onClick={(e) => { e.stopPropagation(); void handleDownload(entry); }}
+                        title="下载到本地"
+                      >
+                        <Download size={13} />
+                      </IconButton>
+                    )}
                   </div>
                 );
               })

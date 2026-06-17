@@ -7,6 +7,7 @@
  * 绝不存放在这些结构体中。
  */
 import { invoke, Channel } from "@tauri-apps/api/core";
+import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 
 /** 判断当前是否运行在 Tauri 壳内（否则为浏览器开发模式）。 */
 export const isTauri = (): boolean =>
@@ -470,6 +471,25 @@ export async function fsRead(serverId: string, path: string): Promise<FileConten
 export async function fsWrite(serverId: string, path: string, content: string): Promise<void> {
   if (!isTauri()) return;
   return invoke<void>("fs_write", { id: serverId, path, content });
+}
+
+/** 选择本地文件并上传到远端目录(scp);返回上传的文件名,取消返回 null。 */
+export async function fsUpload(serverId: string, remoteDir: string): Promise<string | null> {
+  if (!isTauri()) return null;
+  const picked = await openDialog({ multiple: false, directory: false, title: "选择要上传的本地文件" });
+  if (!picked || typeof picked !== "string") return null;
+  await invoke<void>("fs_upload", { id: serverId, localPath: picked, remoteDir });
+  return picked.split("/").pop() ?? picked;
+}
+
+/** 把远端文件下载到本地(弹保存对话框,scp);取消返回 false。 */
+export async function fsDownload(serverId: string, remotePath: string): Promise<boolean> {
+  if (!isTauri()) return false;
+  const name = remotePath.split("/").pop() || "download";
+  const dest = await saveDialog({ defaultPath: name, title: "保存到本地" });
+  if (!dest) return false;
+  await invoke<void>("fs_download", { id: serverId, remotePath, localPath: dest });
+  return true;
 }
 
 // ---- 审计/任务 搜索与导出 -------------------------------------

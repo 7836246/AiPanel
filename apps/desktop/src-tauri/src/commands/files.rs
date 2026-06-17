@@ -55,3 +55,37 @@ pub async fn fs_write(
     };
     crate::files::write(&server, secret.as_deref(), &path, &content).await
 }
+
+/// 把本地文件**上传**到某台服务器的远程目录（scp over SSH）。
+/// 面向用户的操作，绝不暴露给 AI / Agent。
+#[tauri::command]
+pub async fn fs_upload(
+    state: State<'_, AppState>,
+    id: String,
+    local_path: String,
+    remote_dir: String,
+) -> AppResult<()> {
+    let server = state.store.get_server(&id)?;
+    let secret = match &server.credential_ref {
+        Some(reference) => state.credentials.get_secret(reference)?,
+        None => None,
+    };
+    crate::files::upload(&server, secret.as_deref(), &local_path, &remote_dir).await
+}
+
+/// 把某台服务器上的远程文件**下载**到本地路径（scp over SSH）。
+/// 面向用户的操作，绝不暴露给 AI / Agent。
+#[tauri::command]
+pub async fn fs_download(
+    state: State<'_, AppState>,
+    id: String,
+    remote_path: String,
+    local_path: String,
+) -> AppResult<()> {
+    let server = state.store.get_server(&id)?;
+    let secret = match &server.credential_ref {
+        Some(reference) => state.credentials.get_secret(reference)?,
+        None => None,
+    };
+    crate::files::download(&server, secret.as_deref(), &remote_path, &local_path).await
+}

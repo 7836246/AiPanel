@@ -41,6 +41,7 @@ fn app_version() -> String {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&dir)?;
@@ -76,6 +77,8 @@ pub fn run() {
             commands::files::fs_list,
             commands::files::fs_read,
             commands::files::fs_write,
+            commands::files::fs_upload,
+            commands::files::fs_download,
             commands::tasks::list_tasks,
             commands::tasks::get_task,
             commands::tasks::save_task,

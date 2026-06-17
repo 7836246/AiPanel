@@ -584,6 +584,124 @@ fn which(bin: &str) -> Option<std::path::PathBuf> {
         .find(|p| p.is_file())
 }
 
+/// 用系统自带的 `scp` 在本地与远程之间传输文件——**用户直接操作**的文件
+/// 上传/下载（见 `files/mod.rs`），这条能力**绝不暴露给 AI / Agent**。
+///
+/// 认证方式与 [`build_invocation`] 等价（agent=BatchMode；key=`-i` 临时 0600
+/// 密钥文件 + IdentitiesOnly；password=`sshpass -e scp ...` + `SSHPASS` 环境变量），
+/// 但运行的程序是 `scp` 而不是 `ssh`，且 **scp 的端口选项是大写 `-P`**（ssh 用小写 `-p`）。
+///
+/// `args_after_opts` 是拼好的源/目的参数（含 `user@host:remote`，由调用方按
+/// 上传 / 下载方向组装）。它们直接进 argv、不经本地 shell——但 scp 的**远端**
+/// 路径会被远端 shell 再次解析，因此调用方需自行对远端路径做 shell 转义（见 `files/mod.rs`）。
+///
+/// 受 `timeout(duration)` 约束：超时则杀掉子进程（`kill_on_drop`）并返回 `Ssh` 错误；
+/// scp 退出码非 0 时，把脱敏后的 stderr 纳入 `Ssh` 错误返回。
+pub async fn run_scp(
+    server: &ServerProfile,
+    secret: Option<&str>,
+    args_after_opts: Vec<String>,
+    duration: Duration,
+) -> AppResult<()> {
+    let port = server.port.to_string();
+    // `_keyfile` 在本函数返回前保持存活——临时 0600 密钥文件在 drop 时删除，
+    // 因此必须持有到 spawn + wait 全部结束。
+    let mut _keyfile: Option<KeyFile> = None;
+    let mut env: Option<(String, String)> = None;
+
+    let (program, args) = match server.auth_kind {
+        AuthKind::Agent => {
+            let mut a = vec!["-o".into(), "BatchMode=yes".into()];
+            a.extend(common_opts(CONNECT_TIMEOUT_SECS));
+            a.push("-P".into());
+            a.push(port);
+            a.extend(args_after_opts);
+            ("scp".to_string(), a)
+        }
+        AuthKind::Key => {
+            let secret = secret.ok_or_else(|| AppError::Credential("no SSH key stored".into()))?;
+            let kf = KeyFile::write(secret)?;
+            let mut a = vec![
+                "-o".into(),
+                "BatchMode=yes".into(),
+                "-o".into(),
+                "IdentitiesOnly=yes".into(),
+                "-i".into(),
+                kf.path.display().to_string(),
+            ];
+            a.extend(common_opts(CONNECT_TIMEOUT_SECS));
+            a.push("-P".into());
+            a.push(port);
+            a.extend(args_after_opts);
+            _keyfile = Some(kf);
+            ("scp".to_string(), a)
+        }
+        AuthKind::Password => {
+            let secret =
+                secret.ok_or_else(|| AppError::Credential("no SSH password stored".into()))?;
+            if which("sshpass").is_none() {
+                return Err(AppError::Ssh(
+                    "password auth needs `sshpass` installed; prefer key or agent auth".into(),
+                ));
+            }
+            // sshpass -e 从 SSHPASS 环境变量读取密码（绝不进 argv，避免在 `ps` 中可见）。
+            let mut a = vec![
+                "-e".into(),
+                "scp".into(),
+                "-o".into(),
+                "PreferredAuthentications=password".into(),
+                "-o".into(),
+                "PubkeyAuthentication=no".into(),
+            ];
+            a.extend(common_opts(CONNECT_TIMEOUT_SECS));
+            a.push("-P".into());
+            a.push(port);
+            a.extend(args_after_opts);
+            env = Some(("SSHPASS".to_string(), secret.to_string()));
+            ("sshpass".to_string(), a)
+        }
+    };
+
+    // 以子进程方式启动 scp：stdin 设为 null，捕获 stdout/stderr，并启用 kill-on-drop。
+    let mut cmd = Command::new(&program);
+    cmd.args(&args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    if let Some((k, v)) = &env {
+        cmd.env(k, v);
+    }
+    let child = cmd
+        .spawn()
+        .map_err(|e| AppError::Ssh(format!("failed to launch scp: {e}")))?;
+
+    // 受超时约束：超时则子进程随 `child` drop 被杀（kill_on_drop）。
+    let output = match timeout(duration, child.wait_with_output()).await {
+        Ok(res) => res.map_err(|e| AppError::Ssh(e.to_string()))?,
+        Err(_) => {
+            return Err(AppError::Ssh(format!(
+                "scp timed out after {}s",
+                duration.as_secs()
+            )));
+        }
+    };
+
+    if !output.status.success() {
+        // 非 0 退出码：把脱敏后的 stderr 纳入错误（私钥/IP/token 等会被改写）。
+        let stderr = sanitize(&String::from_utf8_lossy(&output.stderr));
+        let stderr = stderr.trim();
+        let msg = if stderr.is_empty() {
+            format!("scp failed with exit code {}", output.status.code().unwrap_or(-1))
+        } else {
+            stderr.to_string()
+        };
+        return Err(AppError::Ssh(msg));
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

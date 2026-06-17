@@ -10,7 +10,7 @@
 
 use crate::core::error::{AppError, AppResult};
 use crate::core::types::{DirListing, FileContent, FileEntry, FileKind, ServerProfile};
-use crate::ssh::{run_command, run_command_with_input, DEFAULT_TIMEOUT};
+use crate::ssh::{run_command, run_command_with_input, run_scp, DEFAULT_TIMEOUT};
 
 /// 读取文件的上限：~256KB。多取 1 字节（262145 = 262144 + 1），
 /// 若实际读到 > 262144 字节即说明文件被截断。
@@ -208,6 +208,59 @@ pub async fn write(
         return Err(AppError::Ssh(msg));
     }
     Ok(())
+}
+
+/// 把本地文件**上传**到远程目录（scp over SSH）—— **用户直接操作**，绝不暴露给 AI。
+///
+/// 目的串形如 `user@host:'<remote_dir>'`：远端路径放进 scp 的 `host:` 之后会被
+/// **远端 shell** 再次解析，因此对 `remote_dir` 用单引号包裹（`shell_quote`）防止
+/// 空格/特殊字符破坏路径。`local_path` 作为本地 argv 参数直接传给 scp（不经本地
+/// shell），无需 shell 转义。
+pub async fn upload(
+    server: &ServerProfile,
+    secret: Option<&str>,
+    local_path: &str,
+    remote_dir: &str,
+) -> AppResult<()> {
+    // 远端路径经远端 shell 解析，单引号包裹做最小转义。
+    let dest = format!(
+        "{}@{}:{}",
+        server.username,
+        server.host,
+        shell_quote(remote_dir)
+    );
+    run_scp(
+        server,
+        secret,
+        vec![local_path.to_string(), dest],
+        DEFAULT_TIMEOUT,
+    )
+    .await
+}
+
+/// 把远程文件**下载**到本地路径（scp over SSH）—— **用户直接操作**，绝不暴露给 AI。
+///
+/// 源串形如 `user@host:'<remote_path>'`：远端路径同样经远端 shell 解析，单引号
+/// 包裹做最小转义。`local_path` 作为本地 argv 参数直接传给 scp（不经本地 shell）。
+pub async fn download(
+    server: &ServerProfile,
+    secret: Option<&str>,
+    remote_path: &str,
+    local_path: &str,
+) -> AppResult<()> {
+    let src = format!(
+        "{}@{}:{}",
+        server.username,
+        server.host,
+        shell_quote(remote_path)
+    );
+    run_scp(
+        server,
+        secret,
+        vec![src, local_path.to_string()],
+        DEFAULT_TIMEOUT,
+    )
+    .await
 }
 
 #[cfg(test)]
