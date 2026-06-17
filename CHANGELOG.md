@@ -19,9 +19,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- Foreground health monitoring: while the app is visible it polls server
+  connectivity every 60s; the 概览 nav shows a red badge counting servers needing
+  attention (offline, or last doctor's disk/memory >90%), and cards flag "资源紧张".
 - File manager ("文件"): browse the selected server's filesystem (SFTP over SSH —
-  directory listing, view, and edit/save), Codex-style file tree with typed icons,
-  breadcrumb path, and search. User-operated, not exposed to the AI agent.
+  directory listing, view, edit/save, and upload/download via native file dialogs),
+  Codex-style file tree with typed icons, breadcrumb path, and search.
+  User-operated, not exposed to the AI agent.
 - Visible connection flow: a "连接/重连" action with a live 连接中/已连接/失败 state on
   the server overview, a "正在连接 user@host…" banner in the terminal, and a
   连接中 indicator on dashboard cards while refreshing.
