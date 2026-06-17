@@ -1,11 +1,19 @@
 import type { JSX } from "react";
-import { RefreshCw, Server, Star } from "lucide-react";
+import { RefreshCw, Server, Star, Stethoscope } from "lucide-react";
 import { Button, IconButton, Spinner } from "@aipanel/ui";
 import type { ServerProfile, ServerStatus } from "../lib/api";
 
 // 状态点颜色：在线=安全绿、离线=阻断红、未知=次要灰（与 ServerOverview 保持一致）。
-const statusDot = (s: ServerStatus): string =>
-  s === "online" ? "bg-risk-low" : s === "offline" ? "bg-risk-blocked" : "bg-fg-subtle";
+const statusText = (s: ServerStatus): string =>
+  s === "online" ? "在线" : s === "offline" ? "离线" : "未知";
+
+// 状态小徽标配色(软底)。
+const statusChip = (s: ServerStatus): string =>
+  s === "online"
+    ? "bg-risk-low-soft text-risk-low"
+    : s === "offline"
+      ? "bg-risk-blocked-soft text-risk-blocked"
+      : "bg-hover text-fg-subtle";
 
 // 关注的关键指标键名（按此顺序在卡内展示），仅取 facts 中存在的项。
 const METRIC_KEYS = ["Load", "Memory", "Disk", "Services", "Containers", "Ports"] as const;
@@ -68,18 +76,22 @@ function ServerTile({
           onSelect(server.id);
         }
       }}
-      className={`flex cursor-pointer flex-col gap-3 rounded-md border px-4 py-3.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand ${
+      className={`flex cursor-pointer flex-col gap-2.5 rounded-md border px-3.5 py-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand ${
         selected
           ? "border-border-strong bg-selected"
-          : "border-border bg-surface-1 hover:bg-hover"
+          : "border-border bg-surface-1 hover:bg-hover hover:border-border-strong"
       }`}
     >
-      {/* 头部：状态点 + 名称 + 收藏星 */}
+      {/* 头部：名称 + 状态徽标 + 收藏星 */}
       <div className="flex items-start gap-2">
-        <span className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${statusDot(server.status)}`} />
         <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-semibold">{server.name}</div>
-          <div className="truncate font-mono text-[11px] text-fg-subtle">
+          <div className="flex items-center gap-1.5">
+            <span className="min-w-0 truncate text-[13.5px] font-semibold">{server.name}</span>
+            <span className={`flex-none rounded px-1.5 py-0.5 text-[10px] font-medium ${statusChip(server.status)}`}>
+              {statusText(server.status)}
+            </span>
+          </div>
+          <div className="mt-0.5 truncate font-mono text-[11px] text-fg-subtle">
             {server.username}@{server.host}:{server.port}
           </div>
         </div>
@@ -124,15 +136,18 @@ function ServerTile({
           })}
         </div>
       ) : (
-        <div className="rounded border border-dashed border-border px-3 py-2.5 text-center text-[12px] text-fg-subtle">
-          尚无体检数据
+        <div className="flex items-center gap-1.5 text-[11.5px] text-fg-subtle">
+          <Stethoscope size={13} className="flex-none" />
+          尚无体检数据 · 点开卡片做一次只读体检
         </div>
       )}
 
-      {/* 末行：最近更新时间 */}
-      <div className="text-[10px] text-fg-subtle">
-        更新于 {new Date(server.updatedAt).toLocaleString()}
-      </div>
+      {/* 末行:仅在有体检数据时展示更新时间(避免对未体检卡片显示误导性时间) */}
+      {metrics.length > 0 && (
+        <div className="text-[10px] text-fg-subtle">
+          更新于 {new Date(server.updatedAt).toLocaleString()}
+        </div>
+      )}
     </div>
   );
 }
