@@ -266,6 +266,85 @@ export async function executeConfirmedPlan(
   });
 }
 
+// ---- tasks / runs (user-facing history) -----------------------------------
+
+export type TaskKind = "plan" | "diagnose" | "doctor";
+
+export interface TaskRecord {
+  id: string;
+  serverId?: string;
+  title: string;
+  intent: string;
+  kind: TaskKind;
+  plan?: Plan;
+  riskReview?: RiskReview;
+  executions: CommandExecution[];
+  summary?: string;
+  status: TaskStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+let mockTasks: TaskRecord[] = [];
+
+export async function listTasks(serverId?: string, limit = 100): Promise<TaskRecord[]> {
+  if (!isTauri())
+    return mockTasks.filter((t) => !serverId || t.serverId === serverId).slice(0, limit);
+  return invoke<TaskRecord[]>("list_tasks", { serverId, limit });
+}
+
+export async function getTask(id: string): Promise<TaskRecord> {
+  if (!isTauri()) return mockTasks.find((t) => t.id === id)!;
+  return invoke<TaskRecord>("get_task", { id });
+}
+
+export async function saveTask(task: TaskRecord): Promise<void> {
+  if (!isTauri()) {
+    mockTasks = [task, ...mockTasks.filter((t) => t.id !== task.id)];
+    return;
+  }
+  return invoke<void>("save_task", { task });
+}
+
+export async function deleteTask(id: string): Promise<void> {
+  if (!isTauri()) {
+    mockTasks = mockTasks.filter((t) => t.id !== id);
+    return;
+  }
+  return invoke<void>("delete_task", { id });
+}
+
+// ---- streaming plan execution ---------------------------------------------
+
+export type PlanExecEvent =
+  | { type: "step"; index: number; total: number; summary: string; status: "running" | "done" | "failed" }
+  | { type: "line"; text: string; stderr: boolean }
+  | { type: "done"; status: "done" | "failed"; exitCode: number };
+
+export async function runConfirmedPlanStream(
+  plan: Plan,
+  opts: { confirmed: boolean; doubleConfirmed: boolean; readOnlyMode?: boolean },
+  onEvent: (ev: PlanExecEvent) => void
+): Promise<AuditRecord> {
+  if (!isTauri()) {
+    const rec = await executeConfirmedPlan(plan, opts);
+    for (const ex of rec.executions) {
+      onEvent({ type: "line", text: `$ ${ex.command}`, stderr: false });
+      if (ex.stdout) for (const l of ex.stdout.split("\n")) onEvent({ type: "line", text: l, stderr: false });
+    }
+    return rec;
+  }
+  const ch = new Channel<PlanExecEvent>();
+  ch.onmessage = onEvent;
+  return invoke<AuditRecord>("run_confirmed_plan_stream", {
+    plan,
+    confirmed: opts.confirmed,
+    doubleConfirmed: opts.doubleConfirmed,
+    readOnlyMode: opts.readOnlyMode ?? false,
+    onEvent: ch,
+  });
+}
+
 export async function serverDoctorPlan(id: string): Promise<Plan> {
   if (!isTauri())
     return {

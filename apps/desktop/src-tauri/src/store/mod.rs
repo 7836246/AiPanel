@@ -17,7 +17,7 @@ pub struct Store {
     conn: Mutex<Connection>,
 }
 
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 
 impl Store {
     /// Open (and migrate) a database at `path`.
@@ -88,8 +88,15 @@ impl Store {
                 );
                 "#,
             )?;
-            conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         }
+        if version < 2 {
+            // The user-facing run history: keep the existing queryable columns and
+            // stash the full TaskRecord JSON in `data` (mirrors audit_records).
+            conn.execute_batch(
+                "ALTER TABLE tasks ADD COLUMN data TEXT NOT NULL DEFAULT '{}';",
+            )?;
+        }
+        conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         Ok(())
     }
 
@@ -323,6 +330,74 @@ impl Store {
         }
     }
 
+    // ----- tasks (run history) -------------------------------------------
+
+    pub fn upsert_task(&self, rec: &TaskRecord) -> AppResult<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT OR REPLACE INTO tasks (id, server_id, intent, status, created_at, updated_at, data) \
+             VALUES (?1,?2,?3,?4,?5,?6,?7)",
+            params![
+                rec.id,
+                rec.server_id,
+                rec.intent,
+                task_status_str(rec.status),
+                rec.created_at.to_rfc3339(),
+                rec.updated_at.to_rfc3339(),
+                serde_json::to_string(rec)?,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn list_tasks(&self, server_id: Option<&str>, limit: u32) -> AppResult<Vec<TaskRecord>> {
+        let conn = self.conn.lock().unwrap();
+        let rows: Vec<String> = match server_id {
+            Some(sid) => {
+                let mut stmt = conn.prepare(
+                    "SELECT data FROM tasks WHERE server_id = ?1 ORDER BY created_at DESC LIMIT ?2",
+                )?;
+                let v = stmt
+                    .query_map(params![sid, limit], |row| row.get::<_, String>(0))?
+                    .collect::<Result<Vec<_>, _>>()?;
+                v
+            }
+            None => {
+                let mut stmt =
+                    conn.prepare("SELECT data FROM tasks ORDER BY created_at DESC LIMIT ?1")?;
+                let v = stmt
+                    .query_map(params![limit], |row| row.get::<_, String>(0))?
+                    .collect::<Result<Vec<_>, _>>()?;
+                v
+            }
+        };
+        let mut out = Vec::with_capacity(rows.len());
+        for data in rows {
+            out.push(serde_json::from_str(&data)?);
+        }
+        Ok(out)
+    }
+
+    pub fn get_task(&self, id: &str) -> AppResult<TaskRecord> {
+        let conn = self.conn.lock().unwrap();
+        let data: Option<String> = conn
+            .query_row("SELECT data FROM tasks WHERE id = ?1", params![id], |r| r.get(0))
+            .optional()?;
+        match data {
+            Some(d) => Ok(serde_json::from_str(&d)?),
+            None => Err(AppError::NotFound(format!("task {id}"))),
+        }
+    }
+
+    pub fn delete_task(&self, id: &str) -> AppResult<()> {
+        let conn = self.conn.lock().unwrap();
+        let n = conn.execute("DELETE FROM tasks WHERE id = ?1", params![id])?;
+        if n == 0 {
+            return Err(AppError::NotFound(format!("task {id}")));
+        }
+        Ok(())
+    }
+
     /// Update the cached status + facts after a doctor/connectivity run.
     pub fn set_server_status(
         &self,
@@ -415,6 +490,20 @@ fn parse_auth_kind(s: &str) -> AuthKind {
         _ => AuthKind::Agent,
     }
 }
+/// Stored in the `tasks.status` column (queryable mirror of the JSON `status`).
+/// Matches `TaskStatus`'s snake_case serde representation.
+fn task_status_str(s: TaskStatus) -> &'static str {
+    match s {
+        TaskStatus::Pending => "pending",
+        TaskStatus::Planning => "planning",
+        TaskStatus::AwaitingConfirmation => "awaiting_confirmation",
+        TaskStatus::Running => "running",
+        TaskStatus::Completed => "completed",
+        TaskStatus::Failed => "failed",
+        TaskStatus::Blocked => "blocked",
+    }
+}
+
 fn status_str(s: ServerStatus) -> &'static str {
     match s {
         ServerStatus::Online => "online",
@@ -522,6 +611,45 @@ mod tests {
         let got = s.get_audit_record(&rec.id).unwrap();
         assert_eq!(got.summary.as_deref(), Some("ok"));
         assert_eq!(s.get_audit_record("missing").unwrap_err().code(), "not_found");
+    }
+
+    #[test]
+    fn tasks_round_trip_and_filter() {
+        let s = Store::open_in_memory().unwrap();
+        assert!(s.list_tasks(None, 10).unwrap().is_empty());
+
+        let rec = TaskRecord {
+            id: new_id(),
+            server_id: Some("srv".into()),
+            title: "只读体检".into(),
+            intent: "看看磁盘".into(),
+            kind: TaskKind::Doctor,
+            plan: None,
+            risk_review: None,
+            executions: vec![],
+            summary: Some("ok".into()),
+            status: TaskStatus::Completed,
+            created_at: now(),
+            updated_at: now(),
+        };
+        s.upsert_task(&rec).unwrap();
+        // upsert is idempotent on id
+        s.upsert_task(&rec).unwrap();
+
+        let all = s.list_tasks(None, 10).unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].title, "只读体检");
+
+        assert_eq!(s.list_tasks(Some("srv"), 10).unwrap().len(), 1);
+        assert!(s.list_tasks(Some("other"), 10).unwrap().is_empty());
+
+        let got = s.get_task(&rec.id).unwrap();
+        assert_eq!(got.summary.as_deref(), Some("ok"));
+        assert_eq!(s.get_task("missing").unwrap_err().code(), "not_found");
+
+        s.delete_task(&rec.id).unwrap();
+        assert!(s.list_tasks(None, 10).unwrap().is_empty());
+        assert_eq!(s.delete_task(&rec.id).unwrap_err().code(), "not_found");
     }
 
     #[test]

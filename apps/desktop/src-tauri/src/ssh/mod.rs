@@ -301,6 +301,101 @@ pub async fn run_readonly_streamed(
     })
 }
 
+/// Streaming counterpart to [`run_command`]: runs an **already-confirmed** step
+/// (including writes) and invokes `on_line` for each line as it arrives, so the
+/// console can fill in live. Identical to [`run_readonly_streamed`] EXCEPT there
+/// is no `Low`-classification gate — confirmation/double-confirmation has already
+/// been enforced by the caller (execute_confirmed_plan / run_confirmed_plan_stream).
+/// The line is sanitized before the callback sees it; `stderr` flags whether the
+/// line came from stderr. The returned [`CommandExecution`] carries the full
+/// sanitized output, identical in shape to [`run_command`].
+pub async fn run_command_streamed(
+    server: &ServerProfile,
+    secret: Option<&str>,
+    command: &str,
+    duration: Duration,
+    on_line: &(dyn Fn(&str, bool) + Sync + Send),
+) -> AppResult<CommandExecution> {
+    let started_at = crate::core::types::now();
+    let start = Instant::now();
+
+    // `inv` owns the keyfile (if any) for the lifetime of the call.
+    let inv = build_invocation(server, secret, command)?;
+    let mut child = spawn_child(&inv)?;
+
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| AppError::Ssh("failed to capture ssh stdout".into()))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| AppError::Ssh("failed to capture ssh stderr".into()))?;
+
+    // Read both streams concurrently, forwarding each sanitized line via the
+    // callback and accumulating the full output.
+    let stream = async {
+        let mut out_reader = BufReader::new(stdout).lines();
+        let mut err_reader = BufReader::new(stderr).lines();
+        let mut out_buf = String::new();
+        let mut err_buf = String::new();
+        let mut out_done = false;
+        let mut err_done = false;
+        while !out_done || !err_done {
+            tokio::select! {
+                line = out_reader.next_line(), if !out_done => match line {
+                    Ok(Some(line)) => {
+                        // Live callback gets per-line (line-scoped) redaction for
+                        // ephemeral display; the stored buffer keeps the RAW line
+                        // so it can be whole-buffer sanitized once at the end
+                        // (multi-line secrets like private keys only match across
+                        // lines — see core::sanitize).
+                        on_line(&sanitize(&line), false);
+                        out_buf.push_str(&line);
+                        out_buf.push('\n');
+                    }
+                    Ok(None) => out_done = true,
+                    Err(e) => return Err(AppError::Ssh(e.to_string())),
+                },
+                line = err_reader.next_line(), if !err_done => match line {
+                    Ok(Some(line)) => {
+                        on_line(&sanitize(&line), true);
+                        err_buf.push_str(&line);
+                        err_buf.push('\n');
+                    }
+                    Ok(None) => err_done = true,
+                    Err(e) => return Err(AppError::Ssh(e.to_string())),
+                },
+            }
+        }
+        let status = child.wait().await.map_err(|e| AppError::Ssh(e.to_string()))?;
+        Ok::<_, AppError>((status, out_buf, err_buf))
+    };
+
+    let (status, out_buf, err_buf) = match timeout(duration, stream).await {
+        Ok(res) => res?,
+        Err(_) => {
+            // `inv` (and its keyfile) drops on return; kill_on_drop reaps the child.
+            return Err(AppError::Ssh(format!(
+                "command timed out after {}s",
+                duration.as_secs()
+            )));
+        }
+    };
+
+    Ok(CommandExecution {
+        command: command.to_string(),
+        exit_code: status.code().unwrap_or(-1),
+        // Sanitize the WHOLE accumulated buffer once (matching run_command), so
+        // multi-line secrets are redacted before the output is stored/audited.
+        // The per-line callback above only weakly redacts the live stream.
+        stdout: sanitize(out_buf.trim_end_matches('\n')),
+        stderr: sanitize(err_buf.trim_end_matches('\n')),
+        duration_ms: start.elapsed().as_millis() as u64,
+        started_at,
+    })
+}
+
 /// Connectivity + auth probe. Returns Ok(true) when a trivial remote command
 /// succeeds.
 pub async fn check_connection(server: &ServerProfile, secret: Option<&str>) -> AppResult<bool> {

@@ -6,6 +6,7 @@
 use tauri::State;
 
 pub mod stream;
+pub mod tasks;
 
 use crate::core::error::{AppError, AppResult};
 use crate::core::types::{

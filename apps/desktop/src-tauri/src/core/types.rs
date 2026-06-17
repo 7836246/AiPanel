@@ -263,6 +263,44 @@ pub struct Task {
     pub updated_at: DateTime<Utc>,
 }
 
+/// What kind of run a [`TaskRecord`] captures.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TaskKind {
+    /// A natural-language plan that was reviewed and (maybe) executed.
+    Plan,
+    /// An autonomous read-only diagnosis turn.
+    Diagnose,
+    /// A read-only server doctor run.
+    Doctor,
+}
+
+/// The user-facing history of a single run. The sidebar lists these and can
+/// restore them. Carries the full plan/review/executions so a run renders fully
+/// from storage. Sanitized like everything else here — no secrets.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskRecord {
+    pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub server_id: Option<String>,
+    pub title: String,
+    /// The user's original intent.
+    pub intent: String,
+    pub kind: TaskKind,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plan: Option<Plan>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub risk_review: Option<RiskReview>,
+    #[serde(default)]
+    pub executions: Vec<CommandExecution>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+    pub status: TaskStatus,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
 // ---------------------------------------------------------------------------
 // Risk review
 // ---------------------------------------------------------------------------
