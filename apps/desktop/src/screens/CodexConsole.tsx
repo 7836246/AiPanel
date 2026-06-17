@@ -1,5 +1,30 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
+  ArrowUp,
+  Check as CheckIcon,
+  ChevronDown,
+  ChevronUp,
+  ClipboardList,
+  Copy as CopyIcon,
+  LayoutGrid,
+  Lock,
+  LockOpen,
+  Moon,
+  Pencil as PencilIcon,
+  Play as PlayIcon,
+  Plus as PlusIcon,
+  ScrollText,
+  Server as ServerIconLucide,
+  Settings as SettingsIcon,
+  Sparkles,
+  Square,
+  Star,
+  Stethoscope,
+  Sun,
+  Terminal as TerminalIconLucide,
+  X as XIcon,
+} from "lucide-react";
+import {
   Button,
   IconButton,
   Spinner,
@@ -67,92 +92,6 @@ const statusDot = (s: ServerStatus): string =>
 // 单个计划步骤在 UI 中的执行状态。
 type StepStatus = "pending" | "running" | "done" | "failed";
 
-/* ---------------- 图标 ---------------- */
-type IconProps = { size?: number };
-const stroke = {
-  fill: "none",
-  stroke: "currentColor",
-  strokeWidth: 1.5,
-  strokeLinecap: "round" as const,
-  strokeLinejoin: "round" as const,
-};
-const Pencil = ({ size = 16 }: IconProps) => (
-  <svg width={size} height={size} viewBox="0 0 16 16" {...stroke}>
-    <path d="M11.5 2.5l2 2L6 12l-2.5.5L4 10z" />
-  </svg>
-);
-const ListIcon = ({ size = 16 }: IconProps) => (
-  <svg width={size} height={size} viewBox="0 0 16 16" {...stroke}>
-    <line x1="3" y1="5" x2="13" y2="5" />
-    <line x1="3" y1="8.5" x2="13" y2="8.5" />
-    <line x1="3" y1="12" x2="9" y2="12" />
-  </svg>
-);
-const ServerIcon = ({ size = 15 }: IconProps) => (
-  <svg width={size} height={size} viewBox="0 0 16 16" {...stroke} strokeWidth={1.4}>
-    <path d="M2.5 5.5l1-2h9l1 2v6.5a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1z" />
-  </svg>
-);
-const Grid = ({ size = 16 }: IconProps) => (
-  <svg width={size} height={size} viewBox="0 0 16 16" {...stroke} strokeWidth={1.4}>
-    <rect x="2.5" y="2.5" width="4.5" height="4.5" rx="1" />
-    <rect x="9" y="2.5" width="4.5" height="4.5" rx="1" />
-    <rect x="2.5" y="9" width="4.5" height="4.5" rx="1" />
-    <rect x="9" y="9" width="4.5" height="4.5" rx="1" />
-  </svg>
-);
-const Gear = ({ size = 16 }: IconProps) => (
-  <svg width={size} height={size} viewBox="0 0 16 16" {...stroke} strokeWidth={1.4}>
-    <circle cx="8" cy="8" r="2.3" />
-    <path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4" />
-  </svg>
-);
-const Plus = ({ size = 14 }: IconProps) => (
-  <svg width={size} height={size} viewBox="0 0 16 16" {...stroke}>
-    <line x1="8" y1="3.5" x2="8" y2="12.5" />
-    <line x1="3.5" y1="8" x2="12.5" y2="8" />
-  </svg>
-);
-const Copy = ({ size = 13 }: IconProps) => (
-  <svg width={size} height={size} viewBox="0 0 16 16" {...stroke} strokeWidth={1.4}>
-    <rect x="5.5" y="5.5" width="8" height="8" rx="1.5" />
-    <path d="M3.5 10.5H3a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1h6.5a1 1 0 0 1 1 1v.5" />
-  </svg>
-);
-const SendArrow = ({ size = 15 }: IconProps) => (
-  <svg width={size} height={size} viewBox="0 0 16 16" {...stroke} strokeWidth={1.8}>
-    <line x1="8" y1="12.5" x2="8" y2="4" />
-    <path d="M4.5 7.5L8 4l3.5 3.5" />
-  </svg>
-);
-const TerminalIcon = ({ size = 15 }: IconProps) => (
-  <svg width={size} height={size} viewBox="0 0 16 16" {...stroke} strokeWidth={1.4}>
-    <rect x="2" y="3" width="12" height="10" rx="1.6" />
-    <path d="M4.5 6.5l2 1.5-2 1.5M8 10h3.2" />
-  </svg>
-);
-const ThemeIcon = ({ size = 15 }: IconProps) => (
-  <svg width={size} height={size} viewBox="0 0 16 16">
-    <circle cx="8" cy="8" r="6.2" fill="none" stroke="currentColor" strokeWidth={1.4} />
-    <path d="M8 1.8A6.2 6.2 0 0 1 8 14.2Z" fill="currentColor" />
-  </svg>
-);
-const Play = ({ size = 12 }: IconProps) => (
-  <svg width={size} height={size} viewBox="0 0 14 14" fill="currentColor">
-    <path d="M4 3l7 4-7 4z" />
-  </svg>
-);
-const Check = ({ size = 14 }: IconProps) => (
-  <svg width={size} height={size} viewBox="0 0 16 16" fill="none" stroke="var(--color-risk-low)" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-    <path d="M3.5 8.3l2.6 2.6L12.5 4.8" />
-  </svg>
-);
-const Cross = ({ size = 14 }: IconProps) => (
-  <svg width={size} height={size} viewBox="0 0 16 16" fill="none" stroke="var(--color-risk-blocked)" strokeWidth={2} strokeLinecap="round">
-    <path d="M4 4l8 8M12 4l-8 8" />
-  </svg>
-);
-
 /* ---------------- 主题 ---------------- */
 // 主题钩子：持久化到 localStorage，并切换 <html> 的 dark 类；返回 [当前主题, 切换函数]。
 function useTheme(): [("light" | "dark"), () => void] {
@@ -185,8 +124,12 @@ function NavItem({ icon, label, kbd, active, onClick }: {
   );
 }
 
-// 任务类型对应的侧栏小字形,便于一眼区分计划/诊断/体检。
-const KIND_GLYPH: Record<string, string> = { plan: "≣", diagnose: "✦", doctor: "✚" };
+// 任务类型对应的侧栏小图标,便于一眼区分计划/诊断/体检。
+const KIND_GLYPH: Record<string, ReactNode> = {
+  plan: <ClipboardList size={13} />,
+  diagnose: <Sparkles size={13} />,
+  doctor: <Stethoscope size={13} />,
+};
 
 // 任务状态到中文标签的映射。
 const STATUS_LABEL: Record<string, string> = {
@@ -213,8 +156,8 @@ function StepRow({ summary, command, risk, status, edit }: {
   return (
     <div className={`overflow-hidden rounded-md border bg-surface-1 ${edit ? "border-brand/50" : "border-border"}`}>
       <div className="flex items-center gap-2.5 px-3.5 py-3">
-        {!edit && status === "done" && <Check />}
-        {!edit && status === "failed" && <Cross />}
+        {!edit && status === "done" && <CheckIcon size={14} className="text-risk-low" strokeWidth={2} />}
+        {!edit && status === "failed" && <XIcon size={14} className="text-risk-blocked" strokeWidth={2} />}
         {!edit && status === "running" && <Spinner size="sm" />}
         {!edit && status === "pending" && (
           <span className="h-3.5 w-3.5 rounded-full border-[1.5px] border-border-strong" />
@@ -235,9 +178,9 @@ function StepRow({ summary, command, risk, status, edit }: {
         </span>
         {edit && (
           <span className="flex flex-none items-center gap-0.5">
-            <button aria-label="上移" disabled={!edit.onUp} onClick={edit.onUp} className="px-1 text-[13px] leading-none text-fg-subtle transition-colors hover:text-fg disabled:opacity-30">↑</button>
-            <button aria-label="下移" disabled={!edit.onDown} onClick={edit.onDown} className="px-1 text-[13px] leading-none text-fg-subtle transition-colors hover:text-fg disabled:opacity-30">↓</button>
-            <IconButton aria-label="删除步骤" size="sm" onClick={edit.onRemove}><Cross size={12} /></IconButton>
+            <button aria-label="上移" disabled={!edit.onUp} onClick={edit.onUp} className="rounded px-1 leading-none text-fg-subtle transition-colors hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/60 disabled:opacity-30"><ChevronUp size={14} /></button>
+            <button aria-label="下移" disabled={!edit.onDown} onClick={edit.onDown} className="rounded px-1 leading-none text-fg-subtle transition-colors hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/60 disabled:opacity-30"><ChevronDown size={14} /></button>
+            <IconButton aria-label="删除步骤" size="sm" onClick={edit.onRemove}><XIcon size={12} /></IconButton>
           </span>
         )}
       </div>
@@ -269,7 +212,7 @@ function StepRow({ summary, command, risk, status, edit }: {
                 }
               }}
             >
-              {copied ? <Check size={12} /> : <Copy />}
+              {copied ? <CheckIcon size={12} className="text-risk-low" strokeWidth={2} /> : <CopyIcon size={13} />}
             </IconButton>
           </div>
         )}
@@ -824,16 +767,16 @@ export default function CodexConsole() {
           <span className="text-[13.5px] font-semibold">AiPanel</span>
         </div>
         <div className="flex flex-col gap-px px-2 pb-1">
-          <NavItem icon={<Pencil />} label="提问" active={view === "console"} onClick={() => setView("console")} />
-          <NavItem icon={<Grid />} label="概览" active={view === "dashboard"} onClick={() => setView("dashboard")} />
-          <NavItem icon={<ListIcon />} label="审计" active={view === "audit"} onClick={openAudit} />
+          <NavItem icon={<PencilIcon size={16} />} label="提问" active={view === "console"} onClick={() => setView("console")} />
+          <NavItem icon={<LayoutGrid size={16} />} label="概览" active={view === "dashboard"} onClick={() => setView("dashboard")} />
+          <NavItem icon={<ScrollText size={16} />} label="审计" active={view === "audit"} onClick={openAudit} />
         </div>
 
         <div className="cx-scroll min-h-0 flex-1 overflow-y-auto px-2 py-1.5">
           <div className="flex items-center justify-between px-2.5 pb-1 pt-2">
             <span className="text-[11.5px] text-fg-subtle">服务器</span>
             <IconButton aria-label="添加服务器" size="sm" onClick={() => setAddOpen(true)}>
-              <Plus size={13} />
+              <PlusIcon size={14} />
             </IconButton>
           </div>
 
@@ -847,7 +790,10 @@ export default function CodexConsole() {
           )}
 
           {servers.length === 0 ? (
-            <div className="px-2.5 py-2 text-[12.5px] text-fg-subtle">还没有服务器,点 ＋ 添加</div>
+            <div className="flex flex-col items-center gap-1.5 px-2.5 py-6 text-center">
+              <ServerIconLucide size={22} className="text-fg-subtle" strokeWidth={1.75} />
+              <div className="text-[12.5px] text-fg-subtle">还没有服务器,点 ＋ 添加</div>
+            </div>
           ) : (
             filteredServers.map((srv) => {
               const isSel = srv.id === selectedServerId;
@@ -857,17 +803,17 @@ export default function CodexConsole() {
                     onClick={() => setSelectedServerId(srv.id)}
                     className={`group flex cursor-pointer items-center gap-2.5 rounded-md px-2.5 py-1.5 text-[13.5px] transition-colors hover:bg-hover ${isSel ? "" : "text-fg-muted"}`}
                   >
-                    <ServerIcon />
+                    <ServerIconLucide size={15} strokeWidth={1.75} className="flex-none text-fg-subtle" />
                     <span className="flex-1 truncate">{srv.name}</span>
                     <button
                       aria-label={srv.favorite ? "取消收藏" : "收藏"}
                       onClick={(e) => { e.stopPropagation(); toggleFavorite(srv.id, !srv.favorite); }}
-                      className={`flex-none text-[12px] leading-none transition-opacity ${srv.favorite ? "text-risk-medium" : "text-fg-subtle opacity-0 group-hover:opacity-100"}`}
+                      className={`flex-none rounded leading-none transition-opacity focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/60 ${srv.favorite ? "text-risk-medium" : "text-fg-subtle opacity-0 group-hover:opacity-100"}`}
                     >
-                      {srv.favorite ? "★" : "☆"}
+                      <Star size={13} fill={srv.favorite ? "currentColor" : "none"} />
                     </button>
                     <IconButton aria-label="编辑服务器" size="sm" className="opacity-0 transition-opacity group-hover:opacity-100" onClick={(e) => { e.stopPropagation(); setEditing(srv); }}>
-                      <Pencil size={12} />
+                      <PencilIcon size={12} />
                     </IconButton>
                     <span className={`h-1.5 w-1.5 rounded-full ${statusDot(srv.status)}`} />
                   </div>
@@ -882,10 +828,10 @@ export default function CodexConsole() {
                             onClick={() => openTask(t)}
                             className={`group flex cursor-pointer items-center gap-2 rounded-md px-2.5 py-1.5 text-[13px] transition-colors ${current?.id === t.id ? "bg-selected" : "text-fg-muted hover:bg-hover"}`}
                           >
-                            <span className="flex-none text-[11px] text-fg-subtle" title={t.kind}>{KIND_GLYPH[t.kind] ?? "❯"}</span>
+                            <span className="flex-none text-fg-subtle" title={t.kind}>{KIND_GLYPH[t.kind] ?? <ClipboardList size={13} />}</span>
                             <span className="min-w-0 flex-1 truncate">{t.title}</span>
                             <IconButton aria-label="删除记录" size="sm" className="opacity-0 transition-opacity group-hover:opacity-100" onClick={async (e) => { e.stopPropagation(); if (currentRef.current?.id === t.id) { cancelBackend(); setRunning(false); } await deleteTask(t.id); if (currentRef.current?.id === t.id) setCurrent(null); await refreshTasks(); }}>
-                              <Cross size={11} />
+                              <XIcon size={12} />
                             </IconButton>
                           </div>
                         ))
@@ -899,7 +845,7 @@ export default function CodexConsole() {
         </div>
 
         <div className="border-t border-border px-2 py-1.5">
-          <NavItem icon={<Gear />} label="设置" active={view === "settings"} onClick={() => setView("settings")} />
+          <NavItem icon={<SettingsIcon size={16} />} label="设置" active={view === "settings"} onClick={() => setView("settings")} />
         </div>
       </aside>
 
@@ -911,10 +857,10 @@ export default function CodexConsole() {
           </div>
           <div className="flex items-center gap-0.5">
             <IconButton aria-label="切换主题" onClick={toggleTheme} size="lg" title={theme === "light" ? "切到深色" : "切到浅色"}>
-              <ThemeIcon />
+              {theme === "light" ? <Moon size={16} /> : <Sun size={16} />}
             </IconButton>
             <IconButton aria-label="切换终端" onClick={() => setTerminalOpen((o) => !o)} size="lg">
-              <TerminalIcon />
+              <TerminalIconLucide size={16} />
             </IconButton>
           </div>
         </div>
@@ -952,7 +898,7 @@ export default function CodexConsole() {
                 {current?.plan ? (
                   <>
                     <div className={`flex items-start gap-3 rounded-md border bg-surface-1 px-4 py-3.5 ${planEditing ? "border-brand/50 ring-1 ring-brand/30" : "border-border"}`}>
-                      <div className="flex h-[30px] w-[30px] flex-none items-center justify-center rounded-md bg-hover text-fg-muted"><ListIcon size={16} /></div>
+                      <div className="flex h-[30px] w-[30px] flex-none items-center justify-center rounded-md bg-hover text-fg-muted"><ClipboardList size={16} /></div>
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2 text-sm font-semibold">
                           执行计划 · {(planEditing ? draftSteps! : current.plan.steps).length} 个步骤
@@ -967,15 +913,15 @@ export default function CodexConsole() {
                             <Button variant="primary" size="sm" onClick={commitEdit}>完成编辑</Button>
                           </>
                         ) : running ? (
-                          <Button variant="secondary" size="sm" onClick={stop}>停止</Button>
+                          <Button variant="secondary" size="sm" onClick={stop}><Square size={13} /> 停止</Button>
                         ) : (
                           <>
                             {current.executions.length > 0 && <Button variant="ghost" size="sm" onClick={() => setTerminalOpen(true)}>查看输出</Button>}
-                            {canEditPlan && <Button variant="ghost" size="sm" onClick={startEdit}><Pencil size={13} /> 编辑计划</Button>}
+                            {canEditPlan && <Button variant="ghost" size="sm" onClick={startEdit}><PencilIcon size={13} /> 编辑计划</Button>}
                             {planExecuted ? (
                               <Button variant="secondary" size="sm" onClick={startExecute}>重新执行</Button>
                             ) : (
-                              <Button variant="primary" size="sm" onClick={startExecute} disabled={planEmpty || planBlocked} title={planBlocked ? "计划含被阻止步骤,请编辑或删除后再执行" : planEmpty ? "计划没有步骤" : undefined}><Play /> 确认执行</Button>
+                              <Button variant="primary" size="sm" onClick={startExecute} disabled={planEmpty || planBlocked} title={planBlocked ? "计划含被阻止步骤,请编辑或删除后再执行" : planEmpty ? "计划没有步骤" : undefined}><PlayIcon size={13} /> 确认执行</Button>
                             )}
                           </>
                         )}
@@ -1019,8 +965,8 @@ export default function CodexConsole() {
                         <div className="rounded-md border border-dashed border-border px-4 py-4 text-center text-[12.5px] text-fg-subtle">计划暂无步骤,点「+ 添加步骤」开始</div>
                       )}
                       {planEditing && (
-                        <button onClick={addStep} className="rounded-md border border-dashed border-border-strong px-3 py-2 text-[13px] text-fg-muted transition-colors hover:bg-hover hover:text-fg">
-                          + 添加步骤
+                        <button onClick={addStep} className="inline-flex items-center justify-center gap-1.5 rounded-md border border-dashed border-border-strong px-3 py-2 text-[13px] text-fg-muted transition-colors hover:bg-hover hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/60">
+                          <PlusIcon size={14} /> 添加步骤
                         </button>
                       )}
                     </div>
@@ -1029,10 +975,10 @@ export default function CodexConsole() {
                   <div className="rounded-md border border-border bg-surface-1 px-4 py-4">
                     <div className="mb-2 flex items-center gap-2">
                       <span className={`h-1.5 w-1.5 rounded-full ${current.status === "completed" ? "bg-risk-low" : current.status === "failed" ? "bg-risk-blocked" : "bg-fg-subtle"}`} />
-                      <span className="text-sm font-semibold">{current.kind === "diagnose" ? "✦ " : ""}{current.title}</span>
+                      <span className="inline-flex items-center gap-1.5 text-sm font-semibold">{current.kind === "diagnose" ? <Sparkles size={14} className="text-fg-muted" /> : null}{current.title}</span>
                       <span className="ml-auto text-[11.5px] text-fg-subtle">{STATUS_LABEL[current.status] ?? current.status}</span>
                       {/* 运行中(如 doctor 计划为空时落入此分支)仍要有「停止」入口,避免无处可停。 */}
-                      {running && <Button variant="secondary" size="sm" onClick={stop}>停止</Button>}
+                      {running && <Button variant="secondary" size="sm" onClick={stop}><Square size={13} /> 停止</Button>}
                     </div>
                     {/* AI 诊断：展示结构化的调查过程（工具轨迹）+ 结论 */}
                     {current.kind === "diagnose" && current.toolCalls && current.toolCalls.length > 0 && (
@@ -1041,7 +987,7 @@ export default function CodexConsole() {
                         {current.toolCalls.map((t, i) => (
                           <div key={i} className="rounded-md border border-border bg-bg px-2.5 py-1.5">
                             <div className="flex items-center gap-2 text-[12.5px]">
-                              <span className={t.ok ? "text-risk-low" : "text-risk-blocked"}>{t.ok ? "✓" : "✗"}</span>
+                              <span className={`flex-none ${t.ok ? "text-risk-low" : "text-risk-blocked"}`}>{t.ok ? <CheckIcon size={13} strokeWidth={2} /> : <XIcon size={13} strokeWidth={2} />}</span>
                               <span className="font-mono">{t.name}</span>
                               {t.argsSummary ? <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-fg-subtle">{t.argsSummary}</span> : null}
                             </div>
@@ -1081,20 +1027,21 @@ export default function CodexConsole() {
                     <button
                       onClick={() => setReadOnly((v) => !v)}
                       title="开启后,生成的写操作步骤会被阻止"
-                      className={`inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[13px] transition-colors hover:bg-hover ${readOnlyMode ? "text-risk-medium" : "text-fg-subtle"}`}
+                      className={`inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[13px] transition-colors hover:bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/60 ${readOnlyMode ? "text-risk-medium" : "text-fg-subtle"}`}
                     >
-                      {readOnlyMode ? "🔒 只读优先 · 开" : "只读优先 · 关"}
+                      {readOnlyMode ? <Lock size={14} /> : <LockOpen size={14} />}
+                      {readOnlyMode ? "只读优先 · 开" : "只读优先 · 关"}
                     </button>
-                    <button onClick={diagnose} disabled={!intentValue.trim() || !selectedServerId || running} className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[13px] text-fg-muted transition-colors hover:bg-hover hover:text-fg disabled:opacity-40">
-                      ✦ AI 诊断
+                    <button onClick={diagnose} disabled={!intentValue.trim() || !selectedServerId || running} className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[13px] text-fg-muted transition-colors hover:bg-hover hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/60 disabled:opacity-40">
+                      <Sparkles size={14} /> AI 诊断
                     </button>
                   </div>
                   <div className="flex items-center gap-2.5">
                     <button onClick={() => setView("settings")} className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[12.5px] text-fg-muted transition-colors hover:bg-hover" title="模型供应商设置">
                       {aiProvider ? `${aiProvider.name}${aiProvider.model ? " · " + aiProvider.model : ""}` : "未配置模型 · 去设置"}
                     </button>
-                    <button aria-label="发送" onClick={generatePlan} className="flex h-[30px] w-[30px] flex-none items-center justify-center rounded-full bg-brand text-brand-fg transition-opacity hover:opacity-90 disabled:opacity-40" disabled={!intentValue.trim() || !selectedServerId || running}>
-                      <SendArrow />
+                    <button aria-label="发送" onClick={generatePlan} className="flex h-[30px] w-[30px] flex-none items-center justify-center rounded-full bg-brand text-brand-fg transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/60 disabled:opacity-40" disabled={!intentValue.trim() || !selectedServerId || running}>
+                      <ArrowUp size={16} strokeWidth={2} />
                     </button>
                   </div>
                 </div>
@@ -1138,12 +1085,12 @@ function FirstRun({ onAdd }: { onAdd: () => void }) {
   return (
     <div className="flex min-h-0 flex-1 items-center justify-center p-8">
       <div className="max-w-md text-center">
-        <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-surface-2 text-fg-muted"><ServerIcon size={22} /></div>
+        <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-surface-2 text-fg-muted"><ServerIconLucide size={24} strokeWidth={1.75} /></div>
         <h2 className="text-base font-semibold">还没有连接任何服务器</h2>
         <p className="mt-2 text-[13px] leading-relaxed text-fg-muted">
           AiPanel 在本地运行、通过 SSH 管理服务器,不在服务器上常驻。添加一台服务器即可开始只读体检与 AI 运维。凭据只存本地 Keychain。
         </p>
-        <div className="mt-5"><Button variant="primary" size="md" onClick={onAdd}><Plus /> 添加第一台服务器</Button></div>
+        <div className="mt-5"><Button variant="primary" size="md" onClick={onAdd}><PlusIcon size={16} /> 添加第一台服务器</Button></div>
       </div>
     </div>
   );

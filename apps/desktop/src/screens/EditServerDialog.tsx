@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Save, Trash2, TriangleAlert, X } from "lucide-react";
 import { Button, Dialog, Input, Textarea } from "@aipanel/ui";
 import {
   deleteServer,
@@ -90,8 +91,11 @@ export default function EditServerDialog({
     }
   }
 
-  const field = "flex flex-col gap-1";
-  const labelCls = "text-[12px] font-medium text-fg-muted";
+  const field = "flex flex-col gap-1.5";
+  const labelCls = "text-[12px] font-medium tracking-wide text-fg-muted";
+  // 原生 select 对齐设计 token，补齐过渡与焦点环
+  const selectCls =
+    "h-9 rounded-md border border-border bg-surface-2 px-2.5 text-sm text-fg outline-none transition-colors focus-visible:border-brand focus-visible:ring-2 focus-visible:ring-brand/60";
 
   return (
     <Dialog
@@ -103,6 +107,7 @@ export default function EditServerDialog({
         <>
           {confirmDelete ? (
             <Button variant="secondary" size="sm" onClick={() => setConfirmDelete(false)}>
+              <X size={15} strokeWidth={1.75} />
               取消删除
             </Button>
           ) : null}
@@ -111,21 +116,38 @@ export default function EditServerDialog({
             size="sm"
             onClick={remove}
             disabled={busy}
-            className={confirmDelete ? "bg-risk-blocked text-white" : "text-risk-blocked"}
+            className={
+              confirmDelete
+                ? "bg-risk-blocked text-white hover:bg-risk-blocked/90 focus-visible:ring-risk-blocked/60"
+                : "text-risk-blocked hover:bg-risk-blocked/10 focus-visible:ring-risk-blocked/60"
+            }
           >
+            <Trash2 size={15} strokeWidth={1.75} />
             {confirmDelete ? "确认删除？" : "删除"}
           </Button>
           <div className="flex-1" />
           <Button variant="secondary" size="sm" onClick={onClose}>
+            <X size={15} strokeWidth={1.75} />
             取消
           </Button>
           <Button variant="primary" size="sm" onClick={submit} disabled={busy}>
+            <Save size={15} strokeWidth={1.75} />
             保存
           </Button>
         </>
       }
     >
-      <div className="flex flex-col gap-3">
+      <div className="flex flex-col gap-3.5">
+        {/* 删除二次确认：醒目的危险提示，引导用户再次确认不可恢复操作 */}
+        {confirmDelete ? (
+          <div className="flex items-start gap-2.5 rounded-md border border-risk-blocked/40 bg-risk-blocked/10 px-3 py-2.5">
+            <TriangleAlert size={16} strokeWidth={1.75} className="mt-px flex-none text-risk-blocked" />
+            <div className="text-[12.5px] leading-relaxed text-risk-blocked">
+              <p className="font-semibold">即将删除该服务器</p>
+              <p className="text-risk-blocked/80">此操作不可恢复，本地保存的凭据也会一并移除。再次点击「确认删除？」以继续。</p>
+            </div>
+          </div>
+        ) : null}
         <div className={field}>
           <label className={labelCls}>名称</label>
           <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="web-prod-1" />
@@ -156,7 +178,7 @@ export default function EditServerDialog({
               setAuthKind(e.target.value as AuthKind);
               setSecret(""); // 切换认证方式后不保留已输入的凭据
             }}
-            className="h-9 rounded-md border border-border bg-surface-2 px-2 text-sm text-fg outline-none focus-visible:border-brand"
+            className={selectCls}
           >
             <option value="password">密码</option>
             <option value="key">私钥</option>
@@ -180,7 +202,12 @@ export default function EditServerDialog({
             />
           </div>
         )}
-        {error ? <div className="text-[12.5px] text-risk-blocked">{error}</div> : null}
+        {error ? (
+          <div className="flex items-start gap-2 rounded-md border border-risk-blocked/40 bg-risk-blocked/10 px-3 py-2 text-[12.5px] text-risk-blocked">
+            <TriangleAlert size={14} strokeWidth={1.75} className="mt-px flex-none" />
+            <span>{error}</span>
+          </div>
+        ) : null}
       </div>
     </Dialog>
   );

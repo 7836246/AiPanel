@@ -1,5 +1,6 @@
 import { useEffect, useState, type JSX } from "react";
 import { Button, Input, Spinner } from "@aipanel/ui";
+import { ChevronDown, ChevronRight, Download, ScrollText, Search } from "lucide-react";
 import {
   listAuditRecords,
   searchAuditRecords,
@@ -110,12 +111,19 @@ export default function AuditView({
     <section className="flex min-h-0 flex-1 flex-col">
       {/* 顶部工具行：搜索 + 状态筛选 + 导出 */}
       <div className="flex flex-none items-center gap-2.5 border-b border-border px-6 py-2.5">
-        <Input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="搜索意图 / 总结 / 命令…"
-          className="max-w-xs flex-1"
-        />
+        {/* 搜索框：左侧 Search 图标 + 留出内边距给文本 */}
+        <div className="relative max-w-xs flex-1">
+          <Search
+            size={14}
+            className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-fg-subtle"
+          />
+          <Input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="搜索意图 / 总结 / 命令…"
+            className="pl-8"
+          />
+        </div>
         <div className="flex items-center gap-0.5 rounded-md bg-surface-2 p-0.5">
           {FILTERS.map((f) => (
             <button
@@ -132,10 +140,11 @@ export default function AuditView({
         <Button
           variant="secondary"
           size="sm"
-          className="ml-auto"
+          className="ml-auto gap-1.5"
           onClick={handleExport}
           disabled={exporting}
         >
+          <Download size={14} />
           {exporting ? "导出中…" : "导出全部 JSON"}
         </Button>
       </div>
@@ -155,7 +164,8 @@ export default function AuditView({
               <Spinner size="sm" /> 加载中…
             </div>
           ) : shown.length === 0 ? (
-            <div className="rounded-md border border-border bg-surface-1 px-4 py-6 text-center text-[13px] text-fg-subtle">
+            <div className="flex flex-col items-center justify-center gap-2 rounded-md border border-border bg-surface-1 px-4 py-10 text-center text-[13px] text-fg-subtle">
+              <ScrollText size={24} strokeWidth={1.75} className="text-fg-subtle" />
               {debouncedQuery.trim() || filter !== "all"
                 ? "没有匹配的审计记录。"
                 : "还没有审计记录。执行一次任务后会出现在这里。"}
@@ -184,6 +194,12 @@ export default function AuditView({
                       <time className="flex-none font-mono text-[11px] text-fg-subtle">
                         {new Date(r.createdAt).toLocaleString()}
                       </time>
+                      {/* 展开/收起指示图标 */}
+                      {open ? (
+                        <ChevronDown size={15} className="flex-none text-fg-subtle" />
+                      ) : (
+                        <ChevronRight size={15} className="flex-none text-fg-subtle" />
+                      )}
                     </div>
                     {open && (
                       <div className="border-t border-border px-4 py-3">

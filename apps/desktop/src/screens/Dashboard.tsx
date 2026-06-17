@@ -1,4 +1,5 @@
 import type { JSX } from "react";
+import { RefreshCw, Server, Star } from "lucide-react";
 import { Button, IconButton, Spinner } from "@aipanel/ui";
 import type { ServerProfile, ServerStatus } from "../lib/api";
 
@@ -27,11 +28,11 @@ function percentRisk(pct: number): { bar: string; text: string } {
   return { bar: "bg-risk-low", text: "text-risk-low" };
 }
 
-// 紧凑进度条：按百分比着色，深色安全风格。
+// 紧凑进度条：按百分比着色，深色安全风格；留白略增以提升可读性。
 function MetricBar({ pct }: { pct: number }): JSX.Element {
   const risk = percentRisk(pct);
   return (
-    <div className="mt-1 h-1 w-full overflow-hidden rounded-full bg-surface-2">
+    <div className="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-surface-2">
       <div
         className={`h-full rounded-full transition-[width] ${risk.bar}`}
         style={{ width: `${pct}%` }}
@@ -39,47 +40,6 @@ function MetricBar({ pct }: { pct: number }): JSX.Element {
     </div>
   );
 }
-
-// 实心收藏星（已收藏）。
-const StarFilled = ({ size = 14 }: { size?: number }) => (
-  <svg width={size} height={size} viewBox="0 0 16 16" fill="currentColor" aria-hidden>
-    <path d="M8 1.5l1.9 3.9 4.3.6-3.1 3 .7 4.3L8 11.3 4.2 13.3l.7-4.3-3.1-3 4.3-.6z" />
-  </svg>
-);
-
-// 空心收藏星（未收藏）。
-const StarOutline = ({ size = 14 }: { size?: number }) => (
-  <svg
-    width={size}
-    height={size}
-    viewBox="0 0 16 16"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth={1.3}
-    strokeLinejoin="round"
-    aria-hidden
-  >
-    <path d="M8 1.8l1.85 3.75 4.15.6-3 2.92.71 4.13L8 11.27 4.29 13.2 5 9.07l-3-2.92 4.15-.6z" />
-  </svg>
-);
-
-// 刷新图标（与「刷新全部」按钮配合）。
-const Refresh = ({ size = 14 }: { size?: number }) => (
-  <svg
-    width={size}
-    height={size}
-    viewBox="0 0 16 16"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth={1.4}
-    strokeLinecap="round"
-    strokeLinejoin="round"
-    aria-hidden
-  >
-    <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9" />
-    <path d="M13.5 2v3h-3" />
-  </svg>
-);
 
 /** 单台服务器卡片：状态点 + 名称 + 连接串 + 收藏星 + 关键指标 + 更新时间。 */
 function ServerTile({
@@ -133,7 +93,8 @@ function ServerTile({
             onToggleFavorite(server.id, !server.favorite);
           }}
         >
-          {server.favorite ? <StarFilled /> : <StarOutline />}
+          {/* 已收藏用实心 Star，未收藏用描边 Star */}
+          <Star size={13} fill={server.favorite ? "currentColor" : "none"} />
         </IconButton>
       </div>
 
@@ -225,7 +186,7 @@ export function Dashboard({
           disabled={refreshing}
           title="仅刷新在线/离线状态;指标(负载/内存/磁盘)请用「只读体检」更新"
         >
-          {refreshing ? <Spinner size="sm" /> : <Refresh />} 刷新状态
+          {refreshing ? <Spinner size="sm" /> : <RefreshCw size={14} />} 刷新状态
         </Button>
       </div>
 
@@ -243,8 +204,11 @@ export function Dashboard({
           ))}
         </div>
       ) : (
-        <div className="rounded-md border border-dashed border-border px-4 py-10 text-center text-[13px] text-fg-subtle">
-          还没有服务器，先在左侧添加一台以开始概览。
+        // 空态：图标 + 标题 + 副说明，垂直居中匀称留白。
+        <div className="flex flex-col items-center justify-center gap-2 rounded-md border border-dashed border-border bg-surface-1 px-4 py-12 text-center">
+          <Server size={24} strokeWidth={1.75} className="text-fg-subtle" />
+          <div className="text-[13px] font-medium text-fg-muted">还没有服务器</div>
+          <div className="text-[12px] text-fg-subtle">先在左侧添加一台以开始概览。</div>
         </div>
       )}
     </div>

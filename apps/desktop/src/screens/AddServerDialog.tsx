@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Save, TriangleAlert, X } from "lucide-react";
 import { Button, Dialog, Input, Textarea } from "@aipanel/ui";
 import { createServer, setServerSecret, type AuthKind, type ServerProfile } from "../lib/api";
 
@@ -63,8 +64,11 @@ export default function AddServerDialog({
     }
   }
 
-  const field = "flex flex-col gap-1";
-  const labelCls = "text-[12px] font-medium text-fg-muted";
+  const field = "flex flex-col gap-1.5";
+  const labelCls = "text-[12px] font-medium tracking-wide text-fg-muted";
+  // 原生 select 对齐设计 token，补齐过渡与焦点环
+  const selectCls =
+    "h-9 rounded-md border border-border bg-surface-2 px-2.5 text-sm text-fg outline-none transition-colors focus-visible:border-brand focus-visible:ring-2 focus-visible:ring-brand/60";
 
   return (
     <Dialog
@@ -75,15 +79,17 @@ export default function AddServerDialog({
       footer={
         <>
           <Button variant="secondary" size="sm" onClick={onClose}>
+            <X size={15} strokeWidth={1.75} />
             取消
           </Button>
           <Button variant="primary" size="sm" onClick={submit} disabled={busy}>
+            <Save size={15} strokeWidth={1.75} />
             保存
           </Button>
         </>
       }
     >
-      <div className="flex flex-col gap-3">
+      <div className="flex flex-col gap-3.5">
         <div className={field}>
           <label className={labelCls}>名称</label>
           <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="web-prod-1" />
@@ -111,7 +117,7 @@ export default function AddServerDialog({
           <select
             value={authKind}
             onChange={(e) => { setAuthKind(e.target.value as AuthKind); setSecret(""); }}
-            className="h-9 rounded-md border border-border bg-surface-2 px-2 text-sm text-fg outline-none focus-visible:border-brand"
+            className={selectCls}
           >
             <option value="password">密码</option>
             <option value="key">私钥</option>
@@ -135,7 +141,12 @@ export default function AddServerDialog({
             />
           </div>
         )}
-        {error ? <div className="text-[12.5px] text-risk-blocked">{error}</div> : null}
+        {error ? (
+          <div className="flex items-start gap-2 rounded-md border border-risk-blocked/40 bg-risk-blocked/10 px-3 py-2 text-[12.5px] text-risk-blocked">
+            <TriangleAlert size={14} strokeWidth={1.75} className="mt-px flex-none" />
+            <span>{error}</span>
+          </div>
+        ) : null}
       </div>
     </Dialog>
   );

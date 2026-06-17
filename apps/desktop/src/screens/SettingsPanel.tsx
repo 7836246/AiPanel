@@ -1,6 +1,17 @@
 import { useEffect, useState } from "react";
 import { Badge, Button, Input, Spinner, ToastViewport, useToasts } from "@aipanel/ui";
 import {
+  Check,
+  Cpu,
+  Pencil,
+  Plus,
+  Server,
+  ShieldCheck,
+  SlidersHorizontal,
+  Trash2,
+  X,
+} from "lucide-react";
+import {
   credentialBackend,
   deleteProvider,
   getModelSelectionPolicy,
@@ -171,7 +182,10 @@ export default function SettingsPanel() {
   return (
     <section className="cx-scroll min-h-0 flex-1 overflow-y-auto">
       <div className="mx-auto max-w-[680px] px-6 pb-8 pt-5">
-        <h2 className="mb-3 text-sm font-semibold">设置 · 模型供应商</h2>
+        <h2 className="mb-3 flex items-center gap-1.5 text-sm font-semibold">
+          <Server size={15} strokeWidth={1.75} className="text-fg-muted" />
+          设置 · 模型供应商
+        </h2>
 
         {/* 凭据后端提示：mock 给出警告样式，keychain 给出安全提示 */}
         {backend === "mock" ? (
@@ -181,7 +195,10 @@ export default function SettingsPanel() {
           </div>
         ) : backend ? (
           <div className="mb-3 flex items-center gap-2 rounded-md border border-border bg-surface-2 px-3 py-2 text-[12.5px] text-fg-muted">
-            <Badge tone="success">Keychain</Badge>
+            <Badge tone="success">
+              <ShieldCheck size={12} strokeWidth={1.75} />
+              Keychain
+            </Badge>
             凭据由系统 Keychain 安全保管，不写入数据库或日志。
           </div>
         ) : null}
@@ -195,6 +212,8 @@ export default function SettingsPanel() {
           ) : (
             providers.map((p) => (
               <div key={p.id} className="flex items-center gap-3 rounded-md border border-border bg-surface-1 px-4 py-3">
+                {/* 供应商行图标 */}
+                <Server size={16} strokeWidth={1.75} className="flex-none text-fg-subtle" />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     <span className="truncate text-[13.5px] font-medium">{p.name}</span>
@@ -207,10 +226,12 @@ export default function SettingsPanel() {
                     {p.baseUrl ? ` · ${p.baseUrl}` : ""}
                   </div>
                 </div>
-                <Button variant="ghost" size="sm" onClick={() => edit(p)}>
+                <Button variant="ghost" size="sm" className="gap-1.5" onClick={() => edit(p)}>
+                  <Pencil size={14} />
                   编辑
                 </Button>
-                <Button variant="ghost" size="sm" onClick={() => remove(p.id)}>
+                <Button variant="ghost" size="sm" className="gap-1.5" onClick={() => remove(p.id)}>
+                  <Trash2 size={14} />
                   删除
                 </Button>
               </div>
@@ -221,7 +242,10 @@ export default function SettingsPanel() {
         {/* 新增 / 编辑表单 */}
         {form ? (
           <div className="mt-3 rounded-md border border-border bg-surface-1 p-4">
-            <div className="mb-3 text-[13px] font-semibold">{form.id ? "编辑供应商" : "新增供应商"}</div>
+            <div className="mb-3 flex items-center gap-1.5 text-[13px] font-semibold">
+              {form.id ? <Pencil size={14} className="text-fg-muted" /> : <Plus size={14} className="text-fg-muted" />}
+              {form.id ? "编辑供应商" : "新增供应商"}
+            </div>
             <div className={field}>
               <label className={labelCls}>名称</label>
               <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="例如 Codex" />
@@ -285,7 +309,10 @@ export default function SettingsPanel() {
                     : "border-risk-blocked/40 bg-risk-blocked-soft text-risk-blocked"
                 }`}
               >
-                <span className="font-medium">{testResult.ok ? "✓ 连接成功" : "✗ 连接失败"}</span>
+                <span className="inline-flex items-center gap-1 font-medium align-middle">
+                  {testResult.ok ? <Check size={14} strokeWidth={2} /> : <X size={14} strokeWidth={2} />}
+                  {testResult.ok ? "连接成功" : "连接失败"}
+                </span>
                 {testResult.message ? ` — ${testResult.message}` : ""}
                 {testResult.detail ? <div className="mt-0.5 opacity-80">{testResult.detail}</div> : null}
               </div>
@@ -311,13 +338,17 @@ export default function SettingsPanel() {
             </div>
           </div>
         ) : (
-          <Button variant="secondary" size="sm" className="mt-3" onClick={() => { setForm({ ...EMPTY }); setApiKey(""); setTestResult(null); }}>
+          <Button variant="secondary" size="sm" className="mt-3 gap-1.5" onClick={() => { setForm({ ...EMPTY }); setApiKey(""); setTestResult(null); }}>
+            <Plus size={14} />
             添加供应商
           </Button>
         )}
 
         {/* 模型选择策略 */}
-        <h2 className="mb-3 mt-8 text-sm font-semibold">模型选择</h2>
+        <h2 className="mb-3 mt-8 flex items-center gap-1.5 text-sm font-semibold">
+          <Cpu size={15} strokeWidth={1.75} className="text-fg-muted" />
+          模型选择
+        </h2>
         <div className={cardCls}>
           <label className="flex items-center gap-2 text-[13px] text-fg">
             <input
@@ -362,7 +393,10 @@ export default function SettingsPanel() {
         </div>
 
         {/* 通用偏好 */}
-        <h2 className="mb-3 mt-8 text-sm font-semibold">通用</h2>
+        <h2 className="mb-3 mt-8 flex items-center gap-1.5 text-sm font-semibold">
+          <SlidersHorizontal size={15} strokeWidth={1.75} className="text-fg-muted" />
+          通用
+        </h2>
         <div className={cardCls}>
           <label className="flex items-center gap-2 text-[13px] text-fg">
             <input

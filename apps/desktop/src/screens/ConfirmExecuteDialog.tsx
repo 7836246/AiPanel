@@ -1,6 +1,15 @@
 import { useEffect, useState } from "react";
+import { Play, ShieldAlert, TriangleAlert, X } from "lucide-react";
 import { Button, Dialog } from "@aipanel/ui";
-import { RISK_META, type Plan, type RiskReview } from "../lib/api";
+import { RISK_META, type Plan, type RiskReview, type RiskLevel } from "../lib/api";
+
+// 风险等级对应图标：高/已阻止用盾牌告警，中风险用三角告警（颜色由 RISK_META.text 提供）
+const RISK_ICON: Record<RiskLevel, typeof ShieldAlert> = {
+  low: TriangleAlert,
+  medium: TriangleAlert,
+  high: ShieldAlert,
+  blocked: ShieldAlert,
+};
 
 /**
  * 执行前确认对话框。中/高风险计划在调用 executeConfirmedPlan 之前必须经过这里：
@@ -38,11 +47,13 @@ export default function ConfirmExecuteDialog({
 
   const footer = blocked ? (
     <Button variant="secondary" size="sm" onClick={onClose}>
+      <X size={15} strokeWidth={1.75} />
       关闭
     </Button>
   ) : (
     <>
       <Button variant="secondary" size="sm" onClick={onClose}>
+        <X size={15} strokeWidth={1.75} />
         取消
       </Button>
       <Button
@@ -51,10 +62,13 @@ export default function ConfirmExecuteDialog({
         disabled={needsDouble && !acknowledged}
         onClick={() => onConfirm(true, needsDouble)}
       >
+        <Play size={15} strokeWidth={1.75} />
         确认执行
       </Button>
     </>
   );
+
+  const OverallIcon = RISK_ICON[review.overall];
 
   return (
     <Dialog
@@ -69,7 +83,7 @@ export default function ConfirmExecuteDialog({
         <div className="flex items-center justify-between rounded-md border border-border bg-surface-2 px-3 py-2">
           <span className="text-[12.5px] text-fg-muted">总体风险</span>
           <span className={`inline-flex items-center gap-1.5 text-sm font-semibold ${overallMeta.text}`}>
-            <span className={`h-2 w-2 rounded-full ${overallMeta.dot}`} />
+            <OverallIcon size={15} strokeWidth={1.75} />
             {overallMeta.label}
           </span>
         </div>
@@ -86,19 +100,26 @@ export default function ConfirmExecuteDialog({
           <div className="cx-scroll flex max-h-[280px] flex-col gap-2 overflow-y-auto">
             {plan.steps.map((step, i) => {
               const meta = RISK_META[step.risk];
+              // 高/已阻止步骤额外用图标强化危险感，其余沿用风险圆点
+              const danger = step.risk === "high" || step.risk === "blocked";
+              const StepIcon = RISK_ICON[step.risk];
               return (
-                <div key={i} className="rounded-md border border-border bg-surface-1 px-3 py-2.5">
+                <div key={i} className="rounded-md border border-border bg-surface-1 px-3 py-2">
                   <div className="flex items-start gap-2.5">
                     <span className="mt-0.5 flex h-4 w-4 flex-none items-center justify-center rounded-full border-[1.5px] border-border-strong text-[10px] font-semibold text-fg-subtle">
                       {i + 1}
                     </span>
                     <span className="min-w-0 flex-1 text-[13px] font-medium text-fg">{step.summary}</span>
-                    <span className={`inline-flex flex-none items-center gap-1.5 text-[11.5px] ${meta.text}`}>
-                      <span className={`h-1.5 w-1.5 rounded-full ${meta.dot}`} />
+                    <span className={`inline-flex flex-none items-center gap-1 text-[11.5px] ${meta.text}`}>
+                      {danger ? (
+                        <StepIcon size={13} strokeWidth={1.75} />
+                      ) : (
+                        <span className={`h-1.5 w-1.5 rounded-full ${meta.dot}`} />
+                      )}
                       {meta.label}
                     </span>
                   </div>
-                  <div className="mt-2 flex items-center gap-2.5 rounded-md bg-surface-2 px-3 py-2 font-mono text-xs">
+                  <div className="mt-1.5 flex items-center gap-2.5 rounded-md bg-surface-2 px-3 py-1.5 font-mono text-xs">
                     <span className="text-fg-subtle">$</span>
                     <span className="min-w-0 flex-1 break-all">{step.command}</span>
                   </div>
@@ -110,8 +131,9 @@ export default function ConfirmExecuteDialog({
 
         {/* 阻止 / 确认提示 */}
         {blocked ? (
-          <div className="rounded-md border border-risk-blocked/40 bg-risk-blocked/10 px-3 py-2.5 text-[13px] text-risk-blocked">
-            该计划包含被风险策略阻止的步骤，无法执行。
+          <div className="flex items-start gap-2.5 rounded-md border border-risk-blocked/40 bg-risk-blocked/10 px-3 py-2.5 text-[13px] text-risk-blocked">
+            <ShieldAlert size={16} strokeWidth={1.75} className="mt-px flex-none" />
+            <span>该计划包含被风险策略阻止的步骤，无法执行。</span>
           </div>
         ) : needsDouble ? (
           <label className="flex cursor-pointer items-start gap-2.5 rounded-md border border-risk-high/40 bg-risk-high/10 px-3 py-2.5">
@@ -121,11 +143,15 @@ export default function ConfirmExecuteDialog({
               onChange={(e) => setAcknowledged(e.target.checked)}
               className="mt-0.5 h-3.5 w-3.5 flex-none accent-[var(--color-risk-high)]"
             />
-            <span className="text-[13px] text-fg">我已了解高风险操作并确认执行</span>
+            <span className="inline-flex items-center gap-1.5 text-[13px] text-fg">
+              <ShieldAlert size={15} strokeWidth={1.75} className="flex-none text-risk-high" />
+              我已了解高风险操作并确认执行
+            </span>
           </label>
         ) : (
-          <div className="rounded-md border border-risk-medium/40 bg-risk-medium/10 px-3 py-2.5 text-[12.5px] text-fg-muted">
-            该操作可能变更服务器状态，请确认无误后执行。
+          <div className="flex items-start gap-2.5 rounded-md border border-risk-medium/40 bg-risk-medium/10 px-3 py-2.5 text-[12.5px] text-fg-muted">
+            <TriangleAlert size={15} strokeWidth={1.75} className="mt-px flex-none text-risk-medium" />
+            <span>该操作可能变更服务器状态，请确认无误后执行。</span>
           </div>
         )}
       </div>

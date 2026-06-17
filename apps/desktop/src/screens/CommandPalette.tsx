@@ -1,5 +1,23 @@
 import { useEffect, useMemo, useRef, useState, type JSX } from "react";
 import { Badge, Input, cn } from "@aipanel/ui";
+import {
+  ChevronRight,
+  Compass,
+  type LucideIcon,
+  MousePointerClick,
+  Search,
+  SearchX,
+  Server,
+  SlidersHorizontal,
+} from "lucide-react";
+
+// 分组名到小图标的映射（与控制台里 group 的中文值一致）。
+const GROUP_ICON: Record<string, LucideIcon> = {
+  操作: MousePointerClick,
+  导航: Compass,
+  界面: SlidersHorizontal,
+  服务器: Server,
+};
 
 /** 单个可执行命令项。纯展示——run 由调用方提供。 */
 export interface PaletteCommand {
@@ -109,22 +127,30 @@ export function CommandPalette({
         onClick={(e) => e.stopPropagation()}
         onKeyDown={onKeyDown}
       >
-        {/* 顶部搜索框 */}
+        {/* 顶部搜索框：左侧 Search 图标 */}
         <div className="border-b border-border p-2">
-          <Input
-            ref={inputRef}
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="输入以搜索命令…"
-            aria-label="Search commands"
-            // 已在容器上统一处理键盘事件，这里只需放行。
-          />
+          <div className="relative">
+            <Search
+              size={14}
+              className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-fg-subtle"
+            />
+            <Input
+              ref={inputRef}
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="输入以搜索命令…"
+              aria-label="Search commands"
+              className="pl-8"
+              // 已在容器上统一处理键盘事件，这里只需放行。
+            />
+          </div>
         </div>
 
         {/* 命令列表 */}
         <div ref={listRef} className="flex-1 overflow-y-auto p-1">
           {filtered.length === 0 ? (
-            <div className="px-3 py-6 text-center text-sm text-fg-muted">
+            <div className="flex flex-col items-center justify-center gap-2 px-3 py-8 text-center text-sm text-fg-muted">
+              <SearchX size={24} strokeWidth={1.75} className="text-fg-subtle" />
               没有匹配的命令
             </div>
           ) : (
@@ -147,14 +173,16 @@ function renderItems(
   let lastGroup: string | undefined;
 
   items.forEach((cmd, index) => {
-    // 分组发生变化时插入小标题。
+    // 分组发生变化时插入小标题（带 group 小图标）。
     if (cmd.group && cmd.group !== lastGroup) {
       lastGroup = cmd.group;
+      const GroupIcon = GROUP_ICON[cmd.group];
       out.push(
         <div
           key={`group-${cmd.group}-${index}`}
-          className="px-3 pb-1 pt-3 text-[11px] font-semibold uppercase tracking-wide text-fg-subtle"
+          className="flex items-center gap-1.5 px-3 pb-1 pt-3 text-[11px] font-semibold uppercase tracking-wide text-fg-subtle"
         >
+          {GroupIcon ? <GroupIcon size={12} strokeWidth={2} /> : null}
           {cmd.group}
         </div>
       );
@@ -173,11 +201,16 @@ function renderItems(
         onMouseEnter={() => setActiveIndex(index)}
         onClick={() => execute(cmd)}
         className={cn(
-          "flex w-full items-center justify-between gap-3 rounded-md px-3 py-2 text-left text-sm text-fg",
+          "flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-sm text-fg transition-colors",
           isActive ? "bg-selected" : "hover:bg-hover"
         )}
       >
-        <span className="truncate">{cmd.label}</span>
+        {/* 选中态左侧指示箭头：仅高亮项可见，避免行宽抖动用占位 */}
+        <ChevronRight
+          size={14}
+          className={cn("flex-none text-brand", isActive ? "opacity-100" : "opacity-0")}
+        />
+        <span className="min-w-0 flex-1 truncate">{cmd.label}</span>
         {cmd.hint ? (
           <Badge tone="neutral" className="shrink-0 font-mono">
             {cmd.hint}

@@ -1,28 +1,11 @@
 import type { JSX } from "react";
+import { Server, Stethoscope } from "lucide-react";
 import { Button, Spinner } from "@aipanel/ui";
 import type { ServerProfile, ServerStatus } from "../lib/api";
 
 // 状态点颜色：在线=安全绿、离线=阻断红、未知=次要灰。
 const statusDot = (s: ServerStatus): string =>
   s === "online" ? "bg-risk-low" : s === "offline" ? "bg-risk-blocked" : "bg-fg-subtle";
-
-// 听诊器图标（只读体检入口），与 CodexConsole 中风格保持一致。
-const Stethoscope = ({ size = 14 }: { size?: number }) => (
-  <svg
-    width={size}
-    height={size}
-    viewBox="0 0 16 16"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth={1.4}
-    strokeLinecap="round"
-    strokeLinejoin="round"
-  >
-    <path d="M4 2v4a3 3 0 0 0 6 0V2" />
-    <path d="M7 9v1.5a3.5 3.5 0 0 0 7 0V9" />
-    <circle cx="13.5" cy="8" r="1.2" />
-  </svg>
-);
 
 // 从形如 "73%"、"使用率 85 %"、"42.5%" 的字符串中解析出百分比数值；
 // 解析不到合法百分比时返回 null（该项不渲染进度条）。
@@ -74,9 +57,11 @@ export function ServerOverview({
   onDoctor: () => void;
 }): JSX.Element {
   if (!server) {
+    // 空态：图标 + 提示，垂直居中匀称留白。
     return (
-      <div className="rounded-md border border-border bg-surface-1 px-4 py-8 text-center text-[13px] text-fg-subtle">
-        从左侧选择一台服务器开始。
+      <div className="flex flex-col items-center justify-center gap-2 rounded-md border border-border bg-surface-1 px-4 py-10 text-center">
+        <Server size={24} strokeWidth={1.75} className="text-fg-subtle" />
+        <div className="text-[13px] text-fg-muted">从左侧选择一台服务器开始。</div>
       </div>
     );
   }
@@ -100,7 +85,7 @@ export function ServerOverview({
             onClick={onDoctor}
             disabled={running}
           >
-            {running ? <Spinner size="sm" /> : <Stethoscope />} 只读体检
+            {running ? <Spinner size="sm" /> : <Stethoscope size={13} />} 只读体检
           </Button>
         </div>
       </div>
@@ -133,8 +118,13 @@ export function ServerOverview({
           })}
         </div>
       ) : (
-        <div className="rounded-md border border-dashed border-border px-4 py-6 text-center text-[13px] text-fg-subtle">
-          暂无体检指标，点上方「只读体检」做一次安全检查以采集结构化指标。
+        // 空态：图标 + 提示，垂直居中匀称留白。
+        <div className="flex flex-col items-center justify-center gap-2 rounded-md border border-dashed border-border bg-surface-1 px-4 py-8 text-center">
+          <Stethoscope size={24} strokeWidth={1.75} className="text-fg-subtle" />
+          <div className="text-[13px] text-fg-muted">暂无体检指标</div>
+          <div className="text-[12px] text-fg-subtle">
+            点上方「只读体检」做一次安全检查以采集结构化指标。
+          </div>
         </div>
       )}
     </div>
