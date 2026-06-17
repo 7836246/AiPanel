@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { JSX } from "react";
+import { Loader2, XCircle } from "lucide-react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
@@ -9,6 +10,12 @@ import {
   terminalResize,
   terminalClose,
 } from "../lib/api";
+
+// 连接 banner 的阶段：connecting 显示「正在连接…」、error 显示红色失败原因、done 隐藏。
+type BannerPhase =
+  | { phase: "connecting" }
+  | { phase: "error"; reason: string }
+  | { phase: "done" };
 
 /**
  * 交互式终端会话组件。
@@ -22,21 +29,39 @@ import {
 export default function TerminalSession({
   serverId,
   serverName,
+  connLabel,
 }: {
   serverId: string;
   serverName: string;
+  // 可选 user@host 标签：有则 banner 显示「正在连接 user@host…」，无则回退到 serverName。
+  connLabel?: string;
 }): JSX.Element {
   // 终端 DOM 挂载点
   const containerRef = useRef<HTMLDivElement>(null);
   // 重连计数：自增即触发 effect 重跑，从而卸载并重建终端
   const [reconnectKey, setReconnectKey] = useState(0);
+  // 连接 banner 状态：初始为 connecting；首批输出/打开成功后置 done；失败置 error。
+  const [banner, setBanner] = useState<BannerPhase>({ phase: "connecting" });
 
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
 
+    // 每次重建（含重连）回到连接中状态，重新展示 banner。
+    setBanner({ phase: "connecting" });
+
     // 标记组件是否仍然挂载，防止异步回调在卸载后继续操作
     let disposed = false;
+    // 隐藏 banner 的延时句柄：成功打开后短暂延时再隐藏，避免一闪而过。
+    let hideTimer: ReturnType<typeof setTimeout> | null = null;
+    // 仅在首次收到输出时隐藏一次 banner 的标记。
+    let bannerSettled = false;
+    // 收到首批输出或打开成功后调用：隐藏「正在连接」banner。
+    const settleBanner = (): void => {
+      if (disposed || bannerSettled) return;
+      bannerSettled = true;
+      setBanner({ phase: "done" });
+    };
     // 会话 id：terminalOpen 成功后写入；用本地 let 闭包变量防止竞态
     let sessionId: string | null = null;
 
@@ -80,6 +105,8 @@ export default function TerminalSession({
     void terminalOpen(serverId, term.cols, term.rows, (d) => {
       // 卸载后不再写入
       if (disposed) return;
+      // 第一次收到数据即认为会话已活，隐藏连接 banner。
+      settleBanner();
       term.write(d);
     })
       .then((id) => {
@@ -89,9 +116,13 @@ export default function TerminalSession({
           return;
         }
         sessionId = id;
+        // 打开成功但可能尚无输出：短暂延时后兜底隐藏 banner。
+        hideTimer = setTimeout(settleBanner, 400);
       })
       .catch((err) => {
         if (disposed) return;
+        // 打开失败：banner 转红显示原因，同时在终端内打印错误。
+        setBanner({ phase: "error", reason: String(err) });
         term.write(`\r\n\x1b[31m无法打开终端会话: ${String(err)}\x1b[0m\r\n`);
       });
 
@@ -118,6 +149,7 @@ export default function TerminalSession({
     // 卸载清理
     return () => {
       disposed = true;
+      if (hideTimer) clearTimeout(hideTimer);
       onDataDisposable.dispose();
       onResizeDisposable.dispose();
       resizeObserver.disconnect();
@@ -140,6 +172,30 @@ export default function TerminalSession({
           重连
         </button>
       </div>
+
+      {/* 连接 banner：连接中(spinner) / 失败(红色原因)；done 时不渲染 */}
+      {banner.phase !== "done" && (
+        <div
+          className={`flex items-center gap-1.5 border-b border-border px-3 py-1.5 text-[12px] ${
+            banner.phase === "error"
+              ? "bg-risk-blocked-soft text-risk-blocked"
+              : "bg-hover text-fg-muted"
+          }`}
+        >
+          {banner.phase === "connecting" ? (
+            <>
+              <Loader2 size={13} className="flex-none animate-spin" />
+              正在连接 {connLabel ?? serverName}…
+            </>
+          ) : (
+            <>
+              <XCircle size={13} className="flex-none" />
+              连接失败：{banner.reason}
+            </>
+          )}
+        </div>
+      )}
+
       {/* 终端挂载容器：填满剩余空间 */}
       <div ref={containerRef} className="min-h-0 flex-1 p-1.5" />
     </div>

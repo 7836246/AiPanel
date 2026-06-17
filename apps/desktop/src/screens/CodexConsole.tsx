@@ -6,6 +6,7 @@ import {
   ChevronUp,
   ClipboardList,
   Copy as CopyIcon,
+  FolderTree,
   LayoutGrid,
   Lock,
   LockOpen,
@@ -40,6 +41,7 @@ import SettingsPanel, { READONLY_DEFAULT_KEY } from "./SettingsPanel";
 import AuditView from "./AuditView";
 import Dashboard from "./Dashboard";
 import ServerOverview from "./ServerOverview";
+import FileBrowser from "./FileBrowser";
 import TerminalSession from "./TerminalSession";
 import CommandPalette, { type PaletteCommand } from "./CommandPalette";
 import {
@@ -229,7 +231,7 @@ function StepRow({ summary, command, risk, status, edit }: {
 // 主控制台：左侧服务器/历史导航，右侧计划生成、执行、体检、诊断与终端输出。
 export default function CodexConsole() {
   const [theme, toggleTheme] = useTheme();
-  const [view, setView] = useState<"console" | "audit" | "settings" | "dashboard" | "terminal">("console");
+  const [view, setView] = useState<"console" | "audit" | "settings" | "dashboard" | "terminal" | "files">("console");
   const [refreshing, setRefreshing] = useState(false);
   // 计划编辑态：draftSteps 非 null 即处于编辑;draftReview 为草稿的服务端重判结果。
   const [draftSteps, setDraftSteps] = useState<PlanStep[] | null>(null);
@@ -771,6 +773,7 @@ export default function CodexConsole() {
           <NavItem icon={<PencilIcon size={16} />} label="提问" active={view === "console"} onClick={() => setView("console")} />
           <NavItem icon={<LayoutGrid size={16} />} label="概览" active={view === "dashboard"} onClick={() => setView("dashboard")} />
           <NavItem icon={<TerminalIconLucide size={16} />} label="终端" active={view === "terminal"} onClick={() => setView("terminal")} />
+          <NavItem icon={<FolderTree size={16} />} label="文件" active={view === "files"} onClick={() => setView("files")} />
           <NavItem icon={<ScrollText size={16} />} label="审计" active={view === "audit"} onClick={openAudit} />
         </div>
 
@@ -875,11 +878,22 @@ export default function CodexConsole() {
           selected ? (
             <div className="flex min-h-0 flex-1 flex-col">
               {/* 交互式终端:用户自己操作所选服务器的 SSH 终端(不暴露给 AI) */}
-              <TerminalSession key={selected.id} serverId={selected.id} serverName={selected.name} />
+              <TerminalSession key={selected.id} serverId={selected.id} serverName={selected.name} connLabel={`${selected.username}@${selected.host}`} />
             </div>
           ) : (
             <div className="flex min-h-0 flex-1 items-center justify-center text-[13px] text-fg-subtle">
               先在左侧选择一台服务器,再打开终端
+            </div>
+          )
+        ) : view === "files" ? (
+          selected ? (
+            <div className="flex min-h-0 flex-1 flex-col">
+              {/* 文件管理:浏览/查看/编辑所选服务器文件(SFTP over SSH,不暴露给 AI) */}
+              <FileBrowser key={selected.id} serverId={selected.id} serverName={selected.name} />
+            </div>
+          ) : (
+            <div className="flex min-h-0 flex-1 items-center justify-center text-[13px] text-fg-subtle">
+              先在左侧选择一台服务器,再打开文件管理
             </div>
           )
         ) : view === "dashboard" ? (
@@ -1018,7 +1032,17 @@ export default function CodexConsole() {
                     ) : <p className="text-[13px] text-fg-subtle">无总结</p>}
                   </div>
                 ) : (
-                  <ServerOverview server={selected} running={running} onDoctor={runDoctor} />
+                  <ServerOverview
+                    server={selected}
+                    running={running}
+                    onDoctor={runDoctor}
+                    onStatus={(online) => {
+                      if (!selected) return;
+                      setServers((prev) =>
+                        prev.map((s) => (s.id === selected.id ? { ...s, status: online ? "online" : "offline" } : s))
+                      );
+                    }}
+                  />
                 )}
               </div>
             </section>

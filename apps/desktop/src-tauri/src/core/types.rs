@@ -427,6 +427,53 @@ pub struct DoctorReport {
 }
 
 // ---------------------------------------------------------------------------
+// Files (SFTP over SSH) —— 用户直接操作的文件管理，绝不暴露给 AI。
+// ---------------------------------------------------------------------------
+
+/// 目录项的类型。序列化为小写字符串（dir/file/link）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FileKind {
+    /// 目录。
+    Dir,
+    /// 普通文件（以及其它非目录/非链接的项）。
+    File,
+    /// 符号链接。
+    Link,
+}
+
+/// 远程目录中的一项。名称、类型、大小（字节）与修改时间（ISO-8601 字符串）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileEntry {
+    pub name: String,
+    pub kind: FileKind,
+    pub size: u64,
+    /// 修改时间，形如 `2026-06-18T14:30`（来自 find 的 `%TY-%Tm-%TdT%TH:%TM`）。
+    pub mtime: String,
+}
+
+/// 对某个远程目录的一次列举结果。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DirListing {
+    /// 被列举的目录路径（原样回传，便于前端展示当前位置）。
+    pub path: String,
+    pub entries: Vec<FileEntry>,
+}
+
+/// 一个远程文件的（可能被截断的）内容。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileContent {
+    pub path: String,
+    /// 文件内容（已脱敏：run_command 会改写疑似密钥的片段）。
+    pub content: String,
+    /// 文件超过读取上限（~256KB）时为 true，content 为前缀截断。
+    pub truncated: bool,
+}
+
+// ---------------------------------------------------------------------------
 // Audit
 // ---------------------------------------------------------------------------
 

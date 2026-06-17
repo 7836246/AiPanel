@@ -266,6 +266,84 @@ pub async fn run_command(
     })
 }
 
+/// 与 [`run_command`] 行为一致，但在执行前把 `input` 写入子进程的 stdin，
+/// 然后关闭 stdin（drop），再收集输出。供文件管理的「写文件」（`cat > 路径`）
+/// 使用：内容经 stdin 传入，绝不进入 argv（避免在 `ps` 中可见、也避免超长 argv）。
+///
+/// 复用 [`build_invocation`]（不强制 tty）与既有的认证/脱敏逻辑；不复用
+/// [`spawn_child`]（后者把 stdin 设为 null），而是单独构建一个 stdin 接管管道的子进程。
+/// 风险审查由调用方负责。
+pub async fn run_command_with_input(
+    server: &ServerProfile,
+    secret: Option<&str>,
+    command: &str,
+    input: &str,
+    duration: Duration,
+) -> AppResult<CommandExecution> {
+    use tokio::io::AsyncWriteExt;
+
+    let started_at = crate::core::types::now();
+    let start = Instant::now();
+
+    // `inv` 持有临时密钥文件（如果有），在 drop 时删除。阻塞式执行不需要强制 tty。
+    let inv = build_invocation(server, secret, command, false)?;
+
+    // 与 spawn_child 一致，但 stdin 接管为管道，以便写入内容。
+    let mut cmd = Command::new(&inv.program);
+    cmd.args(&inv.args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    if let Some((k, v)) = &inv.env {
+        cmd.env(k, v);
+    }
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| AppError::Ssh(format!("failed to launch ssh: {e}")))?;
+
+    // 取出 stdin，写入内容后 drop（关闭），让远端的 `cat` 收到 EOF 并落盘。
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| AppError::Ssh("failed to capture ssh stdin".into()))?;
+
+    let output = match timeout(duration, async {
+        stdin
+            .write_all(input.as_bytes())
+            .await
+            .map_err(|e| AppError::Ssh(e.to_string()))?;
+        stdin
+            .flush()
+            .await
+            .map_err(|e| AppError::Ssh(e.to_string()))?;
+        drop(stdin); // 关闭 stdin，发送 EOF
+        child
+            .wait_with_output()
+            .await
+            .map_err(|e| AppError::Ssh(e.to_string()))
+    })
+    .await
+    {
+        Ok(res) => res?,
+        Err(_) => {
+            return Err(AppError::Ssh(format!(
+                "command timed out after {}s",
+                duration.as_secs()
+            )));
+        }
+    };
+
+    Ok(CommandExecution {
+        command: command.to_string(),
+        exit_code: output.status.code().unwrap_or(-1),
+        stdout: sanitize(&String::from_utf8_lossy(&output.stdout)),
+        stderr: sanitize(&String::from_utf8_lossy(&output.stderr)),
+        duration_ms: start.elapsed().as_millis() as u64,
+        started_at,
+    })
+}
+
 /// 仅当 Risk Reviewer 将命令判定为只读（`Low`）时才执行。
 /// 这是任何尚未经用户确认的命令的安全入口。
 pub async fn run_readonly(

@@ -433,6 +433,45 @@ export async function terminalClose(sessionId: string): Promise<void> {
   return invoke<void>("terminal_close", { sessionId });
 }
 
+// ---- 文件管理(SFTP over SSH;用户操作,不暴露给 AI)------------------------
+
+export type FileKind = "dir" | "file" | "link";
+export interface FileEntry {
+  name: string;
+  kind: FileKind;
+  size: number;
+  /** 修改时间(ISO 字符串或原始 ls 时间戳)。 */
+  mtime: string;
+}
+export interface DirListing {
+  path: string;
+  entries: FileEntry[];
+}
+export interface FileContent {
+  path: string;
+  content: string;
+  /** 文件过大被截断时为 true。 */
+  truncated: boolean;
+}
+
+/** 列出远端目录(默认家目录可传 "."或"~")。 */
+export async function fsList(serverId: string, path: string): Promise<DirListing> {
+  if (!isTauri()) return { path, entries: [] };
+  return invoke<DirListing>("fs_list", { id: serverId, path });
+}
+
+/** 读取远端文本文件内容(过大将截断)。 */
+export async function fsRead(serverId: string, path: string): Promise<FileContent> {
+  if (!isTauri()) return { path, content: "", truncated: false };
+  return invoke<FileContent>("fs_read", { id: serverId, path });
+}
+
+/** 写回远端文本文件(编辑保存)。 */
+export async function fsWrite(serverId: string, path: string, content: string): Promise<void> {
+  if (!isTauri()) return;
+  return invoke<void>("fs_write", { id: serverId, path, content });
+}
+
 // ---- 审计/任务 搜索与导出 -------------------------------------
 
 /** 关键字搜索审计记录（意图/总结/命令的子串匹配）。空查询退化为列表。 */

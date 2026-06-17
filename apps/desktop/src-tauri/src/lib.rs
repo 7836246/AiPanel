@@ -11,6 +11,7 @@ pub mod audit;
 pub mod commands;
 pub mod credentials;
 pub mod doctor;
+pub mod files;
 pub mod plan;
 pub mod risk;
 pub mod ssh;
@@ -72,6 +73,9 @@ pub fn run() {
             commands::terminal::terminal_write,
             commands::terminal::terminal_resize,
             commands::terminal::terminal_close,
+            commands::files::fs_list,
+            commands::files::fs_read,
+            commands::files::fs_write,
             commands::tasks::list_tasks,
             commands::tasks::get_task,
             commands::tasks::save_task,

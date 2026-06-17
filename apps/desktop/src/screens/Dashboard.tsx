@@ -53,11 +53,14 @@ function MetricBar({ pct }: { pct: number }): JSX.Element {
 function ServerTile({
   server,
   selected,
+  refreshing,
   onSelect,
   onToggleFavorite,
 }: {
   server: ServerProfile;
   selected: boolean;
+  // 全局刷新进行中：徽标改为「连接中…」+ 小 Spinner，让刷新过程可见。
+  refreshing: boolean;
   onSelect: (id: string) => void;
   onToggleFavorite: (id: string, favorite: boolean) => void;
 }): JSX.Element {
@@ -87,9 +90,16 @@ function ServerTile({
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5">
             <span className="min-w-0 truncate text-[13.5px] font-semibold">{server.name}</span>
-            <span className={`flex-none rounded px-1.5 py-0.5 text-[10px] font-medium ${statusChip(server.status)}`}>
-              {statusText(server.status)}
-            </span>
+            {refreshing ? (
+              // 刷新进行中：徽标显示「连接中…」+ 小 Spinner，过程可见。
+              <span className="flex-none inline-flex items-center gap-1 rounded bg-hover px-1.5 py-0.5 text-[10px] font-medium text-fg-muted">
+                <Spinner size="sm" /> 连接中…
+              </span>
+            ) : (
+              <span className={`flex-none rounded px-1.5 py-0.5 text-[10px] font-medium ${statusChip(server.status)}`}>
+                {statusText(server.status)}
+              </span>
+            )}
           </div>
           <div className="mt-0.5 truncate font-mono text-[11px] text-fg-subtle">
             {server.username}@{server.host}:{server.port}
@@ -214,6 +224,7 @@ export function Dashboard({
               key={server.id}
               server={server}
               selected={server.id === selectedServerId}
+              refreshing={refreshing}
               onSelect={onSelect}
               onToggleFavorite={onToggleFavorite}
             />

@@ -1,5 +1,5 @@
 /**
- * AiPanel design tokens — Codex-style warm-neutral, light-first, with a dark theme.
+ * AiPanel design tokens — Codex-style cool-neutral, light-first, with a dark theme.
  *
  * Tailwind v4 reads `@theme` and (a) emits the CSS custom properties below and
  * (b) generates matching utilities — e.g. `--color-surface-1` powers
@@ -12,9 +12,10 @@
  * ancestor (typically <html>) to flip the subtree. Components reference the
  * semantic utilities, so they switch automatically.
  *
- * Palette mirrors the Codex visual language: near-monochrome warm grays,
- * hairline borders, a near-black primary, and color reserved for status / the
- * risk scale (low/medium/high/blocked, per docs/SECURITY_MODEL.zh-Hans.md).
+ * Palette mirrors the real Codex visual language: a crisp white base with
+ * near-monochrome cool (slate-leaning) grays, hairline cool borders, a
+ * near-black primary, and color reserved for status / the risk scale
+ * (low/medium/high/blocked, per docs/SECURITY_MODEL.zh-Hans.md).
  */
 @theme {
   /* Typography — system stack (Codex), mono for commands/terminal */
@@ -28,38 +29,38 @@
   --radius-xl: 1rem;
 
   /* ---- LIGHT (default) ---- */
-  /* 暖中性层级：页面近白，surface 逐档变浅形成侧栏感，去蓝偏暖灰 */
-  --color-bg: #fbfbfa;
-  --color-surface-1: #f7f7f5;
-  --color-surface-2: #f2f1ef;
-  --color-surface-3: #ededea;
-  --color-hover: #f0efec;
-  --color-selected: #e8e7e3;
-  /* 很淡的中性灰发丝边框 */
-  --color-border: #ececea;
-  --color-border-strong: #e3e3e1;
+  /* 冷中性层级：白底为主，surface 逐档加深成侧栏感，整体偏冷 slate 灰、更通透 */
+  --color-bg: #ffffff;
+  --color-surface-1: #fcfcfd;
+  --color-surface-2: #f7f7f8;
+  --color-surface-3: #f0f0f2;
+  --color-hover: #f3f3f5;
+  --color-selected: #ececef;
+  /* 冷灰发丝边框 */
+  --color-border: #ececee;
+  --color-border-strong: #e1e1e6;
 
-  /* 文字近黑主 / 暖灰 muted / 更浅 subtle */
-  --color-fg: #0d0d0d;
-  --color-fg-muted: #5b5b5b;
-  --color-fg-subtle: #6f6f6d;
+  /* 文字近黑略冷主 / 冷灰 muted / 更浅冷灰 subtle */
+  --color-fg: #1a1a1c;
+  --color-fg-muted: #6b6b73;
+  --color-fg-subtle: #9a9aa3;
 
   /* 强调色收敛为近黑（Codex "send"），不靠彩色强调 */
-  --color-brand: #1a1a1a;
-  --color-brand-strong: #0d0d0d;
-  --color-brand-fg: #fbfbfa;
-  --color-accent: #1a1a1a;
-  --color-accent-strong: #0d0d0d;
+  --color-brand: #1a1a1c;
+  --color-brand-strong: #0d0d0f;
+  --color-brand-fg: #ffffff;
+  --color-accent: #1a1a1c;
+  --color-accent-strong: #0d0d0f;
 
-  /* Risk scale — Low / Medium / High / Blocked（略降饱和，中性底上不刺眼） */
+  /* Risk scale — Low / Medium / High / Blocked（保留绿/琥珀/橙/红，-soft 用很淡冷底） */
   --color-risk-low: #2a7d45;
-  --color-risk-low-soft: #e3f3e8;
+  --color-risk-low-soft: #e7f4ec;
   --color-risk-medium: #8a6a16;
-  --color-risk-medium-soft: #f7efd6;
+  --color-risk-medium-soft: #f6f0db;
   --color-risk-high: #b15324;
-  --color-risk-high-soft: #f7e6da;
+  --color-risk-high-soft: #f6e8df;
   --color-risk-blocked: #c23b43;
-  --color-risk-blocked-soft: #f7e3e3;
+  --color-risk-blocked-soft: #f6e6e7;
 
   /* Generic status */
   --color-success: #2a7d45;
@@ -77,36 +78,36 @@
 .dark {
   color-scheme: dark;
 
-  /* 近黑层级：bg 最深，surface 逐档提亮，发丝边框中性 */
-  --color-bg: #0d0d0d;
-  --color-surface-1: #1a1a1a;
-  --color-surface-2: #1f1f1f;
-  --color-surface-3: #242424;
-  --color-hover: #242424;
-  --color-selected: #2d2d2d;
-  --color-border: #2a2a2a;
-  --color-border-strong: #333333;
+  /* 近黑偏冷层级：bg 最深，surface 逐档提亮，发丝边框冷中性 */
+  --color-bg: #0f0f11;
+  --color-surface-1: #18181b;
+  --color-surface-2: #1d1d20;
+  --color-surface-3: #232327;
+  --color-hover: #232327;
+  --color-selected: #2c2c31;
+  --color-border: #2a2a2e;
+  --color-border-strong: #34343a;
 
-  --color-fg: #ececec;
-  --color-fg-muted: #a0a0a0;
-  --color-fg-subtle: #828280;
+  --color-fg: #ededf0;
+  --color-fg-muted: #a1a1a9;
+  --color-fg-subtle: #8a8a92;
 
-  /* 深色下主按钮反相为近白 */
-  --color-brand: #ececec;
+  /* 深色下主按钮反相为近白（偏冷） */
+  --color-brand: #ededf0;
   --color-brand-strong: #ffffff;
-  --color-brand-fg: #0d0d0d;
-  --color-accent: #ececec;
+  --color-brand-fg: #0f0f11;
+  --color-accent: #ededf0;
   --color-accent-strong: #ffffff;
 
-  /* Risk scale（降饱和，近黑底上柔和） */
+  /* Risk scale（降饱和，近黑冷底上柔和） */
   --color-risk-low: #4caf68;
-  --color-risk-low-soft: #14241a;
+  --color-risk-low-soft: #15241b;
   --color-risk-medium: #c79a3a;
-  --color-risk-medium-soft: #261f0e;
+  --color-risk-medium-soft: #25200f;
   --color-risk-high: #cf7340;
-  --color-risk-high-soft: #261810;
+  --color-risk-high-soft: #251911;
   --color-risk-blocked: #e0625b;
-  --color-risk-blocked-soft: #261516;
+  --color-risk-blocked-soft: #251618;
 
   --color-success: #4caf68;
   --color-warning: #c79a3a;

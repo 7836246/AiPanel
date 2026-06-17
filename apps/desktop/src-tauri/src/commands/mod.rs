@@ -5,6 +5,7 @@
 
 use tauri::State;
 
+pub mod files;
 pub mod search;
 pub mod stream;
 pub mod tasks;

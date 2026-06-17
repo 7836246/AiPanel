@@ -19,6 +19,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- File manager ("文件"): browse the selected server's filesystem (SFTP over SSH —
+  directory listing, view, and edit/save), Codex-style file tree with typed icons,
+  breadcrumb path, and search. User-operated, not exposed to the AI agent.
+- Visible connection flow: a "连接/重连" action with a live 连接中/已连接/失败 state on
+  the server overview, a "正在连接 user@host…" banner in the terminal, and a
+  连接中 indicator on dashboard cards while refreshing.
+- Codex cool-white palette: white-dominant with cool slate grays (replacing the
+  earlier warm-neutral pass), light + dark, AA contrast.
 - Interactive SSH terminal ("终端"): a real, user-operated terminal for the selected
   server (xterm.js front-end + a local PTY wrapping `ssh` via portable-pty, streamed
   over a Tauri channel). User-driven and never exposed to the AI agent — the
