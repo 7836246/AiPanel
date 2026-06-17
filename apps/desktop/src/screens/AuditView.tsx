@@ -1,0 +1,193 @@
+import { useEffect, useState, type JSX } from "react";
+import { Button, Input, Spinner } from "@aipanel/ui";
+import {
+  listAuditRecords,
+  searchAuditRecords,
+  exportAuditJson,
+  type AuditRecord,
+} from "../lib/api";
+
+// 任务状态到中文标签的映射（与控制台保持一致）。
+const STATUS_LABEL: Record<string, string> = {
+  completed: "完成",
+  failed: "失败",
+  blocked: "已阻止",
+  running: "进行中",
+  awaiting_confirmation: "待确认",
+  planning: "规划中",
+  pending: "待处理",
+};
+
+// 顶部状态筛选项：全部 / 完成 / 失败（前端按 record.status 过滤）。
+type StatusFilter = "all" | "completed" | "failed";
+const FILTERS: { key: StatusFilter; label: string }[] = [
+  { key: "all", label: "全部" },
+  { key: "completed", label: "完成" },
+  { key: "failed", label: "失败" },
+];
+
+// 从后端错误或任意异常中提取可展示的错误文本。
+const errMsg = (e: unknown): string =>
+  e && typeof e === "object" && "message" in e ? String((e as { message: unknown }).message) : String(e);
+
+// 独立审计视图：自加载审计记录,支持搜索、状态筛选与导出 JSON 到剪贴板。
+export default function AuditView({
+  onNotify,
+}: {
+  onNotify?: (tone: "info" | "success" | "danger", message: string) => void;
+}): JSX.Element {
+  const [records, setRecords] = useState<AuditRecord[]>([]);
+  const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState<StatusFilter>("all");
+  const [loading, setLoading] = useState(true);
+  const [openId, setOpenId] = useState<string | null>(null);
+
+  // 加载审计记录：有查询走 searchAuditRecords,空查询走 listAuditRecords。
+  // query 变化即触发(输入即搜索);首次挂载时 query 为空,等价于列表加载。
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    const q = query.trim();
+    const load = q ? searchAuditRecords(q) : listAuditRecords();
+    load
+      .then((rs) => {
+        if (!cancelled) setRecords(rs);
+      })
+      .catch((e) => {
+        if (!cancelled) {
+          setRecords([]);
+          onNotify?.("danger", `加载审计失败: ${errMsg(e)}`);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // onNotify 由父级稳定提供,无需纳入依赖。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [query]);
+
+  // 导出全部审计为 JSON 字符串并写入剪贴板。
+  async function handleExport() {
+    try {
+      const json = await exportAuditJson();
+      await navigator.clipboard.writeText(json);
+      onNotify?.("success", "审计已复制为 JSON");
+    } catch (e) {
+      onNotify?.("danger", `导出失败: ${errMsg(e)}`);
+    }
+  }
+
+  // 前端按状态过滤(failed 同时涵盖 blocked,视为未成功)。
+  const shown = records.filter((r) => {
+    if (filter === "all") return true;
+    if (filter === "completed") return r.status === "completed";
+    return r.status !== "completed";
+  });
+
+  return (
+    <section className="flex min-h-0 flex-1 flex-col">
+      {/* 顶部工具行：搜索 + 状态筛选 + 导出 */}
+      <div className="flex flex-none items-center gap-2.5 border-b border-border px-6 py-2.5">
+        <Input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="搜索意图 / 总结 / 命令…"
+          className="max-w-xs flex-1"
+        />
+        <div className="flex items-center gap-0.5 rounded-md bg-surface-2 p-0.5">
+          {FILTERS.map((f) => (
+            <button
+              key={f.key}
+              onClick={() => setFilter(f.key)}
+              className={`rounded px-2.5 py-1 text-[12.5px] transition-colors ${
+                filter === f.key ? "bg-surface-1 text-fg shadow-sm" : "text-fg-muted hover:text-fg"
+              }`}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+        <Button variant="secondary" size="sm" className="ml-auto" onClick={handleExport}>
+          导出 JSON
+        </Button>
+      </div>
+
+      {/* 列表区 */}
+      <div className="cx-scroll min-h-0 flex-1 overflow-y-auto">
+        <div className="mx-auto max-w-[680px] px-6 pb-6 pt-5">
+          <h2 className="mb-3 text-sm font-semibold">审计记录</h2>
+          {loading ? (
+            <div className="flex items-center justify-center gap-2 rounded-md border border-border bg-surface-1 px-4 py-6 text-[13px] text-fg-subtle">
+              <Spinner size="sm" /> 加载中…
+            </div>
+          ) : shown.length === 0 ? (
+            <div className="rounded-md border border-border bg-surface-1 px-4 py-6 text-center text-[13px] text-fg-subtle">
+              {query.trim() || filter !== "all"
+                ? "没有匹配的审计记录。"
+                : "还没有审计记录。执行一次任务后会出现在这里。"}
+            </div>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {shown.map((r) => {
+                const open = r.id === openId;
+                const ok = r.status === "completed";
+                return (
+                  <div key={r.id} className="overflow-hidden rounded-md border border-border bg-surface-1">
+                    <div
+                      onClick={() => setOpenId(open ? null : r.id)}
+                      className="flex cursor-pointer items-center gap-3 px-4 py-3 transition-colors hover:bg-hover"
+                    >
+                      <span className={`h-1.5 w-1.5 rounded-full ${ok ? "bg-risk-low" : "bg-risk-blocked"}`} />
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-[13.5px] font-medium">{r.intent}</div>
+                        {r.summary ? (
+                          <div className="truncate text-[12px] text-fg-muted">{r.summary}</div>
+                        ) : null}
+                      </div>
+                      <span className="flex-none text-[11.5px] text-fg-subtle">
+                        {STATUS_LABEL[r.status] ?? r.status}
+                      </span>
+                      <time className="flex-none font-mono text-[11px] text-fg-subtle">
+                        {new Date(r.createdAt).toLocaleString()}
+                      </time>
+                    </div>
+                    {open && (
+                      <div className="border-t border-border px-4 py-3">
+                        {r.executions.length === 0 ? (
+                          <div className="text-[12px] text-fg-subtle">无命令执行记录</div>
+                        ) : (
+                          <div className="flex flex-col gap-2">
+                            {r.executions.map((ex, i) => (
+                              <div key={i} className="rounded-md bg-bg">
+                                <div className="flex items-center gap-2 border-b border-border px-3 py-1.5 font-mono text-[11.5px] text-fg-subtle">
+                                  <span>$ {ex.command}</span>
+                                  <span
+                                    className={`ml-auto ${ex.exitCode === 0 ? "text-risk-low" : "text-risk-blocked"}`}
+                                  >
+                                    exit {ex.exitCode}
+                                  </span>
+                                </div>
+                                {ex.stdout || ex.stderr ? (
+                                  <pre className="overflow-x-auto px-3 py-2 font-mono text-[11.5px] leading-relaxed text-fg">
+                                    {(ex.stdout || ex.stderr).split("\n").slice(0, 12).join("\n")}
+                                  </pre>
+                                ) : null}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}

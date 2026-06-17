@@ -11,7 +11,10 @@ import {
 import AddServerDialog from "./AddServerDialog";
 import ConfirmExecuteDialog from "./ConfirmExecuteDialog";
 import EditServerDialog from "./EditServerDialog";
-import SettingsPanel from "./SettingsPanel";
+import SettingsPanel, { READONLY_DEFAULT_KEY } from "./SettingsPanel";
+import AuditView from "./AuditView";
+import ServerOverview from "./ServerOverview";
+import CommandPalette, { type PaletteCommand } from "./CommandPalette";
 import {
   isTauri,
   cancelRun,
@@ -22,7 +25,6 @@ import {
   runConfirmedPlanStream,
   runServerDoctorStream,
   serverDoctorPlan,
-  listAuditRecords,
   listProviders,
   listServers,
   listTasks,
@@ -30,7 +32,6 @@ import {
   deleteTask,
   RISK_META,
   type AppError,
-  type AuditRecord,
   type CommandExecution,
   type ProviderConfig,
   type RiskLevel,
@@ -126,13 +127,6 @@ const Play = ({ size = 12 }: IconProps) => (
     <path d="M4 3l7 4-7 4z" />
   </svg>
 );
-const Stethoscope = ({ size = 14 }: IconProps) => (
-  <svg width={size} height={size} viewBox="0 0 16 16" {...stroke} strokeWidth={1.4}>
-    <path d="M4 2v4a3 3 0 0 0 6 0V2" />
-    <path d="M7 9v1.5a3.5 3.5 0 0 0 7 0V9" />
-    <circle cx="13.5" cy="8" r="1.2" />
-  </svg>
-);
 const Check = ({ size = 14 }: IconProps) => (
   <svg width={size} height={size} viewBox="0 0 16 16" fill="none" stroke="var(--color-risk-low)" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
     <path d="M3.5 8.3l2.6 2.6L12.5 4.8" />
@@ -224,66 +218,6 @@ function StepRow({ summary, command, risk, status }: {
   );
 }
 
-// 审计面板：列出审计记录，点击可展开查看每条命令的输出与退出码。
-function AuditPanel({ records }: { records: AuditRecord[] }) {
-  const [openId, setOpenId] = useState<string | null>(null);
-  return (
-    <section className="cx-scroll min-h-0 flex-1 overflow-y-auto">
-      <div className="mx-auto max-w-[680px] px-6 pb-6 pt-5">
-        <h2 className="mb-3 text-sm font-semibold">审计记录</h2>
-        {records.length === 0 ? (
-          <div className="rounded-md border border-border bg-surface-1 px-4 py-6 text-center text-[13px] text-fg-subtle">
-            还没有审计记录。执行一次任务后会出现在这里。
-          </div>
-        ) : (
-          <div className="flex flex-col gap-2">
-            {records.map((r) => {
-              const open = r.id === openId;
-              const ok = r.status === "completed";
-              return (
-                <div key={r.id} className="overflow-hidden rounded-md border border-border bg-surface-1">
-                  <div onClick={() => setOpenId(open ? null : r.id)} className="flex cursor-pointer items-center gap-3 px-4 py-3 transition-colors hover:bg-hover">
-                    <span className={`h-1.5 w-1.5 rounded-full ${ok ? "bg-risk-low" : "bg-risk-blocked"}`} />
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate text-[13.5px] font-medium">{r.intent}</div>
-                      {r.summary ? <div className="truncate text-[12px] text-fg-muted">{r.summary}</div> : null}
-                    </div>
-                    <span className="flex-none text-[11.5px] text-fg-subtle">{STATUS_LABEL[r.status] ?? r.status}</span>
-                    <time className="flex-none font-mono text-[11px] text-fg-subtle">{new Date(r.createdAt).toLocaleString()}</time>
-                  </div>
-                  {open && (
-                    <div className="border-t border-border px-4 py-3">
-                      {r.executions.length === 0 ? (
-                        <div className="text-[12px] text-fg-subtle">无命令执行记录</div>
-                      ) : (
-                        <div className="flex flex-col gap-2">
-                          {r.executions.map((ex, i) => (
-                            <div key={i} className="rounded-md bg-bg">
-                              <div className="flex items-center gap-2 border-b border-border px-3 py-1.5 font-mono text-[11.5px] text-fg-subtle">
-                                <span>$ {ex.command}</span>
-                                <span className={`ml-auto ${ex.exitCode === 0 ? "text-risk-low" : "text-risk-blocked"}`}>exit {ex.exitCode}</span>
-                              </div>
-                              {ex.stdout || ex.stderr ? (
-                                <pre className="overflow-x-auto px-3 py-2 font-mono text-[11.5px] leading-relaxed text-fg">
-                                  {(ex.stdout || ex.stderr).split("\n").slice(0, 12).join("\n")}
-                                </pre>
-                              ) : null}
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
-    </section>
-  );
-}
-
 /* ---------------- 主屏 ---------------- */
 // 主控制台：左侧服务器/历史导航，右侧计划生成、执行、体检、诊断与终端输出。
 export default function CodexConsole() {
@@ -298,10 +232,14 @@ export default function CodexConsole() {
   const [termLines, setTermLines] = useState<TerminalLine[]>([]);
   const [terminalOpen, setTerminalOpen] = useState(true);
   const [running, setRunning] = useState(false);
-  const [readOnlyMode, setReadOnlyMode] = useState(false);
+  // 默认只读优先：从设置写入的 localStorage 读取初始值（缺省安全地为开）。
+  const [readOnlyMode, setReadOnlyMode] = useState(
+    () => localStorage.getItem(READONLY_DEFAULT_KEY) !== "false"
+  );
+  // 命令面板（⌘K）开关。
+  const [paletteOpen, setPaletteOpen] = useState(false);
   const [intentValue, setIntentValue] = useState("");
   const [providers, setProviders] = useState<ProviderConfig[]>([]);
-  const [audits, setAudits] = useState<AuditRecord[]>([]);
   const [addOpen, setAddOpen] = useState(false);
   const [editing, setEditing] = useState<ServerProfile | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -310,6 +248,8 @@ export default function CodexConsole() {
   const runIdRef = useRef(0);
   // 当前流式任务的后端取消句柄（doctor/计划执行），供「停止」真正中断远端命令。
   const cancelIdRef = useRef("");
+  // 任务输入框引用，供命令面板「新建提问」聚焦。
+  const inputRef = useRef<HTMLInputElement>(null);
   // 轻量通知（错误/成功提示），替代仅在终端里报错。
   const { toasts, push, dismiss } = useToasts();
 
@@ -570,11 +510,34 @@ export default function CodexConsole() {
     setStepStatus((prev) => prev.map((s) => (s === "running" ? "pending" : s)));
   }
 
-  // 切到审计视图并加载审计记录。
+  // 切到审计视图（AuditView 自行加载/搜索审计记录）。
   function openAudit() {
     setView("audit");
-    listAuditRecords().then(setAudits).catch(() => setAudits([]));
   }
+
+  // 命令面板的动作集合：把主界面的关键操作集中为可搜索/键盘可达的快捷入口。
+  const paletteCommands: PaletteCommand[] = [
+    { id: "ask", label: "新建提问", hint: "聚焦输入框", group: "操作", run: () => { setView("console"); inputRef.current?.focus(); } },
+    { id: "doctor", label: "只读体检", hint: selected ? selected.name : "需选择服务器", group: "操作", run: () => { if (selectedServerId) runDoctor(); } },
+    { id: "audit", label: "打开审计", group: "导航", run: () => setView("audit") },
+    { id: "settings", label: "打开设置", group: "导航", run: () => setView("settings") },
+    { id: "theme", label: "切换浅色/深色", group: "界面", run: () => toggleTheme() },
+    { id: "terminal", label: "切换终端", group: "界面", run: () => setTerminalOpen((o) => !o) },
+    { id: "readonly", label: readOnlyMode ? "关闭只读优先" : "开启只读优先", group: "界面", run: () => setReadOnlyMode((v) => !v) },
+    ...servers.map((s) => ({ id: `srv-${s.id}`, label: `切换到 ${s.name}`, hint: s.host, group: "服务器", run: () => setSelectedServerId(s.id) })),
+  ];
+
+  // 全局快捷键：⌘K / Ctrl-K 打开命令面板。
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setPaletteOpen((o) => !o);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   const planExecuted = !!current && current.kind === "plan" && current.executions.length > 0;
   const topTitle = current ? current.title : selected ? selected.name : "AiPanel";
@@ -675,7 +638,7 @@ export default function CodexConsole() {
         </div>
 
         {view === "audit" ? (
-          <AuditPanel records={audits} />
+          <AuditView onNotify={push} />
         ) : view === "settings" ? (
           <SettingsPanel />
         ) : servers.length === 0 ? (
@@ -728,7 +691,7 @@ export default function CodexConsole() {
                     ) : <p className="text-[13px] text-fg-subtle">无总结</p>}
                   </div>
                 ) : (
-                  <ServerHome server={selected} running={running} onDoctor={runDoctor} />
+                  <ServerOverview server={selected} running={running} onDoctor={runDoctor} />
                 )}
               </div>
             </section>
@@ -737,6 +700,7 @@ export default function CodexConsole() {
             <div className="flex-none bg-bg px-6 pb-3.5 pt-1.5">
               <div className="mx-auto max-w-[680px] rounded-lg border border-border-strong bg-surface-1 px-3 pb-2.5 pl-4 pt-3 shadow-sm">
                 <input
+                  ref={inputRef}
                   value={intentValue}
                   onChange={(e) => setIntentValue(e.target.value)}
                   onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); generatePlan(); } }}
@@ -791,6 +755,9 @@ export default function CodexConsole() {
       />
       <ConfirmExecuteDialog open={confirmOpen} plan={current?.plan ?? null} review={confirmReview} onClose={() => setConfirmOpen(false)} onConfirm={(c, d) => execute(c, d, confirmReview ?? undefined)} />
 
+      {/* 命令面板（⌘K）：可搜索/键盘可达的快捷操作 */}
+      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} commands={paletteCommands} />
+
       {/* 全局通知层（错误/成功提示），固定在右下角 */}
       <ToastViewport toasts={toasts} onDismiss={dismiss} />
     </div>
@@ -809,41 +776,6 @@ function FirstRun({ onAdd }: { onAdd: () => void }) {
           AiPanel 在本地运行、通过 SSH 管理服务器,不在服务器上常驻。添加一台服务器即可开始只读体检与 AI 运维。凭据只存本地 Keychain。
         </p>
         <div className="mt-5"><Button variant="primary" size="md" onClick={onAdd}><Plus /> 添加第一台服务器</Button></div>
-      </div>
-    </div>
-  );
-}
-
-// 已选服务器但尚无打开任务时的主页：展示服务器概况与「只读体检」入口。
-function ServerHome({ server, running, onDoctor }: { server: ServerProfile | null; running: boolean; onDoctor: () => void }) {
-  if (!server) {
-    return <div className="rounded-md border border-border bg-surface-1 px-4 py-8 text-center text-[13px] text-fg-subtle">从左侧选择一台服务器开始。</div>;
-  }
-  const facts = Object.entries(server.facts ?? {});
-  return (
-    <div className="flex flex-col gap-3">
-      <div className="rounded-md border border-border bg-surface-1 px-4 py-3.5">
-        <div className="flex items-center gap-2">
-          <span className={`h-1.5 w-1.5 rounded-full ${statusDot(server.status)}`} />
-          <span className="text-sm font-semibold">{server.name}</span>
-          <span className="font-mono text-[12px] text-fg-subtle">{server.username}@{server.host}:{server.port}</span>
-          <Button variant="secondary" size="sm" className="ml-auto" onClick={onDoctor} disabled={running}>
-            {running ? <Spinner size="sm" /> : <Stethoscope />} 只读体检
-          </Button>
-        </div>
-        {facts.length > 0 && (
-          <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1.5">
-            {facts.map(([k, v]) => (
-              <div key={k} className="flex items-baseline justify-between gap-2 text-[12.5px]">
-                <dt className="text-fg-subtle">{k}</dt>
-                <dd className="truncate font-medium text-fg">{v}</dd>
-              </div>
-            ))}
-          </dl>
-        )}
-      </div>
-      <div className="rounded-md border border-dashed border-border px-4 py-6 text-center text-[13px] text-fg-subtle">
-        在下方输入运维任务生成可审查的计划,或点「只读体检」做一次安全检查。
       </div>
     </div>
   );
