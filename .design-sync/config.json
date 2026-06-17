@@ -1,0 +1,22 @@
+{
+  "pkg": "@aipanel/ui",
+  "globalName": "AiPanelUI",
+  "shape": "package",
+  "projectId": "db34d547-80b3-422c-bb9b-c5bc7fced4a8",
+  "buildCmd": "pnpm --filter @aipanel/ui build",
+  "cssEntry": "dist/styles.css",
+  "readmeHeader": ".design-sync/conventions.md",
+  "componentSrcMap": {
+    "CardHeader": "src/components/primitives/Card.tsx",
+    "CardTitle": "src/components/primitives/Card.tsx",
+    "CardDescription": "src/components/primitives/Card.tsx",
+    "CardContent": "src/components/primitives/Card.tsx",
+    "CardFooter": "src/components/primitives/Card.tsx"
+  },
+  "overrides": {
+    "Dialog": { "cardMode": "single", "primaryStory": "ConfirmRestart", "viewport": "560x400" },
+    "CommandPlan": { "cardMode": "column" },
+    "AuditEntry": { "cardMode": "column" },
+    "ServerCard": { "cardMode": "column" }
+  }
+}
