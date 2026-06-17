@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   AuditEntry,
   Badge,
@@ -9,6 +9,20 @@ import {
   Textarea,
   type PlanStep,
 } from "@aipanel/ui";
+
+type Theme = "light" | "dark";
+
+/** Light-first theme, persisted to localStorage; toggles the `dark` class on <html>. */
+function useTheme(): [Theme, () => void] {
+  const [theme, setTheme] = useState<Theme>(
+    () => (localStorage.getItem("aipanel-theme") as Theme) ?? "light"
+  );
+  useEffect(() => {
+    document.documentElement.classList.toggle("dark", theme === "dark");
+    localStorage.setItem("aipanel-theme", theme);
+  }, [theme]);
+  return [theme, () => setTheme((t) => (t === "light" ? "dark" : "light"))];
+}
 
 const SERVERS = [
   {
@@ -53,6 +67,7 @@ const PLAN: PlanStep[] = [
 
 export default function App() {
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [theme, toggleTheme] = useTheme();
 
   return (
     <div className="mx-auto flex min-h-full max-w-5xl flex-col gap-6 p-6">
@@ -63,7 +78,12 @@ export default function App() {
             Local AI server operations · SSH-first
           </p>
         </div>
-        <Badge tone="brand">read-only mode</Badge>
+        <div className="flex items-center gap-2">
+          <Button variant="ghost" size="sm" onClick={toggleTheme}>
+            {theme === "light" ? "🌙 Dark" : "☀ Light"}
+          </Button>
+          <Badge tone="brand">read-only mode</Badge>
+        </div>
       </header>
 
       <section className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">

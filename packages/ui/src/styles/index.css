@@ -6,10 +6,6 @@
 @source "../**/*.{ts,tsx}";
 
 @layer base {
-  :root {
-    color-scheme: dark;
-  }
-
   body {
     background-color: var(--color-bg);
     color: var(--color-fg);

@@ -20,6 +20,7 @@ Repo-specific gotchas for future syncs. Read this first.
 
 ## Styling model (for the conventions header)
 
+- **Theming is light-first, class-based.** `tokens.css` holds light values in `@theme` (the `:root` default) and overrides `--color-*` in an **unlayered** `.dark` block — unlayered so it beats the layered `@theme :root` regardless of order/specificity. Add the `dark` class to any ancestor to flip the subtree. Components use semantic token utilities, so they switch automatically; no component code is theme-aware. The desktop app's `useTheme` hook toggles `dark` on `<html>` (default light, persisted to localStorage). If you add a token, define it in BOTH the `@theme` light block and the `.dark` block.
 - No provider/theme wrapper. Components are pre-styled from `styles.css`.
 - The shipped `styles.css` is STATIC (Tailwind compiled at `pnpm build:css`, scanning `packages/ui/src`). It contains only the utility classes the components themselves use — so the design agent's own glue must use the token CSS variables (`var(--color-*)`), not invented utility classes. The conventions header says exactly this.
 

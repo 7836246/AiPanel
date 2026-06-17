@@ -1,26 +1,77 @@
 /**
- * AiPanel design tokens.
+ * AiPanel design tokens — light-first, with a dark theme.
  *
  * Tailwind v4 reads `@theme` and (a) emits the CSS custom properties below and
  * (b) generates matching utilities — e.g. `--color-surface-1` powers
  * `bg-surface-1` / `text-surface-1` / `border-surface-1`, `--radius-md` powers
  * `rounded-md`, `--font-mono` powers `font-mono`.
  *
- * AiPanel is an operations/security console, so the palette is dark-first and
- * the risk scale (low/medium/high/blocked) mirrors docs/SECURITY_MODEL.zh-Hans.md.
+ * Theming: `@theme` holds the LIGHT values (the default). The unlayered
+ * `.dark` block below overrides the same `--color-*` variables — because it is
+ * unlayered it always wins over the layered `@theme` `:root`, so adding the
+ * `dark` class to any ancestor (typically <html>) flips the whole subtree.
+ * Components reference the semantic utilities, so they switch automatically.
+ *
+ * The risk scale (low/medium/high/blocked) mirrors docs/SECURITY_MODEL.zh-Hans.md.
  */
 @theme {
   /* Typography */
   --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", "Menlo", monospace;
 
-  /* Radius */
+  /* Radius (theme-invariant) */
   --radius-sm: 0.25rem;
   --radius-md: 0.5rem;
   --radius-lg: 0.75rem;
   --radius-xl: 1rem;
 
-  /* Neutral surface scale (dark console) */
+  /* ---- LIGHT (default) ---- */
+  /* Neutral surface scale */
+  --color-bg: #f6f8fa;
+  --color-surface-1: #ffffff;
+  --color-surface-2: #eef2f6;
+  --color-surface-3: #e2e8f0;
+  --color-border: #e2e8f0;
+  --color-border-strong: #cbd5e1;
+
+  /* Foreground */
+  --color-fg: #0f172a;
+  --color-fg-muted: #475569;
+  --color-fg-subtle: #94a3b8;
+
+  /* Brand (teal — README primary) + accent */
+  --color-brand: #0f766e;
+  --color-brand-strong: #115e59;
+  --color-brand-fg: #ffffff;
+  --color-accent: #0284c7;
+  --color-accent-strong: #0369a1;
+
+  /* Risk scale — Low / Medium / High / Blocked */
+  --color-risk-low: #15803d;
+  --color-risk-low-soft: #dcfce7;
+  --color-risk-medium: #b45309;
+  --color-risk-medium-soft: #fef3c7;
+  --color-risk-high: #c2410c;
+  --color-risk-high-soft: #ffedd5;
+  --color-risk-blocked: #b91c1c;
+  --color-risk-blocked-soft: #fee2e2;
+
+  /* Generic status (reuses the risk hues for consistency) */
+  --color-success: #15803d;
+  --color-warning: #b45309;
+  --color-danger: #b91c1c;
+  --color-info: #0284c7;
+}
+
+/* Default color-scheme (form controls, scrollbars). */
+:root {
+  color-scheme: light;
+}
+
+/* ---- DARK (opt-in via the `dark` class) ---- */
+.dark {
+  color-scheme: dark;
+
   --color-bg: #0b0f14;
   --color-surface-1: #11161d;
   --color-surface-2: #161d26;
@@ -28,19 +79,16 @@
   --color-border: #263038;
   --color-border-strong: #36424c;
 
-  /* Foreground */
   --color-fg: #e6edf3;
   --color-fg-muted: #9aa7b4;
   --color-fg-subtle: #6b7884;
 
-  /* Brand (teal — README primary) + accent */
   --color-brand: #14b8a6;
   --color-brand-strong: #0f766e;
   --color-brand-fg: #04201d;
   --color-accent: #38bdf8;
   --color-accent-strong: #0284c7;
 
-  /* Risk scale — Low / Medium / High / Blocked */
   --color-risk-low: #22c55e;
   --color-risk-low-soft: #052e16;
   --color-risk-medium: #f59e0b;
@@ -50,7 +98,6 @@
   --color-risk-blocked: #ef4444;
   --color-risk-blocked-soft: #3a0a0a;
 
-  /* Generic status (reuses the risk hues for consistency) */
   --color-success: #22c55e;
   --color-warning: #f59e0b;
   --color-danger: #ef4444;

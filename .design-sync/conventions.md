@@ -1,19 +1,25 @@
 # Building with AiPanel UI
 
-AiPanel UI is the design system for **AiPanel**, a local AI server-operations console. It is **dark-first** and ops-flavored: surfaces are near-black, text is light, and a four-level **risk scale** (low / medium / high / blocked) carries the security meaning. Build screens that look like a calm, dense operations console — not a marketing site.
+AiPanel UI is the design system for **AiPanel**, a local AI server-operations console. It is **light by default with an optional dark theme**, and ops-flavored: a four-level **risk scale** (low / medium / high / blocked) carries the security meaning. Build screens that look like a calm, dense operations console — not a marketing site.
 
-## Setup — no provider, just a dark surface
+## Setup — no provider; light by default, opt into dark
 
-There is **no provider or theme wrapper**. Every component is self-contained and already styled from the bundle's `styles.css`; import it and render. The only thing you must do is put content on a dark surface, because tokens assume it:
+There is **no provider or theme wrapper**. Every component is self-contained and already styled from the bundle's `styles.css`; import it and render. Put content on a token-driven surface so it tracks the theme:
 
 ```jsx
 // AiPanelUI.* are the library components (from the bundle global)
 <div style={{ background: "var(--color-bg)", color: "var(--color-fg)", minHeight: "100%" }}>
-  {/* your screen */}
+  {/* your screen — light theme */}
 </div>
 ```
 
-Skip the dark background and components still render, but they'll sit on white and look wrong.
+**Theme switching is class-based and light-first.** Default (no class) = light. Add the `dark` class to any ancestor (typically the page root) to flip that subtree to dark — every token, and therefore every component, switches automatically. Never hardcode per-theme colors; always use the tokens so both themes work.
+
+```jsx
+<div className="dark" style={{ background: "var(--color-bg)", color: "var(--color-fg)" }}>
+  {/* same markup, dark theme */}
+</div>
+```
 
 ## Styling idiom — compose components; style glue with token variables
 
