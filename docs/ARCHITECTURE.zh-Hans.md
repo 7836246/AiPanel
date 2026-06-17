@@ -202,3 +202,11 @@ AiPanel 应默认遵循：
 - 用户明确授权后才执行写操作；
 - 不默认上传完整服务器日志。
 
+## 实现映射（Desktop MVP）
+
+各组件已在 `apps/desktop/src-tauri/src/` 下模块化实现（不拆独立 crate）：
+
+- AiPanel Tools → `tools/`：`server.list` / `server.info` / `server.doctor.readonly` / `ssh.run_readonly` / `task.plan` / `task.review` / `task.execute_confirmed` / `audit.write`，每个工具带权限（ReadOnly/Write）与审计策略；只读默认可用，写操作需用户确认，Agent 不能自行授权（`task.execute_confirmed` 没有用户确认会被拒绝）。统一通过 `dispatch(name, args)`（JSON-RPC 形态）路由，MCP 适配可后置。
+- Plan Engine → `plan/`；Risk Reviewer → `risk/`；SSH Executor → `ssh/`；Server Doctor → `doctor/`；Audit Log → `audit/` + `store/`；Provider Manager / Agent Runtime → `agent/`；本地存储 → `store/`（SQLite）；密钥 → `credentials/`（Keychain）。
+- 前端经 Tauri 命令（`commands/`）调用，详见 CLAUDE.md「后端结构」。
+

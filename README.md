@@ -33,28 +33,31 @@ Unlike traditional server panels that must be installed and kept running on ever
 
 ## Quick Start
 
-AiPanel is currently in the planning and MVP stage.
-
-The first milestone is a local CLI prototype:
+AiPanel is at the **desktop MVP** stage — a Tauri v2 + React app you run locally.
 
 ```sh
-# planned workflow
-aipanel server add
-aipanel server doctor
-aipanel ask "Check why this website is unreachable. Do not delete anything."
+pnpm install          # install workspace deps
+pnpm build:ui         # build the @aipanel/ui design system
+pnpm tauri:dev        # launch the desktop app (needs the Rust toolchain)
+# or `pnpm dev` for the frontend only, in a browser (backend calls fall back to mocks)
 ```
+
+In the app you can add a server (credentials go to the system Keychain), test SSH
+connectivity, run a read-only health check, turn a request into a reviewable plan,
+approve and execute it, and review the local audit trail.
 
 ## Roadmap
 
 - [x] Project positioning
 - [x] README structure
 - [x] Initial logo and preview assets
-- [ ] CLI prototype
-- [ ] SSH connection manager
-- [ ] Read-only server doctor
-- [ ] AI task planning
-- [ ] Command risk review
-- [ ] Desktop client
+- [x] Desktop client (Tauri v2 + React) with the AiPanel UI design system
+- [x] SSH connection manager (add servers, connectivity test)
+- [x] Read-only server doctor
+- [x] AI task planning (structured plans; mock engine, Codex bridge entry point)
+- [x] Command risk review (Low / Medium / High / Blocked) + local audit log
+- [x] Model provider manager
+- [ ] Codex app-server tool-call loop
 - [ ] Docker app deployment workflows
 
 ## Documentation

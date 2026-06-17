@@ -110,6 +110,8 @@ audit.write
 - 高风险操作必须二次确认；
 - 所有执行写入审计记录。
 
+**实现状态**：工具层已落地在 `apps/desktop/src-tauri/src/tools/`，当前为**内部 JSON-RPC 形态**的 `dispatch(name, args)`（MCP 适配后置）。每个工具声明权限（ReadOnly/Write）与是否审计；`ssh.run_readonly` 受 Risk Reviewer 门控（仅 Low 可过），`task.execute_confirmed` 在缺少用户确认时拒绝执行。Codex app-server 桥接在 `agent/` 提供入口与健康检查，JSON-RPC 工具回路尚在接通中。
+
 ## 目标架构
 
 ```text

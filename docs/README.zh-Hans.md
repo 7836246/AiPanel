@@ -53,25 +53,23 @@ AiPanel 更适合这样的场景：
 
 ## 快速开始
 
-AiPanel 当前处于项目规划和 MVP 阶段。
-
-第一阶段计划先实现本地 CLI 原型：
+AiPanel 当前处于**桌面端 MVP** 阶段——基于 Tauri v2 + React，在本地运行。
 
 ```sh
-# 计划中的使用方式
-aipanel server add
-aipanel server doctor
-aipanel ask "检查这个网站为什么打不开，不要删除任何文件"
+pnpm install          # 安装依赖
+pnpm build:ui         # 构建 @aipanel/ui 设计系统
+pnpm tauri:dev        # 启动桌面应用（需 Rust 工具链）
+# 或 pnpm dev 仅启动前端（浏览器；后端调用回退到 mock）
 ```
 
-CLI MVP 会优先覆盖：
+桌面端当前已覆盖：
 
-- 添加服务器连接配置；
+- 添加服务器连接配置（凭据进系统 Keychain）；
 - SSH 连通性测试；
-- 采集系统基础信息；
-- 执行只读服务器体检；
-- 输出结构化诊断报告；
-- 保存任务执行记录。
+- 只读服务器体检并输出结构化报告；
+- 自然语言转可审查计划、风险分级、确认后执行；
+- 本地审计记录；
+- 模型供应商配置。
 
 ## 功能规划
 

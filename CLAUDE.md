@@ -4,7 +4,9 @@
 
 ## 当前状态
 
-AiPanel 处于**早期开发阶段**。已搭好桌面端骨架和设计系统（见下方「代码结构」），业务逻辑（SSH 执行、风险审查、Agent 集成、审计）尚未实现。下面记录的架构和技术选型都是**已经定下的决策**——直接遵循，不要重新推导。
+AiPanel 已是一个**可运行的 Desktop MVP**：桌面端能启动，左侧服务器列表来自持久化数据，可添加服务器（凭据进 Keychain）、做 SSH 连通性测试、执行只读体检、把自然语言转成结构化计划并经风险审查后执行、查看本地审计、配置模型供应商。下面记录的架构和技术选型都是**已经定下的决策**——直接遵循，不要重新推导。
+
+Rust 后端按模块实现在 `apps/desktop/src-tauri/src/`（不拆独立 crate），边界见下方「后端结构」。所有涉及 SSH / 凭据 / 远程命令的改动必须符合 `docs/SECURITY_MODEL.zh-Hans.md`。
 
 ## 代码结构
 
@@ -14,6 +16,24 @@ pnpm workspace 单仓库（`pnpm-workspace.yaml`）：
 - `packages/ui`（`@aipanel/ui`）—— 设计系统。Tailwind v4 + 设计 token（`src/styles/tokens.css` 里的 `@theme`），用 `cva` 做变体、`cn`（clsx + tailwind-merge）合并类名。primitives（Button/Badge/Card/Input/Textarea/Spinner/CodeBlock/Dialog）+ 领域组件（RiskBadge/ServerCard/CommandPlan/AuditEntry）。详见 `packages/ui/README.md`。
 
 样式集成方式：组件库只用 Tailwind 工具类（不写零散 CSS），桌面端通过 `@import "@aipanel/ui/tokens.css"` 共享 token，并用 `@source` 指向 `packages/ui/src` 让 Tailwind 扫到组件类。组件库 `pnpm build` 出的 `dist/`（编译后的组件 + `styles.css`）也是以后 `/design-sync` 导入时消费的产物。
+
+## 后端结构（`apps/desktop/src-tauri/src/`）
+
+模块化实现，`lib.rs` 只组装 `AppState`（`store` / `credentials` / `plan_engine`）并注册命令——不放业务逻辑。
+
+- `core/` —— `types.rs`（全部 serde `camelCase`，跨前后端）、`error.rs`（`AppError` 带稳定 code）、`sanitize.rs`（输出脱敏：IP/私钥/token/连接串）。
+- `store/` —— SQLite（rusqlite bundled）：服务器、供应商、模型策略、审计的持久化 + 迁移（`user_version`）。**只存非敏感数据 + 凭据引用**。
+- `credentials/` —— `CredentialStore` trait + 系统 Keychain 实现 + 内存 mock 兜底。**密钥只在这里**，绝不进 SQLite/日志/审计。
+- `risk/` —— Risk Reviewer：把命令分级 Low/Medium/High/Blocked；只读模式把非检查命令升级为 Blocked。
+- `ssh/` —— 用系统 OpenSSH 执行；超时、脱敏、临时密钥文件 0600；`run_readonly` 受风险审查门控（仅 Low）。
+- `doctor/` —— 只读体检（10 条探测命令）生成 `DoctorReport`。
+- `audit/` —— 从体检/计划执行构建审计记录（持久化在 store）。
+- `plan/` —— `PlanEngine` trait + `MockPlanEngine`（关键词路由，仅产出只读诊断）。
+- `agent/` —— `AgentProvider` trait + Mock / OpenAI 兼容 / Codex app-server 桥接（入口 + 健康检查；JSON-RPC 工具回路待接通）。
+- `tools/` —— AiPanel Tools：Agent 唯一能触达服务器的入口（`server.list`/`server.info`/`server.doctor.readonly`/`ssh.run_readonly`/`task.plan`/`task.review`/`task.execute_confirmed`/`audit.write`），每个工具带权限与审计策略；写操作需用户确认，Agent 不能自行授权。
+- `commands/` —— Tauri 命令薄层（前端 ↔ Core）：`list/create/update/delete/get_server`、`set_server_secret`、`check_ssh_connection`、`run_readonly_command`、`server_doctor_plan`、`run_server_doctor`、`review_plan`、`create_plan`、`execute_confirmed_plan`、`list/get_audit_records`、`list/save/delete/test_provider`、`get/save_model_selection_policy`、`list_tools`、`credential_backend`、`app_version`。
+
+前端通过 `apps/desktop/src/lib/api.ts` 调用这些命令（不在 Tauri 环境时回退到 mock，便于 `pnpm dev` 在浏览器里渲染）。主界面 `src/screens/CodexConsole.tsx`（+ `SettingsPanel`/`AddServerDialog`）。
 
 ## 常用命令
 
@@ -26,6 +46,7 @@ pnpm workspace 单仓库（`pnpm-workspace.yaml`）：
 - `pnpm build` —— 先构建组件库，再构建桌面端前端。
 - `pnpm typecheck` —— 全仓库 TS 类型检查。
 - Rust 侧检查：`cd apps/desktop/src-tauri && cargo check`。
+- Rust 测试：`cd apps/desktop/src-tauri && cargo test`（Core/Store/Risk/SSH/Doctor/Audit/Plan/Agent/Tools 单测）。运行单个：`cargo test risk`。
 
 ## AiPanel 是什么
 
