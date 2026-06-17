@@ -18,8 +18,15 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+pub mod codex;
+
 use crate::core::error::{AppError, AppResult};
 use crate::core::types::{Plan, ProviderConfig, ProviderKind, ProviderTestResult};
+
+/// The AiPanel Tools surface advertised to the Codex agent at `initialize`.
+fn tools_surface() -> serde_json::Value {
+    serde_json::to_value(crate::tools::registry()).unwrap_or(serde_json::Value::Null)
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -332,13 +339,25 @@ impl AgentProvider for CodexAppServerProvider {
         self.not_wired()
     }
     fn test(&self) -> ProviderTestResult {
-        match self.version() {
-            Ok(v) => ProviderTestResult {
+        let version = match self.version() {
+            Ok(v) => v,
+            Err(e) => return ProviderTestResult { ok: false, message: e.to_string(), detail: None },
+        };
+        // Beyond "binary exists": actually start app-server and complete the
+        // initialize handshake, advertising the AiPanel Tools surface.
+        match codex::CodexClient::start(&self.codex_path)
+            .and_then(|mut c| c.initialize(tools_surface()))
+        {
+            Ok(_) => ProviderTestResult {
                 ok: true,
-                message: format!("找到 codex：{v}"),
-                detail: Some("app-server 工具回路尚在开发中".into()),
+                message: format!("codex 可用并完成 initialize：{version}"),
+                detail: Some("turn / 工具回路开发中".into()),
             },
-            Err(e) => ProviderTestResult { ok: false, message: e.to_string(), detail: None },
+            Err(e) => ProviderTestResult {
+                ok: false,
+                message: format!("codex 已找到（{version}）但 app-server initialize 失败：{e}"),
+                detail: None,
+            },
         }
     }
 }
