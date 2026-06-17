@@ -6,6 +6,7 @@
   "buildCmd": "pnpm --filter @aipanel/ui build",
   "cssEntry": "dist/styles.css",
   "extraFonts": ["fonts.css"],
+  "runtimeFontPrefixes": ["SF Pro", "Segoe UI", "PingFang", "Microsoft YaHei"],
   "readmeHeader": ".design-sync/conventions.md",
   "componentSrcMap": {
     "CardHeader": "src/components/primitives/Card.tsx",

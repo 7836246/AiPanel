@@ -1,6 +1,6 @@
 # Building with AiPanel UI
 
-AiPanel UI is the design system for **AiPanel**, a local AI server-operations console. It is **light by default with an optional dark theme**, and ops-flavored: a four-level **risk scale** (low / medium / high / blocked) carries the security meaning. Build screens that look like a calm, dense operations console — not a marketing site.
+AiPanel UI is the design system for **AiPanel**, a local AI server-operations console. The look is **Codex-style**: near-monochrome warm grays, hairline borders, the system font stack, and a **near-black primary** — color appears only for status and the four-level **risk scale** (low / medium / high / blocked). It is **light by default with an optional dark theme**. Build screens that look like a calm, dense developer tool — not a marketing site.
 
 ## Setup — no provider; light by default, opt into dark
 
@@ -32,15 +32,16 @@ Token vocabulary (all are `var(--…)`):
 
 | Group | Tokens |
 |---|---|
-| Surfaces | `--color-bg`, `--color-surface-1`, `--color-surface-2`, `--color-surface-3` |
+| Surfaces | `--color-bg`, `--color-surface-1`, `--color-surface-2` (sidebar/inset), `--color-surface-3` |
+| Interaction | `--color-hover` (row hover / code inset), `--color-selected` (selected row) |
 | Borders | `--color-border`, `--color-border-strong` |
 | Text | `--color-fg`, `--color-fg-muted`, `--color-fg-subtle` |
-| Brand / accent | `--color-brand`, `--color-brand-strong`, `--color-accent` |
+| Primary | `--color-brand` (near-black action), `--color-brand-fg` (text on it), `--color-brand-strong` |
 | Risk | `--color-risk-low`, `--color-risk-medium`, `--color-risk-high`, `--color-risk-blocked` (+ each `-soft` for fills) |
 | Status | `--color-success`, `--color-warning`, `--color-danger`, `--color-info` |
-| Radius / type | `--radius-sm/md/lg/xl`, `--font-sans`, `--font-mono` (use `--font-mono` for commands & output) |
+| Radius / type | `--radius-sm/md/lg/xl`, `--font-sans` (system stack), `--font-mono` (commands, terminal, durations) |
 
-Use semantic surfaces in order: page = `--color-bg`, cards = `--color-surface-1`, nested fills = `--color-surface-2/3`. Never hardcode hex; reach for the token.
+Use semantic surfaces in order: page = `--color-bg`, cards = `--color-surface-1`, sidebar/inset = `--color-surface-2`, hover/code-inset = `--color-hover`. Depth comes from hairline `--color-border`, not heavy shadows. Never hardcode hex; reach for the token.
 
 ## Use the domain components for domain meaning
 
@@ -50,7 +51,8 @@ Don't reinvent these — they encode AiPanel's model:
 - **`CommandPlan`** `goal` + `steps[]` (`{summary, command, risk, readOnly?}`) — a reviewable execution plan.
 - **`ServerCard`** `name` / `host` / `status` / `facts` — a saved server.
 - **`AuditEntry`** `timestamp` / `command` / `risk` / `exitCode` / `output?` — one audit-trail line.
-- Primitives: `Button` (`variant` primary/secondary/ghost/outline/danger; use `danger` for confirmed high-risk actions), `Badge`, `Card` (+ `CardHeader/CardTitle/CardDescription/CardContent/CardFooter`), `Input`, `Textarea`, `Spinner`, `CodeBlock` (commands/output), `Dialog` (confirmations — high-risk needs a second one).
+- **`Terminal`** `host` / `live?` / `lines[]` (`{text, tone?}`) / `cursor?` — the light SSH-transcript dock; tones `prompt`/`success`/`muted`/`danger`.
+- Primitives: `Button` (`variant` primary/secondary/ghost/outline/danger; primary is the near-black action, `danger` for confirmed high-risk), `IconButton` (`variant` ghost/bordered — square icon-only control for toolbars/inline actions; needs `aria-label`), `Badge`, `Card` (+ `CardHeader/CardTitle/CardDescription/CardContent/CardFooter`), `Input`, `Textarea`, `Spinner`, `CodeBlock` (commands/output), `Dialog` (confirmations — high-risk needs a second one).
 
 ## Where the truth lives
 

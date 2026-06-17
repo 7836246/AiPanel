@@ -12,10 +12,17 @@ export {
   CardContent,
   CardFooter,
 } from "./components/primitives/Card";
+export { IconButton, type IconButtonProps } from "./components/primitives/IconButton";
 export { Input, type InputProps } from "./components/primitives/Input";
 export { Textarea, type TextareaProps } from "./components/primitives/Textarea";
 export { Spinner, type SpinnerProps } from "./components/primitives/Spinner";
 export { CodeBlock, type CodeBlockProps } from "./components/primitives/CodeBlock";
+export {
+  Terminal,
+  type TerminalProps,
+  type TerminalLine,
+  type TerminalLineTone,
+} from "./components/primitives/Terminal";
 export { Dialog, type DialogProps } from "./components/primitives/Dialog";
 
 // Domain

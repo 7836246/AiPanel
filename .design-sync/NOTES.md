@@ -16,7 +16,13 @@ Repo-specific gotchas for future syncs. Read this first.
 ## Known render warns (triaged, expected)
 
 - `[RENDER_SKIPPED]` — render check is intentionally OFF. No chromium/playwright is installed in this environment; the user chose to review previews in their own browser (`.review.html`). **Previews are not machine-verified.** A future run with chromium should drop `--no-render-check` and run the full render check + `package-capture` grading.
-- `[FONT_MISSING]` — **RESOLVED.** Inter (400/500/600) + JetBrains Mono (400/500), latin-subset woff2 from fontsource, live in `packages/ui/fonts/` with `packages/ui/fonts.css` (`@font-face`). Shipped to the DS bundle via `cfg.extraFonts: ["fonts.css"]`, and to the desktop app via `@import "@aipanel/ui/fonts.css"`. If you bump the package version and the fonts change, re-download the same weights. Subset is latin-only — non-latin glyphs fall back.
+- `[FONT_MISSING]` — **RESOLVED.** The sans family is now the **system stack** (Codex look), so no sans webfont ships; only **JetBrains Mono** (400/500, latin-subset woff2) is bundled in `packages/ui/fonts/` + `fonts.css`, shipped via `cfg.extraFonts: ["fonts.css"]` and the app's `@import "@aipanel/ui/fonts.css"`. The system families named in `--font-sans` (`SF Pro`, `Segoe UI`, `PingFang`, `Microsoft YaHei`) are declared in `cfg.runtimeFontPrefixes` so validate doesn't flag them (the OS provides them). Inter was removed in the Codex re-skin.
+
+## Codex re-skin (2026-06)
+
+- The whole token palette was reset to a **Codex-style warm-neutral** look: near-monochrome grays, hairline borders, near-black primary (`--color-brand`), color only for status/risk. Added `--color-hover` and `--color-selected`. Light default + dark, same `.dark` mechanism.
+- Two new primitives added to the library: **`IconButton`** (square icon-only) and **`Terminal`** (light SSH-transcript dock). 19 components total.
+- The desktop app's main screen is **`apps/desktop/src/screens/CodexConsole.tsx`** — a faithful React port of the `templates/codex-console` design made in claude.ai/design (which had used custom inline components; the port rebuilds it on `@aipanel/ui` + tokens). `App.tsx` just renders it. The original design templates (`app-shell`, `ask-plan`, `console`, `codex-console`) still live in the claude.ai/design project under `templates/` — pull with `DesignSync(get_file)` to port the others.
 
 ## Styling model (for the conventions header)
 

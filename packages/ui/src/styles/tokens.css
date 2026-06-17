@@ -1,5 +1,5 @@
 /**
- * AiPanel design tokens — light-first, with a dark theme.
+ * AiPanel design tokens — Codex-style warm-neutral, light-first, with a dark theme.
  *
  * Tailwind v4 reads `@theme` and (a) emits the CSS custom properties below and
  * (b) generates matching utilities — e.g. `--color-surface-1` powers
@@ -7,60 +7,62 @@
  * `rounded-md`, `--font-mono` powers `font-mono`.
  *
  * Theming: `@theme` holds the LIGHT values (the default). The unlayered
- * `.dark` block below overrides the same `--color-*` variables — because it is
- * unlayered it always wins over the layered `@theme` `:root`, so adding the
- * `dark` class to any ancestor (typically <html>) flips the whole subtree.
- * Components reference the semantic utilities, so they switch automatically.
+ * `.dark` block overrides the same `--color-*` variables — unlayered so it
+ * always wins over the layered `@theme` `:root`; add the `dark` class to any
+ * ancestor (typically <html>) to flip the subtree. Components reference the
+ * semantic utilities, so they switch automatically.
  *
- * The risk scale (low/medium/high/blocked) mirrors docs/SECURITY_MODEL.zh-Hans.md.
+ * Palette mirrors the Codex visual language: near-monochrome warm grays,
+ * hairline borders, a near-black primary, and color reserved for status / the
+ * risk scale (low/medium/high/blocked, per docs/SECURITY_MODEL.zh-Hans.md).
  */
 @theme {
-  /* Typography */
-  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", "Menlo", monospace;
+  /* Typography — system stack (Codex), mono for commands/terminal */
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-mono: "SF Mono", ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace;
 
   /* Radius (theme-invariant) */
-  --radius-sm: 0.25rem;
-  --radius-md: 0.5rem;
-  --radius-lg: 0.75rem;
+  --radius-sm: 0.4375rem;
+  --radius-md: 0.625rem;
+  --radius-lg: 0.875rem;
   --radius-xl: 1rem;
 
   /* ---- LIGHT (default) ---- */
-  /* Neutral surface scale */
-  --color-bg: #f6f8fa;
+  --color-bg: #ffffff;
   --color-surface-1: #ffffff;
-  --color-surface-2: #eef2f6;
-  --color-surface-3: #e2e8f0;
-  --color-border: #e2e8f0;
-  --color-border-strong: #cbd5e1;
+  --color-surface-2: #f8f8f7;
+  --color-surface-3: #f0efed;
+  --color-hover: #f0efed;
+  --color-selected: #e9e8e4;
+  --color-border: #ececeb;
+  --color-border-strong: #e0e0dd;
 
-  /* Foreground */
-  --color-fg: #0f172a;
-  --color-fg-muted: #475569;
-  --color-fg-subtle: #94a3b8;
+  --color-fg: #1c1c1a;
+  --color-fg-muted: #6c6c69;
+  --color-fg-subtle: #a3a39e;
 
-  /* Brand (teal — README primary) + accent */
-  --color-brand: #0f766e;
-  --color-brand-strong: #115e59;
+  /* Near-black primary (Codex "send"), no chroma */
+  --color-brand: #2f2f2d;
+  --color-brand-strong: #1c1c1a;
   --color-brand-fg: #ffffff;
-  --color-accent: #0284c7;
-  --color-accent-strong: #0369a1;
+  --color-accent: #2f2f2d;
+  --color-accent-strong: #1c1c1a;
 
   /* Risk scale — Low / Medium / High / Blocked */
-  --color-risk-low: #15803d;
-  --color-risk-low-soft: #dcfce7;
-  --color-risk-medium: #b45309;
-  --color-risk-medium-soft: #fef3c7;
-  --color-risk-high: #c2410c;
-  --color-risk-high-soft: #ffedd5;
-  --color-risk-blocked: #b91c1c;
-  --color-risk-blocked-soft: #fee2e2;
+  --color-risk-low: #1a7f37;
+  --color-risk-low-soft: #dafbe1;
+  --color-risk-medium: #9a6700;
+  --color-risk-medium-soft: #fff8c5;
+  --color-risk-high: #bc4c00;
+  --color-risk-high-soft: #ffe7d4;
+  --color-risk-blocked: #cf222e;
+  --color-risk-blocked-soft: #ffebe9;
 
-  /* Generic status (reuses the risk hues for consistency) */
-  --color-success: #15803d;
-  --color-warning: #b45309;
-  --color-danger: #b91c1c;
-  --color-info: #0284c7;
+  /* Generic status */
+  --color-success: #1a7f37;
+  --color-warning: #9a6700;
+  --color-danger: #cf222e;
+  --color-info: #0969da;
 }
 
 /* Default color-scheme (form controls, scrollbars). */
@@ -72,34 +74,36 @@
 .dark {
   color-scheme: dark;
 
-  --color-bg: #0b0f14;
-  --color-surface-1: #11161d;
-  --color-surface-2: #161d26;
-  --color-surface-3: #1d2630;
-  --color-border: #263038;
-  --color-border-strong: #36424c;
+  --color-bg: #1b1b19;
+  --color-surface-1: #212120;
+  --color-surface-2: #161614;
+  --color-surface-3: #262624;
+  --color-hover: #262624;
+  --color-selected: #2f2f2b;
+  --color-border: #2e2e2b;
+  --color-border-strong: #3b3b37;
 
-  --color-fg: #e6edf3;
-  --color-fg-muted: #9aa7b4;
-  --color-fg-subtle: #6b7884;
+  --color-fg: #e7e7e3;
+  --color-fg-muted: #9d9d98;
+  --color-fg-subtle: #6d6d68;
 
-  --color-brand: #14b8a6;
-  --color-brand-strong: #0f766e;
-  --color-brand-fg: #04201d;
-  --color-accent: #38bdf8;
-  --color-accent-strong: #0284c7;
+  --color-brand: #e7e7e3;
+  --color-brand-strong: #ffffff;
+  --color-brand-fg: #1b1b19;
+  --color-accent: #e7e7e3;
+  --color-accent-strong: #ffffff;
 
-  --color-risk-low: #22c55e;
-  --color-risk-low-soft: #052e16;
-  --color-risk-medium: #f59e0b;
-  --color-risk-medium-soft: #3a2606;
-  --color-risk-high: #f97316;
-  --color-risk-high-soft: #3a1d06;
-  --color-risk-blocked: #ef4444;
-  --color-risk-blocked-soft: #3a0a0a;
+  --color-risk-low: #3fb950;
+  --color-risk-low-soft: #0f2417;
+  --color-risk-medium: #d29922;
+  --color-risk-medium-soft: #2e2206;
+  --color-risk-high: #db6d28;
+  --color-risk-high-soft: #2e1a0a;
+  --color-risk-blocked: #f85149;
+  --color-risk-blocked-soft: #2d1213;
 
-  --color-success: #22c55e;
-  --color-warning: #f59e0b;
-  --color-danger: #ef4444;
-  --color-info: #38bdf8;
+  --color-success: #3fb950;
+  --color-warning: #d29922;
+  --color-danger: #f85149;
+  --color-info: #4493f8;
 }

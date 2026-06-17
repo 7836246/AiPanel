@@ -1,29 +1,9 @@
 /**
- * AiPanel brand fonts: Inter (sans) + JetBrains Mono (mono), latin subset.
- * Files are woff2 from fontsource. Import this once at the app root, or rely on
- * the design-sync bundle, which ships these via cfg.extraFonts.
+ * AiPanel bundled font: JetBrains Mono (latin subset) for commands / terminal /
+ * code. The sans family is the system stack (see tokens.css), so no sans webfont
+ * ships. Import this once at the app root, or rely on the design-sync bundle,
+ * which ships it via cfg.extraFonts.
  */
-@font-face {
-  font-family: "Inter";
-  font-style: normal;
-  font-weight: 400;
-  font-display: swap;
-  src: url("./fonts/inter-400.woff2") format("woff2");
-}
-@font-face {
-  font-family: "Inter";
-  font-style: normal;
-  font-weight: 500;
-  font-display: swap;
-  src: url("./fonts/inter-500.woff2") format("woff2");
-}
-@font-face {
-  font-family: "Inter";
-  font-style: normal;
-  font-weight: 600;
-  font-display: swap;
-  src: url("./fonts/inter-600.woff2") format("woff2");
-}
 @font-face {
   font-family: "JetBrains Mono";
   font-style: normal;
