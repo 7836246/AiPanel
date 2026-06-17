@@ -15,6 +15,7 @@
 use std::process::Stdio;
 use std::time::{Duration, Instant};
 
+use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio::time::timeout;
 
@@ -64,18 +65,24 @@ fn common_opts(connect_timeout_secs: u64) -> Vec<String> {
     ]
 }
 
-/// Run a raw command on the server. Callers are responsible for risk review —
-/// use [`run_readonly`] for anything driven by the agent or untrusted input.
-pub async fn run_command(
+/// A fully-built ssh invocation: the program to run, its argv, and an optional
+/// env var (for `sshpass -e`). The [`KeyFile`] is kept alive for the duration of
+/// the call and deleted on drop.
+struct Invocation {
+    program: String,
+    args: Vec<String>,
+    env: Option<(String, String)>,
+    /// Held only to keep the temp key alive for the call; deleted on drop.
+    _keyfile: Option<KeyFile>,
+}
+
+/// Build the ssh invocation for a server + command, per auth method. Shared by
+/// the blocking and streaming executors so both speak ssh identically.
+fn build_invocation(
     server: &ServerProfile,
     secret: Option<&str>,
     command: &str,
-    duration: Duration,
-) -> AppResult<CommandExecution> {
-    let started_at = crate::core::types::now();
-    let start = Instant::now();
-
-    // Build the invocation per auth method.
+) -> AppResult<Invocation> {
     let mut keyfile: Option<KeyFile> = None;
     let (program, args, env) = match server.auth_kind {
         AuthKind::Agent => {
@@ -125,29 +132,49 @@ pub async fn run_command(
         }
     };
 
-    let mut cmd = Command::new(&program);
-    cmd.args(&args)
+    Ok(Invocation { program, args, env, _keyfile: keyfile })
+}
+
+/// Spawn an ssh invocation as a child process with stdio piped and kill-on-drop.
+fn spawn_child(inv: &Invocation) -> AppResult<tokio::process::Child> {
+    let mut cmd = Command::new(&inv.program);
+    cmd.args(&inv.args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
-    if let Some((k, v)) = &env {
+    if let Some((k, v)) = &inv.env {
         cmd.env(k, v);
     }
+    cmd.spawn().map_err(|e| AppError::Ssh(format!("failed to launch ssh: {e}")))
+}
 
-    let child = cmd.spawn().map_err(|e| AppError::Ssh(format!("failed to launch ssh: {e}")))?;
+/// Run a raw command on the server. Callers are responsible for risk review —
+/// use [`run_readonly`] for anything driven by the agent or untrusted input.
+pub async fn run_command(
+    server: &ServerProfile,
+    secret: Option<&str>,
+    command: &str,
+    duration: Duration,
+) -> AppResult<CommandExecution> {
+    let started_at = crate::core::types::now();
+    let start = Instant::now();
+
+    // Build the invocation per auth method. `inv` owns the keyfile (if any), so
+    // the key is deleted on drop — including the timeout path below, where `inv`
+    // goes out of scope on return.
+    let inv = build_invocation(server, secret, command)?;
+    let child = spawn_child(&inv)?;
 
     let output = match timeout(duration, child.wait_with_output()).await {
         Ok(res) => res.map_err(|e| AppError::Ssh(e.to_string()))?,
         Err(_) => {
-            drop(keyfile); // ensure key removed even on timeout
             return Err(AppError::Ssh(format!(
                 "command timed out after {}s",
                 duration.as_secs()
             )));
         }
     };
-    drop(keyfile);
 
     Ok(CommandExecution {
         command: command.to_string(),
@@ -173,6 +200,101 @@ pub async fn run_readonly(
         )));
     }
     run_command(server, secret, command, duration).await
+}
+
+/// Streaming counterpart to [`run_readonly`]: runs a `Low`-classified command and
+/// invokes `on_line` for each line as it arrives, so the UI can fill in live.
+/// The line is sanitized before the callback sees it; `stderr` flags whether the
+/// line came from stderr. The returned [`CommandExecution`] carries the full
+/// sanitized output, identical in shape to [`run_command`].
+pub async fn run_readonly_streamed(
+    server: &ServerProfile,
+    secret: Option<&str>,
+    command: &str,
+    duration: Duration,
+    on_line: &(dyn Fn(&str, bool) + Sync + Send),
+) -> AppResult<CommandExecution> {
+    // Same safety gate as run_readonly: only inspection commands may stream.
+    if classify_command(command).level != RiskLevel::Low {
+        return Err(AppError::Blocked(format!(
+            "command is not read-only and cannot run in inspection mode: {command}"
+        )));
+    }
+
+    let started_at = crate::core::types::now();
+    let start = Instant::now();
+
+    // `inv` owns the keyfile (if any) for the lifetime of the call.
+    let inv = build_invocation(server, secret, command)?;
+    let mut child = spawn_child(&inv)?;
+
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| AppError::Ssh("failed to capture ssh stdout".into()))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| AppError::Ssh("failed to capture ssh stderr".into()))?;
+
+    // Read both streams concurrently, forwarding each sanitized line via the
+    // callback and accumulating the full output.
+    let stream = async {
+        let mut out_reader = BufReader::new(stdout).lines();
+        let mut err_reader = BufReader::new(stderr).lines();
+        let mut out_buf = String::new();
+        let mut err_buf = String::new();
+        let mut out_done = false;
+        let mut err_done = false;
+        while !out_done || !err_done {
+            tokio::select! {
+                line = out_reader.next_line(), if !out_done => match line {
+                    Ok(Some(line)) => {
+                        let clean = sanitize(&line);
+                        on_line(&clean, false);
+                        out_buf.push_str(&clean);
+                        out_buf.push('\n');
+                    }
+                    Ok(None) => out_done = true,
+                    Err(e) => return Err(AppError::Ssh(e.to_string())),
+                },
+                line = err_reader.next_line(), if !err_done => match line {
+                    Ok(Some(line)) => {
+                        let clean = sanitize(&line);
+                        on_line(&clean, true);
+                        err_buf.push_str(&clean);
+                        err_buf.push('\n');
+                    }
+                    Ok(None) => err_done = true,
+                    Err(e) => return Err(AppError::Ssh(e.to_string())),
+                },
+            }
+        }
+        let status = child.wait().await.map_err(|e| AppError::Ssh(e.to_string()))?;
+        Ok::<_, AppError>((status, out_buf, err_buf))
+    };
+
+    let (status, out_buf, err_buf) = match timeout(duration, stream).await {
+        Ok(res) => res?,
+        Err(_) => {
+            // `inv` (and its keyfile) drops on return; kill_on_drop reaps the child.
+            return Err(AppError::Ssh(format!(
+                "command timed out after {}s",
+                duration.as_secs()
+            )));
+        }
+    };
+
+    Ok(CommandExecution {
+        command: command.to_string(),
+        exit_code: status.code().unwrap_or(-1),
+        // Lines were sanitized as they streamed; trim the trailing newline so the
+        // stored output matches run_command's (which sanitizes the whole buffer).
+        stdout: out_buf.trim_end_matches('\n').to_string(),
+        stderr: err_buf.trim_end_matches('\n').to_string(),
+        duration_ms: start.elapsed().as_millis() as u64,
+        started_at,
+    })
 }
 
 /// Connectivity + auth probe. Returns Ok(true) when a trivial remote command

@@ -63,6 +63,7 @@ pub fn run() {
             commands::run_readonly_command,
             commands::server_doctor_plan,
             commands::run_server_doctor,
+            commands::stream::run_server_doctor_stream,
             commands::list_audit_records,
             commands::get_audit_record,
             commands::create_plan,

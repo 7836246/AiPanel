@@ -7,21 +7,24 @@ import {
   type TerminalLine,
 } from "@aipanel/ui";
 import AddServerDialog from "./AddServerDialog";
+import ConfirmExecuteDialog from "./ConfirmExecuteDialog";
+import EditServerDialog from "./EditServerDialog";
 import SettingsPanel from "./SettingsPanel";
 import {
   createPlan,
   executeConfirmedPlan,
+  reviewPlan,
   runAgentTurn,
+  runServerDoctorStream,
   listAuditRecords,
   listServers,
-  runServerDoctor,
   RISK_META,
   type AppError,
   type AuditRecord,
   type CommandExecution,
-  type DoctorReport,
   type Plan,
   type RiskLevel,
+  type RiskReview,
   type ServerProfile,
   type ServerStatus,
 } from "../lib/api";
@@ -43,7 +46,6 @@ function execsToLines(executions: CommandExecution[], extra: string[] = []): Ter
   return lines;
 }
 
-const reportToLines = (r: DoctorReport): TerminalLine[] => execsToLines(r.executions, r.warnings);
 
 const statusDot = (s: ServerStatus): string =>
   s === "online" ? "bg-risk-low" : s === "offline" ? "bg-risk-blocked" : "bg-fg-subtle";
@@ -409,6 +411,9 @@ export default function CodexConsole() {
   const [intentValue, setIntentValue] = useState("");
   const [planState, setPlanState] = useState<"idle" | "running" | "done" | "failed">("idle");
   const [addOpen, setAddOpen] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [confirmReview, setConfirmReview] = useState<RiskReview | null>(null);
+  const [editing, setEditing] = useState<ServerProfile | null>(null);
   const mockSteps = buildSteps(running);
   const selected = servers.find((s) => s.id === selectedServerId);
 
@@ -467,14 +472,28 @@ export default function CodexConsole() {
     }
   }
 
+  // Review the plan, then open the confirmation dialog (never execute directly).
   async function runPlan() {
     if (!genPlan) return;
+    try {
+      setConfirmReview(await reviewPlan(genPlan));
+      setConfirmOpen(true);
+    } catch (e) {
+      setDoctorLines([{ text: `风险审查失败: ${errMsg(e)}`, tone: "danger" }]);
+      setTerminalOpen(true);
+    }
+  }
+
+  // Execute after the user confirms (server re-reviews and enforces the flags).
+  async function confirmExecute(confirmed: boolean, doubleConfirmed: boolean) {
+    setConfirmOpen(false);
+    if (!genPlan || !confirmed) return;
     setRunning(true);
     setPlanState("running");
     setTerminalOpen(true);
     setDoctorLines([{ text: "执行中…", tone: "muted" }]);
     try {
-      const rec = await executeConfirmedPlan(genPlan);
+      const rec = await executeConfirmedPlan(genPlan, { confirmed, doubleConfirmed });
       setDoctorLines(execsToLines(rec.executions));
       setPlanState(rec.status === "completed" ? "done" : "failed");
       setServers(await listServers());
@@ -495,13 +514,27 @@ export default function CodexConsole() {
     if (!selectedServerId) return;
     setRunning(true);
     setTerminalOpen(true);
-    setDoctorLines([{ text: `正在体检 ${selected?.name ?? ""} …`, tone: "muted" }]);
+    const lines: TerminalLine[] = [{ text: `正在体检 ${selected?.name ?? ""} …`, tone: "muted" }];
+    setDoctorLines([...lines]);
     try {
-      const report = await runServerDoctor(selectedServerId);
-      setDoctorLines(reportToLines(report));
+      await runServerDoctorStream(selectedServerId, (ev) => {
+        if (ev.type === "step") {
+          const label = ev.status === "running" ? "进行中" : ev.status === "done" ? "完成" : "失败";
+          lines.push({
+            text: `▸ [${ev.index + 1}/${ev.total}] ${ev.summary} · ${label}`,
+            tone: ev.status === "failed" ? "danger" : "muted",
+          });
+        } else if (ev.type === "line") {
+          lines.push({ text: ev.text, tone: ev.stderr ? "danger" : "default" });
+        } else {
+          lines.push({ text: `⚠ ${ev.message}`, tone: "danger" });
+        }
+        setDoctorLines([...lines]);
+      });
       setServers(await listServers());
     } catch (e) {
-      setDoctorLines([{ text: `体检失败: ${errMsg(e)}`, tone: "danger" }]);
+      lines.push({ text: `体检失败: ${errMsg(e)}`, tone: "danger" });
+      setDoctorLines([...lines]);
     } finally {
       setRunning(false);
     }
@@ -547,12 +580,23 @@ export default function CodexConsole() {
                 <div key={srv.id} className="mt-0.5">
                   <div
                     onClick={() => setSelectedServerId(srv.id)}
-                    className={`flex cursor-pointer items-center gap-2.5 rounded-md px-2.5 py-1.5 text-[13.5px] transition-colors hover:bg-hover ${
+                    className={`group flex cursor-pointer items-center gap-2.5 rounded-md px-2.5 py-1.5 text-[13.5px] transition-colors hover:bg-hover ${
                       selected ? "" : "text-fg-muted"
                     }`}
                   >
                     <ServerIcon />
                     <span className="flex-1 truncate">{srv.name}</span>
+                    <IconButton
+                      aria-label="编辑服务器"
+                      size="sm"
+                      className="opacity-0 transition-opacity group-hover:opacity-100"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setEditing(srv);
+                      }}
+                    >
+                      <Pencil size={12} />
+                    </IconButton>
                     <span className={`h-1.5 w-1.5 rounded-full ${statusDot(srv.status)}`} />
                   </div>
                   {selected && (
@@ -722,6 +766,27 @@ export default function CodexConsole() {
           setServers((prev) => [...prev, s]);
           setSelectedServerId(s.id);
         }}
+      />
+
+      <EditServerDialog
+        open={editing !== null}
+        server={editing}
+        onClose={() => setEditing(null)}
+        onSaved={(updated) =>
+          setServers((prev) => prev.map((s) => (s.id === updated.id ? updated : s)))
+        }
+        onDeleted={(id) => {
+          setServers((prev) => prev.filter((s) => s.id !== id));
+          setSelectedServerId((cur) => (cur === id ? null : cur));
+        }}
+      />
+
+      <ConfirmExecuteDialog
+        open={confirmOpen}
+        plan={genPlan}
+        review={confirmReview}
+        onClose={() => setConfirmOpen(false)}
+        onConfirm={confirmExecute}
       />
     </div>
   );

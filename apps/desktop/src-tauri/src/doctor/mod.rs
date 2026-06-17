@@ -8,6 +8,8 @@
 use std::collections::BTreeMap;
 use std::time::Duration;
 
+use serde::{Deserialize, Serialize};
+
 use crate::core::error::AppResult;
 use crate::core::types::{
     new_id, now, CommandExecution, DoctorReport, Plan, PlanStep, RiskLevel, ServerProfile,
@@ -53,40 +55,36 @@ pub fn doctor_plan(server_id: &str) -> Plan {
     }
 }
 
-/// Run the doctor over SSH. Returns the assembled report plus every execution.
-pub async fn run_doctor(
-    server: &ServerProfile,
-    secret: Option<&str>,
-) -> AppResult<DoctorReport> {
-    let mut executions: Vec<CommandExecution> = Vec::new();
-    let mut warnings: Vec<String> = Vec::new();
-    let mut out: BTreeMap<&str, String> = BTreeMap::new();
+/// A streaming event emitted while the doctor runs, so the frontend terminal can
+/// fill in live instead of all-at-once.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum DoctorStreamEvent {
+    /// A probe started / finished. `status` is "running" | "done" | "failed".
+    Step {
+        index: usize,
+        total: usize,
+        summary: String,
+        status: String,
+    },
+    /// A single line of (sanitized) output from the current probe.
+    Line { text: String, stderr: bool },
+    /// A health warning derived from the collected output.
+    Warning { message: String },
+}
 
-    for (key, _summary, cmd) in PROBES {
-        match crate::ssh::run_readonly(server, secret, cmd, PROBE_TIMEOUT).await {
-            Ok(exec) => {
-                if exec.exit_code == 0 {
-                    out.insert(key, exec.stdout.trim().to_string());
-                } else if *key != "docker" {
-                    // docker often absent — not worth a warning
-                    warnings.push(format!("{key} 探测失败 (exit {})", exec.exit_code));
-                }
-                executions.push(exec);
-            }
-            Err(e) => warnings.push(format!("{key} 探测错误: {}", e.code())),
-        }
-    }
-
-    if let Some(disk) = out.get("disk") {
-        if disk_under_pressure(disk) {
-            warnings.push("磁盘使用率偏高（≥90%）".to_string());
-        }
-    }
-
+/// Assemble a [`DoctorReport`] from the collected probe output + warnings. Shared
+/// by [`run_doctor`] and [`run_doctor_streamed`] so both produce the same shape.
+fn build_report(
+    server_id: &str,
+    out: &BTreeMap<&str, String>,
+    warnings: Vec<String>,
+    executions: Vec<CommandExecution>,
+) -> DoctorReport {
     let os = out.get("os").and_then(|s| parse_pretty_name(s));
-    let report = DoctorReport {
-        server_id: server.id.clone(),
-        os: os.clone(),
+    DoctorReport {
+        server_id: server_id.to_string(),
+        os,
         kernel: out.get("kernel").cloned(),
         arch: out.get("arch").cloned(),
         uptime: out.get("uptime").cloned(),
@@ -99,8 +97,121 @@ pub async fn run_doctor(
         warnings,
         executions,
         created_at: now(),
-    };
-    Ok(report)
+    }
+}
+
+/// Record one probe's result into the running output/warnings/executions, matching
+/// run_doctor's bookkeeping exactly. Returns the warnings appended for this probe
+/// so streaming callers can surface them as they happen.
+fn record_probe(
+    key: &'static str,
+    result: AppResult<CommandExecution>,
+    out: &mut BTreeMap<&'static str, String>,
+    warnings: &mut Vec<String>,
+    executions: &mut Vec<CommandExecution>,
+) -> Vec<String> {
+    let mut emitted = Vec::new();
+    match result {
+        Ok(exec) => {
+            if exec.exit_code == 0 {
+                out.insert(key, exec.stdout.trim().to_string());
+            } else if key != "docker" {
+                // docker often absent — not worth a warning
+                emitted.push(format!("{key} 探测失败 (exit {})", exec.exit_code));
+            }
+            executions.push(exec);
+        }
+        Err(e) => emitted.push(format!("{key} 探测错误: {}", e.code())),
+    }
+    warnings.extend(emitted.iter().cloned());
+    emitted
+}
+
+/// Check the disk output for high usage and append a warning if found. Returns the
+/// warning if one was added, so streaming callers can surface it.
+fn check_disk_pressure(out: &BTreeMap<&str, String>, warnings: &mut Vec<String>) -> Option<String> {
+    if let Some(disk) = out.get("disk") {
+        if disk_under_pressure(disk) {
+            let w = "磁盘使用率偏高（≥90%）".to_string();
+            warnings.push(w.clone());
+            return Some(w);
+        }
+    }
+    None
+}
+
+/// Run the doctor over SSH. Returns the assembled report plus every execution.
+pub async fn run_doctor(
+    server: &ServerProfile,
+    secret: Option<&str>,
+) -> AppResult<DoctorReport> {
+    let mut executions: Vec<CommandExecution> = Vec::new();
+    let mut warnings: Vec<String> = Vec::new();
+    let mut out: BTreeMap<&str, String> = BTreeMap::new();
+
+    for (key, _summary, cmd) in PROBES {
+        let result = crate::ssh::run_readonly(server, secret, cmd, PROBE_TIMEOUT).await;
+        // `key` is `&&'static str`; record_probe takes `&'static str`.
+        record_probe(*key, result, &mut out, &mut warnings, &mut executions);
+    }
+
+    check_disk_pressure(&out, &mut warnings);
+
+    Ok(build_report(&server.id, &out, warnings, executions))
+}
+
+/// Streaming counterpart to [`run_doctor`]: emits per-step / per-line events via
+/// `on_event` as it runs, then returns the SAME [`DoctorReport`] shape. Read-only
+/// safety is unchanged — every probe still goes through [`crate::ssh::run_readonly_streamed`].
+pub async fn run_doctor_streamed(
+    server: &ServerProfile,
+    secret: Option<&str>,
+    on_event: &(dyn Fn(DoctorStreamEvent) + Sync + Send),
+) -> AppResult<DoctorReport> {
+    let mut executions: Vec<CommandExecution> = Vec::new();
+    let mut warnings: Vec<String> = Vec::new();
+    let mut out: BTreeMap<&str, String> = BTreeMap::new();
+    let total = PROBES.len();
+
+    for (index, (key, summary, cmd)) in PROBES.iter().enumerate() {
+        on_event(DoctorStreamEvent::Step {
+            index,
+            total,
+            summary: summary.to_string(),
+            status: "running".to_string(),
+        });
+
+        let result = crate::ssh::run_readonly_streamed(
+            server,
+            secret,
+            cmd,
+            PROBE_TIMEOUT,
+            &|line: &str, stderr: bool| {
+                on_event(DoctorStreamEvent::Line { text: line.to_string(), stderr });
+            },
+        )
+        .await;
+
+        // Did this probe succeed? Mirror run_doctor's success rule (exit 0).
+        let ok = matches!(&result, Ok(exec) if exec.exit_code == 0);
+        let emitted = record_probe(*key, result, &mut out, &mut warnings, &mut executions);
+        for message in emitted {
+            on_event(DoctorStreamEvent::Warning { message });
+        }
+
+        on_event(DoctorStreamEvent::Step {
+            index,
+            total,
+            summary: summary.to_string(),
+            status: if ok { "done".to_string() } else { "failed".to_string() },
+        });
+    }
+
+    if let Some(message) = check_disk_pressure(&out, &mut warnings) {
+        on_event(DoctorStreamEvent::Warning { message });
+    }
+
+    Ok(build_report(&server.id, &out, warnings, executions))
 }
 
 /// Compact facts for caching on the server card.

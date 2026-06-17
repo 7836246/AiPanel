@@ -5,6 +5,8 @@
 
 use tauri::State;
 
+pub mod stream;
+
 use crate::core::error::{AppError, AppResult};
 use crate::core::types::{
     AuditRecord, CommandExecution, CredentialRef, DoctorReport, ModelSelectionPolicy, Plan,

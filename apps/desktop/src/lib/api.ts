@@ -7,7 +7,7 @@
  * core types (camelCase). Secrets are passed to dedicated commands, never kept
  * in these structs.
  */
-import { invoke } from "@tauri-apps/api/core";
+import { invoke, Channel } from "@tauri-apps/api/core";
 
 export const isTauri = (): boolean =>
   typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -276,6 +276,26 @@ export async function serverDoctorPlan(id: string): Promise<Plan> {
       createdAt: new Date().toISOString(),
     };
   return invoke<Plan>("server_doctor_plan", { id });
+}
+
+/** Live events streamed while the server doctor runs. */
+export type DoctorStreamEvent =
+  | { type: "step"; index: number; total: number; summary: string; status: "running" | "done" | "failed" }
+  | { type: "line"; text: string; stderr: boolean }
+  | { type: "warning"; message: string };
+
+/** Run the doctor with live streaming; resolves with the final report. */
+export async function runServerDoctorStream(
+  id: string,
+  onEvent: (ev: DoctorStreamEvent) => void
+): Promise<DoctorReport> {
+  if (!isTauri()) {
+    onEvent({ type: "line", text: "(浏览器 mock — 无流式)", stderr: false });
+    return runServerDoctor(id);
+  }
+  const ch = new Channel<DoctorStreamEvent>();
+  ch.onmessage = onEvent;
+  return invoke<DoctorReport>("run_server_doctor_stream", { id, onEvent: ch });
 }
 
 export async function runServerDoctor(id: string): Promise<DoctorReport> {
