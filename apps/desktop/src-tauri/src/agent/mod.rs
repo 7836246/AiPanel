@@ -18,6 +18,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+pub mod agent_loop;
 pub mod codex;
 
 use crate::core::error::{AppError, AppResult};

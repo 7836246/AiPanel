@@ -68,6 +68,7 @@ pub fn run() {
             commands::create_plan,
             commands::execute_confirmed_plan,
             commands::test_provider,
+            commands::run_agent_turn,
             commands::list_tools,
             commands::list_providers,
             commands::save_provider,

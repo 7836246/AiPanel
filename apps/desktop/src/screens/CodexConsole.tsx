@@ -11,6 +11,7 @@ import SettingsPanel from "./SettingsPanel";
 import {
   createPlan,
   executeConfirmedPlan,
+  runAgentTurn,
   listAuditRecords,
   listServers,
   runServerDoctor,
@@ -443,6 +444,29 @@ export default function CodexConsole() {
     }
   }
 
+  async function runDiagnose() {
+    const intent = intentValue.trim();
+    if (!intent) return;
+    setRunning(true);
+    setTerminalOpen(true);
+    setDoctorLines([{ text: "AI 诊断中…", tone: "muted" }]);
+    try {
+      const r = await runAgentTurn(intent, selectedServerId ?? undefined);
+      const lines: TerminalLine[] = r.toolCalls.map((t) => ({
+        text: `▸ 调用工具 ${t.name} ${t.ok ? "✓" : "✗"}`,
+        tone: t.ok ? "success" : "danger",
+      }));
+      if (lines.length) lines.push({ text: "", tone: "muted" });
+      for (const l of r.summary.split("\n")) lines.push({ text: l });
+      setDoctorLines(lines.length ? lines : [{ text: "(无输出)", tone: "muted" }]);
+      setIntentValue("");
+    } catch (e) {
+      setDoctorLines([{ text: `诊断失败: ${errMsg(e)}`, tone: "danger" }]);
+    } finally {
+      setRunning(false);
+    }
+  }
+
   async function runPlan() {
     if (!genPlan) return;
     setRunning(true);
@@ -652,6 +676,13 @@ export default function CodexConsole() {
                 </IconButton>
                 <button className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[13px] text-risk-medium transition-colors hover:bg-hover">
                   ⚠ 只读优先
+                </button>
+                <button
+                  onClick={runDiagnose}
+                  disabled={!intentValue.trim()}
+                  className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[13px] text-fg-muted transition-colors hover:bg-hover hover:text-fg disabled:opacity-40"
+                >
+                  ✦ AI 诊断
                 </button>
               </div>
               <div className="flex items-center gap-2.5">

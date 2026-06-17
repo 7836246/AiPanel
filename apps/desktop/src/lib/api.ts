@@ -304,6 +304,25 @@ export async function runServerDoctor(id: string): Promise<DoctorReport> {
   return invoke<DoctorReport>("run_server_doctor", { id });
 }
 
+export interface ToolTrace {
+  name: string;
+  ok: boolean;
+}
+export interface AgentTurnResult {
+  summary: string;
+  toolCalls: ToolTrace[];
+}
+
+/** Autonomous read-only diagnosis: the model investigates via read-only tools, then summarizes. */
+export async function runAgentTurn(intent: string, serverId?: string): Promise<AgentTurnResult> {
+  if (!isTauri())
+    return {
+      summary: "(浏览器 mock)请在桌面端配置 OpenAI 兼容供应商后使用 AI 诊断。",
+      toolCalls: [],
+    };
+  return invoke<AgentTurnResult>("run_agent_turn", { intent, serverId });
+}
+
 export async function reviewPlan(plan: Plan, readOnlyMode = false): Promise<RiskReview> {
   if (!isTauri()) return mockReview(plan, readOnlyMode);
   return invoke<RiskReview>("review_plan", { plan, readOnlyMode });

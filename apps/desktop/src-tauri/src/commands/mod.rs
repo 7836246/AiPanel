@@ -252,6 +252,27 @@ pub async fn execute_confirmed_plan(
     Ok(record)
 }
 
+/// Run an autonomous, read-only diagnosis turn: the model investigates via the
+/// read-only AiPanel Tools and returns a summary. It cannot change servers —
+/// writes still require the explicit confirm-and-execute flow.
+#[tauri::command]
+pub async fn run_agent_turn(
+    state: State<'_, AppState>,
+    intent: String,
+    server_id: Option<String>,
+) -> AppResult<crate::agent::agent_loop::AgentTurnResult> {
+    let provider = pick_provider(&state)?
+        .ok_or_else(|| AppError::Provider("未配置可用的模型供应商".into()))?;
+    if !matches!(provider.kind, ProviderKind::OpenAiCompatible) {
+        return Err(AppError::Provider("自动诊断目前仅支持 OpenAI 兼容供应商".into()));
+    }
+    let key = provider
+        .credential_ref
+        .as_ref()
+        .and_then(|r| state.credentials.get_secret(r).ok().flatten());
+    crate::agent::agent_loop::run_turn(&state, &provider, key, &intent, server_id.as_deref()).await
+}
+
 /// Test an agent provider config (validity / reachability) without saving it.
 /// The API key comes from the call (a key being typed in the form) or, failing
 /// that, from the credential store for an already-saved provider.
