@@ -303,6 +303,10 @@ pub struct TaskRecord {
     pub risk_review: Option<RiskReview>,
     #[serde(default)]
     pub executions: Vec<CommandExecution>,
+    /// AI 诊断的工具调用轨迹（仅 diagnose 类任务）。以不透明 JSON 存储，
+    /// 避免 core 依赖 agent 模块、并能随 ToolTrace 形状演进而原样往返。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_calls: Vec<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub summary: Option<String>,
     pub status: TaskStatus,

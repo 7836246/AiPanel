@@ -24,7 +24,8 @@ export default function EditServerDialog({
 }) {
   const [name, setName] = useState("");
   const [host, setHost] = useState("");
-  const [port, setPort] = useState(22);
+  // 端口用字符串受控，允许中间态（空串、删空、多位），提交时再回退到 22。
+  const [port, setPort] = useState("22");
   const [username, setUsername] = useState("root");
   const [authKind, setAuthKind] = useState<AuthKind>("password");
   const [secret, setSecret] = useState("");
@@ -37,7 +38,7 @@ export default function EditServerDialog({
     if (!server) return;
     setName(server.name);
     setHost(server.host);
-    setPort(server.port);
+    setPort(String(server.port));
     setUsername(server.username);
     setAuthKind(server.authKind);
     setSecret("");
@@ -55,7 +56,8 @@ export default function EditServerDialog({
     setBusy(true);
     setError(null);
     try {
-      const updated = await updateServer(server.id, { name, host, port, username, authKind });
+      const portNum = Number(port) || 22; // 空串/非法值提交时回退到 22
+      const updated = await updateServer(server.id, { name, host, port: portNum, username, authKind });
       if (authKind !== "agent" && secret) {
         await setServerSecret(server.id, secret);
       }
@@ -138,7 +140,7 @@ export default function EditServerDialog({
             <Input
               type="number"
               value={port}
-              onChange={(e) => setPort(Number(e.target.value) || 22)}
+              onChange={(e) => setPort(e.target.value)}
             />
           </div>
         </div>

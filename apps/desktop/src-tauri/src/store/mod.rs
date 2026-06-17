@@ -777,6 +777,7 @@ mod tests {
             plan: None,
             risk_review: None,
             executions: vec![],
+            tool_calls: vec![],
             summary: Some("ok".into()),
             status: TaskStatus::Completed,
             created_at: now(),

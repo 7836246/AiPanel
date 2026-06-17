@@ -65,7 +65,10 @@ pub async fn run_server_doctor_stream(
     let succeeded = report.executions.iter().any(|e| e.exit_code == 0);
     let status = if succeeded { ServerStatus::Online } else { ServerStatus::Offline };
     let facts = crate::doctor::facts_from_report(&report);
-    state.store.set_server_status(&id, status, Some(&facts))?;
+    // 取消或全失败的体检可能产出空/部分 facts；为空时传 None 以保留上次缓存的完整 facts，
+    // 仅在 facts 非空时才覆盖。
+    let facts_arg = if facts.is_empty() { None } else { Some(&facts) };
+    state.store.set_server_status(&id, status, facts_arg)?;
 
     // 每次执行都在本地审计。
     let plan = crate::doctor::doctor_plan(&id);

@@ -172,6 +172,9 @@ function NavItem({ icon, label, kbd, active, onClick }: {
   );
 }
 
+// 任务类型对应的侧栏小字形,便于一眼区分计划/诊断/体检。
+const KIND_GLYPH: Record<string, string> = { plan: "≣", diagnose: "✦", doctor: "✚" };
+
 // 任务状态到中文标签的映射。
 const STATUS_LABEL: Record<string, string> = {
   completed: "完成", failed: "失败", blocked: "已阻止", running: "进行中",
@@ -206,10 +209,15 @@ function StepRow({ summary, command, risk, status }: {
           <IconButton
             aria-label="复制命令"
             size="sm"
-            onClick={() => {
-              navigator.clipboard?.writeText(command);
-              setCopied(true);
-              setTimeout(() => setCopied(false), 1200);
+            onClick={async () => {
+              try {
+                if (!navigator.clipboard?.writeText) throw new Error("clipboard unavailable");
+                await navigator.clipboard.writeText(command);
+                setCopied(true);
+                setTimeout(() => setCopied(false), 1200);
+              } catch {
+                /* 复制失败：不显示「已复制」对勾 */
+              }
             }}
           >
             {copied ? <Check size={12} /> : <Copy />}
@@ -267,8 +275,19 @@ export default function CodexConsole() {
   const cancelIdRef = useRef("");
   // 任务输入框引用，供命令面板「新建提问」聚焦。
   const inputRef = useRef<HTMLInputElement>(null);
+  // 镜像当前任务到 ref，便于在切换/停止时读取最新值而不受闭包陈旧影响。
+  const currentRef = useRef<TaskRecord | null>(null);
   // 轻量通知（错误/成功提示），替代仅在终端里报错。
   const { toasts, push, dismiss } = useToasts();
+
+  // 真正中断进行中的后端流式运行：作废前端回调 + 唤醒后端取消句柄。
+  function cancelBackend() {
+    runIdRef.current += 1;
+    if (cancelIdRef.current) {
+      cancelRun(cancelIdRef.current);
+      cancelIdRef.current = "";
+    }
+  }
 
   const selected = servers.find((s) => s.id === selectedServerId) ?? null;
   // 当前可用于 AI 诊断的供应商：优先采用模型选择策略里的默认供应商
@@ -288,15 +307,19 @@ export default function CodexConsole() {
     getModelSelectionPolicy().then(setPolicy).catch(() => {});
   }, []);
 
-  // 选中服务器变化时：加载其运行历史，并重置当前打开的运行。
+  // 保持 currentRef 与 current 同步。
+  useEffect(() => { currentRef.current = current; }, [current]);
+
+  // 选中服务器变化时：真正取消进行中的运行（中断远端命令），再重置当前打开的运行并加载历史。
   useEffect(() => {
-    runIdRef.current += 1; // 切换上下文前先作废任何进行中的运行
+    cancelBackend();
     setRunning(false);
-    setCurrent(null);
     setStepStatus([]);
+    setCurrent(null);
     setTermLines([]);
     if (!selectedServerId) { setTasks([]); return; }
     listTasks(selectedServerId).then(setTasks).catch(() => setTasks([]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedServerId]);
 
   // 从设置返回时重新拉取供应商与模型选择策略，刷新顶部横幅与模型选择器。
@@ -323,8 +346,11 @@ export default function CodexConsole() {
     if (selectedServerId) setTasks(await listTasks(selectedServerId).catch(() => []));
   }
 
-  // 打开一条历史任务：回填步骤状态与终端输出，并切回控制台视图。
+  // 打开一条历史任务：先取消任何进行中的运行（避免其回调冲掉刚打开的内容），
+  // 再回填步骤状态与终端输出，并切回控制台视图。
   function openTask(t: TaskRecord) {
+    cancelBackend();
+    setRunning(false);
     setCurrent(t);
     setStepStatus((t.plan?.steps ?? []).map((_, i) => (t.executions[i] ? (t.executions[i].exitCode === 0 ? "done" : "failed") : "pending")));
     setTermLines(execLines(t.executions, t.summary));
@@ -379,7 +405,8 @@ export default function CodexConsole() {
   async function diagnose() {
     const intent = intentValue.trim();
     if (!intent || !selectedServerId) return;
-    if (!aiProvider) { setView("settings"); return; } // 未配置供应商则跳转设置
+    // 未配置供应商：给出明确反馈再跳转设置（不要静默跳走）。
+    if (!aiProvider) { push("info", "AI 诊断需要先配置模型供应商"); setView("settings"); return; }
     const myId = ++runIdRef.current;
     const serverId = selectedServerId;
     setRunning(true);
@@ -395,7 +422,7 @@ export default function CodexConsole() {
       setTermLines(lines);
       const task: TaskRecord = {
         id: newId(), serverId, title: intent, intent, kind: "diagnose",
-        executions: [], summary: r.summary, status: "completed", createdAt: nowIso(), updatedAt: nowIso(),
+        executions: [], toolCalls: r.toolCalls, summary: r.summary, status: "completed", createdAt: nowIso(), updatedAt: nowIso(),
       };
       await saveTask(task);
       if (runIdRef.current !== myId) return;
@@ -413,8 +440,11 @@ export default function CodexConsole() {
 
   // 只读体检：流式运行 doctor 计划，全程为只读检查命令。
   async function runDoctor() {
-    if (!selectedServerId) return;
+    if (!selectedServerId || running) return;
     const myId = ++runIdRef.current;
+    // 取消句柄要在任何 await 之前就绪，保证「刚点体检立刻点停止」也能真正中断。
+    const cancelId = newId();
+    cancelIdRef.current = cancelId;
     setRunning(true);
     setTerminalOpen(true);
     const plan = await serverDoctorPlan(selectedServerId).catch(() => null);
@@ -428,8 +458,6 @@ export default function CodexConsole() {
     await refreshTasks();
     const lines: TerminalLine[] = [{ text: `正在体检 ${selected?.name ?? ""} …`, tone: "muted" }];
     setTermLines([...lines]);
-    const cancelId = newId();
-    cancelIdRef.current = cancelId;
     try {
       const report = await runServerDoctorStream(selectedServerId, (ev) => {
         if (runIdRef.current !== myId) return;
@@ -507,16 +535,18 @@ export default function CodexConsole() {
           setTermLines([...lines]);
         }
       });
-      if (runIdRef.current !== myId) return;
+      // 即使期间被取消/切走（runId 不再匹配），也把后端返回的最终结果落库，
+      // 避免历史里的计划任务停留在「待确认」、已执行步骤丢失。
       const done: TaskRecord = {
         ...current, plan, riskReview: review ?? current.riskReview, executions: rec.executions,
         summary: rec.summary, status: rec.status, updatedAt: nowIso(),
       };
       await saveTask(done);
+      await refreshTasks();
+      if (runIdRef.current !== myId) return; // 界面已切走则不再更新当前视图
       setCurrent(done);
       setTermLines(execLines(rec.executions, rec.summary));
       setServers(await listServers());
-      await refreshTasks();
       push(rec.status === "completed" ? "success" : "danger", rec.status === "completed" ? "计划执行完成" : "计划执行未全部成功");
     } catch (e) {
       if (runIdRef.current !== myId) return;
@@ -528,12 +558,20 @@ export default function CodexConsole() {
     }
   }
 
-  // 停止当前运行：作废进行中的回调，并把仍在运行的步骤回退为待执行。
-  function stop() {
-    runIdRef.current += 1;
-    if (cancelIdRef.current) { cancelRun(cancelIdRef.current); cancelIdRef.current = ""; } // 真正中断远端命令
+  // 停止当前运行：真正中断远端命令，回退步骤状态，给出「已取消」提示，
+  // 并把仍处于「运行中」的当前任务落库为终态，避免历史里留下僵尸记录。
+  async function stop() {
+    cancelBackend();
     setRunning(false);
     setStepStatus((prev) => prev.map((s) => (s === "running" ? "pending" : s)));
+    setTermLines((prev) => [...prev, { text: "⏹ 已取消", tone: "muted" }]);
+    const cur = currentRef.current;
+    if (cur && cur.status === "running") {
+      const cancelled: TaskRecord = { ...cur, status: "failed", summary: cur.summary ?? "已取消", updatedAt: nowIso() };
+      await saveTask(cancelled).catch(() => {});
+      if (currentRef.current?.id === cancelled.id) setCurrent(cancelled);
+      await refreshTasks();
+    }
   }
 
   // 切到审计视图（AuditView 自行加载/搜索审计记录）。
@@ -544,7 +582,7 @@ export default function CodexConsole() {
   // 命令面板的动作集合：把主界面的关键操作集中为可搜索/键盘可达的快捷入口。
   const paletteCommands: PaletteCommand[] = [
     { id: "ask", label: "新建提问", hint: "聚焦输入框", group: "操作", run: () => { setView("console"); inputRef.current?.focus(); } },
-    { id: "doctor", label: "只读体检", hint: selected ? selected.name : "需选择服务器", group: "操作", run: () => { if (selectedServerId) runDoctor(); } },
+    { id: "doctor", label: "只读体检", hint: selected ? selected.name : "需选择服务器", group: "操作", run: () => { if (selectedServerId && !running) runDoctor(); } },
     { id: "audit", label: "打开审计", group: "导航", run: () => setView("audit") },
     { id: "settings", label: "打开设置", group: "导航", run: () => setView("settings") },
     { id: "theme", label: "切换浅色/深色", group: "界面", run: () => toggleTheme() },
@@ -627,8 +665,9 @@ export default function CodexConsole() {
                             onClick={() => openTask(t)}
                             className={`group flex cursor-pointer items-center gap-2 rounded-md px-2.5 py-1.5 text-[13px] transition-colors ${current?.id === t.id ? "bg-selected" : "text-fg-muted hover:bg-hover"}`}
                           >
+                            <span className="flex-none text-[11px] text-fg-subtle" title={t.kind}>{KIND_GLYPH[t.kind] ?? "❯"}</span>
                             <span className="min-w-0 flex-1 truncate">{t.title}</span>
-                            <IconButton aria-label="删除记录" size="sm" className="opacity-0 transition-opacity group-hover:opacity-100" onClick={async (e) => { e.stopPropagation(); await deleteTask(t.id); if (current?.id === t.id) setCurrent(null); await refreshTasks(); }}>
+                            <IconButton aria-label="删除记录" size="sm" className="opacity-0 transition-opacity group-hover:opacity-100" onClick={async (e) => { e.stopPropagation(); if (currentRef.current?.id === t.id) { cancelBackend(); setRunning(false); } await deleteTask(t.id); if (current?.id === t.id) setCurrent(null); await refreshTasks(); }}>
                               <Cross size={11} />
                             </IconButton>
                           </div>
@@ -709,9 +748,29 @@ export default function CodexConsole() {
                   <div className="rounded-md border border-border bg-surface-1 px-4 py-4">
                     <div className="mb-2 flex items-center gap-2">
                       <span className={`h-1.5 w-1.5 rounded-full ${current.status === "completed" ? "bg-risk-low" : current.status === "failed" ? "bg-risk-blocked" : "bg-fg-subtle"}`} />
-                      <span className="text-sm font-semibold">{current.title}</span>
+                      <span className="text-sm font-semibold">{current.kind === "diagnose" ? "✦ " : ""}{current.title}</span>
                       <span className="ml-auto text-[11.5px] text-fg-subtle">{STATUS_LABEL[current.status] ?? current.status}</span>
                     </div>
+                    {/* AI 诊断：展示结构化的调查过程（工具轨迹）+ 结论 */}
+                    {current.kind === "diagnose" && current.toolCalls && current.toolCalls.length > 0 && (
+                      <div className="mb-3 flex flex-col gap-1.5">
+                        <span className="text-[11.5px] text-fg-subtle">调查过程 · {current.toolCalls.length} 次工具调用</span>
+                        {current.toolCalls.map((t, i) => (
+                          <div key={i} className="rounded-md border border-border bg-bg px-2.5 py-1.5">
+                            <div className="flex items-center gap-2 text-[12.5px]">
+                              <span className={t.ok ? "text-risk-low" : "text-risk-blocked"}>{t.ok ? "✓" : "✗"}</span>
+                              <span className="font-mono">{t.name}</span>
+                              {t.argsSummary ? <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-fg-subtle">{t.argsSummary}</span> : null}
+                            </div>
+                            {(t.error || t.resultPreview) ? (
+                              <pre className={`mt-1 overflow-x-auto whitespace-pre-wrap font-mono text-[11px] leading-relaxed ${t.error ? "text-risk-blocked" : "text-fg-muted"}`}>
+                                {(t.error ?? t.resultPreview ?? "").split("\n").slice(0, 8).join("\n")}
+                              </pre>
+                            ) : null}
+                          </div>
+                        ))}
+                      </div>
+                    )}
                     {current.summary ? (
                       <p className="whitespace-pre-wrap text-[13px] leading-relaxed text-fg">{current.summary}</p>
                     ) : <p className="text-[13px] text-fg-subtle">无总结</p>}
@@ -729,9 +788,9 @@ export default function CodexConsole() {
                   ref={inputRef}
                   value={intentValue}
                   onChange={(e) => setIntentValue(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); generatePlan(); } }}
-                  placeholder={selectedServerId ? "描述运维任务,例如「检查网站为什么打不开」" : "先选择左侧服务器"}
-                  disabled={!selectedServerId}
+                  onKeyDown={(e) => { if (running) return; if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); generatePlan(); } }}
+                  placeholder={running ? "运行中…" : selectedServerId ? "描述运维任务,例如「检查网站为什么打不开」" : "先选择左侧服务器"}
+                  disabled={!selectedServerId || running}
                   className="w-full border-none bg-transparent pb-2.5 pt-0.5 text-sm outline-none placeholder:text-fg-subtle disabled:opacity-50"
                 />
                 <div className="flex items-center justify-between gap-2.5">
@@ -743,7 +802,7 @@ export default function CodexConsole() {
                     >
                       {readOnlyMode ? "🔒 只读优先 · 开" : "只读优先 · 关"}
                     </button>
-                    <button onClick={diagnose} disabled={!intentValue.trim() || !selectedServerId} className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[13px] text-fg-muted transition-colors hover:bg-hover hover:text-fg disabled:opacity-40">
+                    <button onClick={diagnose} disabled={!intentValue.trim() || !selectedServerId || running} className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[13px] text-fg-muted transition-colors hover:bg-hover hover:text-fg disabled:opacity-40">
                       ✦ AI 诊断
                     </button>
                   </div>
@@ -751,7 +810,7 @@ export default function CodexConsole() {
                     <button onClick={() => setView("settings")} className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[12.5px] text-fg-muted transition-colors hover:bg-hover" title="模型供应商设置">
                       {aiProvider ? `${aiProvider.name}${aiProvider.model ? " · " + aiProvider.model : ""}` : "未配置模型 · 去设置"}
                     </button>
-                    <button aria-label="发送" onClick={generatePlan} className="flex h-[30px] w-[30px] flex-none items-center justify-center rounded-full bg-brand text-brand-fg transition-opacity hover:opacity-90 disabled:opacity-40" disabled={!intentValue.trim() || !selectedServerId}>
+                    <button aria-label="发送" onClick={generatePlan} className="flex h-[30px] w-[30px] flex-none items-center justify-center rounded-full bg-brand text-brand-fg transition-opacity hover:opacity-90 disabled:opacity-40" disabled={!intentValue.trim() || !selectedServerId || running}>
                       <SendArrow />
                     </button>
                   </div>

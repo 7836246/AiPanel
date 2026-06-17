@@ -20,11 +20,23 @@ use crate::AppState;
 const MAX_ITERS: usize = 6;
 
 /// 单次工具调用的轨迹（工具名 + 是否成功），用于回放本回合调用了什么。
+///
+/// 额外携带脱敏后的入参摘要 / 错误 / 结果预览，方便前端展示更丰富的调用细节。
+/// 所有文本均经 `crate::core::sanitize::sanitize` 脱敏后才放入，绝不泄露密钥。
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolTrace {
     pub name: String,
     pub ok: bool,
+    /// 本次工具调用入参的简短摘要（截断到 ~120 字符的脱敏 JSON）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub args_summary: Option<String>,
+    /// 失败时的脱敏错误信息。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    /// 成功结果的前 ~200 字符脱敏预览。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result_preview: Option<String>,
 }
 
 /// 一次自主回合的结果：最终总结，以及途中调用过的工具轨迹。
@@ -144,27 +156,52 @@ pub async fn run_turn(
                         .and_then(|s| serde_json::from_str(s).ok())
                         .unwrap_or_else(|| json!({}));
 
+                    // 入参摘要：脱敏后截断到 ~120 字符，供轨迹回放展示。
+                    let args_summary = Some(truncate(
+                        &crate::core::sanitize::sanitize(&args.to_string()),
+                        120,
+                    ));
+
                     // 虽然只提供了只读工具，这里再强制校验一次。
                     let is_read_only = read_only_tool_specs()
                         .iter()
                         .any(|t| t["function"]["name"] == name);
-                    let (content, ok) = if !is_read_only {
-                        ("该工具需用户确认,自动诊断回路不执行写操作。".to_string(), false)
+                    // content 回灌给模型；result_preview / error 仅用于轨迹展示（均已脱敏）。
+                    let (content, ok, error, result_preview) = if !is_read_only {
+                        let msg = "该工具需用户确认,自动诊断回路不执行写操作。".to_string();
+                        (msg.clone(), false, Some(msg), None)
                     } else {
                         match crate::tools::dispatch(state, &name, args).await {
                             // 工具结果回灌给模型前先脱敏
                             // （在 server.list / server.info / 输出中抹掉 IP / 密钥）。
-                            Ok(v) => (truncate(&crate::core::sanitize::sanitize(&v.to_string()), 4000), true),
-                            Err(e) => (format!("工具错误: {}", e), false),
+                            Ok(v) => {
+                                let sanitized = crate::core::sanitize::sanitize(&v.to_string());
+                                let preview = truncate(&sanitized, 200);
+                                (truncate(&sanitized, 4000), true, None, Some(preview))
+                            }
+                            Err(e) => {
+                                let err = crate::core::sanitize::sanitize(&e.to_string());
+                                (format!("工具错误: {}", err), false, Some(err), None)
+                            }
                         }
                     };
-                    trace.push(ToolTrace { name, ok });
+                    trace.push(ToolTrace {
+                        name,
+                        ok,
+                        args_summary,
+                        error,
+                        result_preview,
+                    });
                     messages.push(json!({"role":"tool","tool_call_id": id,"content": content}));
                 }
                 // 再循环一轮，让模型用上这些结果
             }
             _ => {
                 let summary = msg["content"].as_str().unwrap_or("").to_string();
+                // 空总结时前端会退化为空白：返回明确的 Provider 错误让前端 catch 展示。
+                if summary.trim().is_empty() {
+                    return Err(AppError::Provider("诊断未返回任何结论".into()));
+                }
                 return Ok(AgentTurnResult { summary, tool_calls: trace });
             }
         }

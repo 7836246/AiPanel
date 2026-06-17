@@ -43,6 +43,8 @@ export default function AuditView({
   const [filter, setFilter] = useState<StatusFilter>("all");
   const [loading, setLoading] = useState(true);
   const [openId, setOpenId] = useState<string | null>(null);
+  // 导出进行中标志：导出期间禁用按钮,防止重复点击触发多次复制。
+  const [exporting, setExporting] = useState(false);
 
   // 搜索防抖：输入停止 ~250ms 后才把 query 同步给 debouncedQuery。
   useEffect(() => {
@@ -85,12 +87,15 @@ export default function AuditView({
       onNotify?.("danger", "当前环境不支持剪贴板,请改用其他方式导出");
       return;
     }
+    setExporting(true);
     try {
       const json = await exportAuditJson();
       await navigator.clipboard.writeText(json);
       onNotify?.("success", "审计已复制为 JSON");
     } catch (e) {
       onNotify?.("danger", `导出失败: ${errMsg(e)}`);
+    } finally {
+      setExporting(false);
     }
   }
 
@@ -124,8 +129,14 @@ export default function AuditView({
             </button>
           ))}
         </div>
-        <Button variant="secondary" size="sm" className="ml-auto" onClick={handleExport}>
-          导出 JSON
+        <Button
+          variant="secondary"
+          size="sm"
+          className="ml-auto"
+          onClick={handleExport}
+          disabled={exporting}
+        >
+          {exporting ? "导出中…" : "导出全部 JSON"}
         </Button>
       </div>
 
@@ -139,7 +150,7 @@ export default function AuditView({
             </div>
           ) : shown.length === 0 ? (
             <div className="rounded-md border border-border bg-surface-1 px-4 py-6 text-center text-[13px] text-fg-subtle">
-              {query.trim() || filter !== "all"
+              {debouncedQuery.trim() || filter !== "all"
                 ? "没有匹配的审计记录。"
                 : "还没有审计记录。执行一次任务后会出现在这里。"}
             </div>

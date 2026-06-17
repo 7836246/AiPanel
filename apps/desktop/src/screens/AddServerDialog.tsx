@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button, Dialog, Input, Textarea } from "@aipanel/ui";
 import { createServer, setServerSecret, type AuthKind, type ServerProfile } from "../lib/api";
 
@@ -14,23 +14,30 @@ export default function AddServerDialog({
 }) {
   const [name, setName] = useState("");
   const [host, setHost] = useState("");
-  const [port, setPort] = useState(22);
+  // 端口用字符串受控，允许中间态（空串、删空、多位），提交时再回退到 22。
+  const [port, setPort] = useState("22");
   const [username, setUsername] = useState("root");
   const [authKind, setAuthKind] = useState<AuthKind>("password");
   const [secret, setSecret] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // 把表单恢复到初始默认值。
+  // 把表单恢复到初始默认值（含清空 secret）。
   function reset() {
     setName("");
     setHost("");
-    setPort(22);
+    setPort("22");
     setUsername("root");
     setAuthKind("password");
     setSecret("");
+    setBusy(false);
     setError(null);
   }
+
+  // 对话框关闭时重置全部表单字段，避免下次打开残留旧输入（含密码/私钥）。
+  useEffect(() => {
+    if (!open) reset();
+  }, [open]);
 
   // 校验并提交：先创建服务器，再（非 agent 且填了凭据时）单独保存凭据。
   async function submit() {
@@ -41,13 +48,14 @@ export default function AddServerDialog({
     setBusy(true);
     setError(null);
     try {
-      const srv = await createServer({ name, host, port, username, authKind });
+      const portNum = Number(port) || 22; // 空串/非法值提交时回退到 22
+      const srv = await createServer({ name, host, port: portNum, username, authKind });
       if (authKind !== "agent" && secret) {
         await setServerSecret(srv.id, secret);
       }
       onCreated(srv);
-      reset();
-      onClose();
+      onClose(); // 关闭会触发上面的 useEffect 重置表单
+
     } catch (e) {
       setError(e && typeof e === "object" && "message" in e ? (e as { message: string }).message : String(e));
     } finally {
@@ -90,7 +98,7 @@ export default function AddServerDialog({
             <Input
               type="number"
               value={port}
-              onChange={(e) => setPort(Number(e.target.value) || 22)}
+              onChange={(e) => setPort(e.target.value)}
             />
           </div>
         </div>

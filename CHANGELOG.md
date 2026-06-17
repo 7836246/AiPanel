@@ -6,8 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- Run cancellation hardened: stopping / switching server / opening history /
+  deleting an active run now truly interrupts the remote command and finalizes the
+  task (no zombie "running" history entries; cancelled plans keep executed steps);
+  the composer/buttons disable while a run is in flight (no concurrent ops); the
+  doctor cancel handle is armed before any await.
+- Add-server dialog clears its form (incl. secrets) on close; port field is editable;
+  copy-to-clipboard only confirms on success; doctor cancel keeps prior facts;
+  diagnosis with no result surfaces an error instead of a blank panel.
+
 ### Added
 
+- Structured AI-diagnosis result: a card showing the tool-call trace (args /
+  result preview / errors, sanitized) plus the conclusion, persisted and
+  restorable from history (no longer terminal-only).
 - Command palette (⌘K / Ctrl-K): searchable, keyboard-reachable quick actions
   (new ask, doctor, audit, settings, theme/terminal toggle, read-only toggle,
   switch server).

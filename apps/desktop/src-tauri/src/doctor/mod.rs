@@ -276,6 +276,10 @@ pub fn facts_from_report(report: &DoctorReport) -> BTreeMap<String, String> {
     if let Some(arch) = &report.arch {
         facts.insert("Arch".to_string(), arch.clone());
     }
+    // 内核版本：若探测到则展示（紧随 Arch 之后）。
+    if let Some(kernel) = &report.kernel {
+        facts.insert("Kernel".to_string(), kernel.clone());
+    }
     if let Some(uptime) = &report.uptime {
         facts.insert("Uptime".to_string(), uptime.clone());
     }

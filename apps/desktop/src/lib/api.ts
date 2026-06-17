@@ -298,6 +298,8 @@ export interface TaskRecord {
   plan?: Plan;
   riskReview?: RiskReview;
   executions: CommandExecution[];
+  /** AI 诊断的工具调用轨迹（仅 diagnose 类任务）。 */
+  toolCalls?: ToolTrace[];
   summary?: string;
   status: TaskStatus;
   createdAt: string;
@@ -462,6 +464,12 @@ export async function runServerDoctor(id: string): Promise<DoctorReport> {
 export interface ToolTrace {
   name: string;
   ok: boolean;
+  /** 本次工具调用入参的简短摘要。 */
+  argsSummary?: string;
+  /** 失败时的错误信息（已脱敏）。 */
+  error?: string;
+  /** 成功结果的前若干字符预览（已脱敏）。 */
+  resultPreview?: string;
 }
 /** 一次 Agent 轮次的结果：总结文本 + 调用过的工具轨迹。 */
 export interface AgentTurnResult {
