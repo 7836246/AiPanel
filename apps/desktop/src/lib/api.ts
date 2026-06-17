@@ -137,6 +137,12 @@ export async function deleteServer(id: string): Promise<void> {
   return invoke<void>("delete_server", { id });
 }
 
+/** Store an SSH secret (password/private key). Goes straight to the credential store. */
+export async function setServerSecret(id: string, secret: string): Promise<void> {
+  if (!isTauri()) return;
+  return invoke<void>("set_server_secret", { id, secret });
+}
+
 export interface CommandExecution {
   command: string;
   exitCode: number;
