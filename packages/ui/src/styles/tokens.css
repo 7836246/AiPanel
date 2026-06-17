@@ -42,7 +42,7 @@
   /* 文字近黑主 / 暖灰 muted / 更浅 subtle */
   --color-fg: #0d0d0d;
   --color-fg-muted: #5b5b5b;
-  --color-fg-subtle: #8a8a87;
+  --color-fg-subtle: #6f6f6d;
 
   /* 强调色收敛为近黑（Codex "send"），不靠彩色强调 */
   --color-brand: #1a1a1a;
@@ -89,7 +89,7 @@
 
   --color-fg: #ececec;
   --color-fg-muted: #a0a0a0;
-  --color-fg-subtle: #6f6f6f;
+  --color-fg-subtle: #828280;
 
   /* 深色下主按钮反相为近白 */
   --color-brand: #ececec;

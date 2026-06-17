@@ -40,15 +40,14 @@ pub async fn terminal_open(
         None => None,
     };
 
-    // 把每一段远端输出通过 Channel 转发给前端。send 失败（前端已关闭 Channel）忽略。
+    // 把每一段远端输出通过 Channel 转发给前端。send 返回 Ok 表示前端仍在监听;
+    // 返回 false(Channel 已断开,如 webview 刷新)会让读线程结束并回收会话。
     crate::terminal::open(
         &server,
         secret.as_deref(),
         cols,
         rows,
-        Box::new(move |chunk| {
-            let _ = on_output.send(chunk);
-        }),
+        Box::new(move |chunk| on_output.send(chunk).is_ok()),
     )
 }
 

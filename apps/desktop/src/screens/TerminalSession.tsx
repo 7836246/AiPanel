@@ -45,16 +45,23 @@ export default function TerminalSession({
     const bg = rootStyle.getPropertyValue("--color-bg").trim();
     const fg = rootStyle.getPropertyValue("--color-fg").trim();
     const surface1 = rootStyle.getPropertyValue("--color-surface-1").trim();
+    const selected = rootStyle.getPropertyValue("--color-selected").trim();
     const theme = {
       background: bg || surface1 || "#141414",
       foreground: fg || "#ececec",
       cursor: fg || "#ececec",
+      // 选区底色读自 token,保证浅/深主题下选中文本都清晰。
+      ...(selected ? { selectionBackground: selected } : {}),
     };
+
+    // xterm 通过 canvas 测量字形,无法解析 CSS var();把 --font-mono 解析成具体字体栈。
+    const monoVar = rootStyle.getPropertyValue("--font-mono").trim();
+    const fontFamily = `${monoVar ? `${monoVar}, ` : ""}ui-monospace, SFMono-Regular, Menlo, Consolas, monospace`;
 
     // 创建终端实例
     const term = new Terminal({
       cursorBlink: true,
-      fontFamily: "var(--font-mono), ui-monospace, monospace",
+      fontFamily,
       fontSize: 13,
       theme,
     });

@@ -193,7 +193,8 @@ pub fn open(
     secret: Option<&str>,
     cols: u16,
     rows: u16,
-    on_data: Box<dyn Fn(String) + Send + 'static>,
+    // 返回 false 表示消费端（前端 Channel）已断开,读线程据此结束并回收会话。
+    on_data: Box<dyn Fn(String) -> bool + Send + 'static>,
 ) -> AppResult<String> {
     // 1) 开本地 PTY。
     let pty = native_pty_system();
@@ -210,42 +211,31 @@ pub fn open(
     let (cmd, keyfile) = build_command(server, secret)?;
 
     // 3) 在 slave 端启动 ssh / sshpass，拿到子进程、writer、reader。
-    let child = pair
+    let mut child = pair
         .slave
         .spawn_command(cmd)
         .map_err(|e| AppError::Ssh(format!("failed to launch interactive ssh: {e}")))?;
     // spawn 之后 slave 已无须保留；显式 drop 释放它的文件描述符。
     drop(pair.slave);
 
-    let writer = pair
-        .master
-        .take_writer()
-        .map_err(|e| AppError::Ssh(format!("failed to take pty writer: {e}")))?;
-    let mut reader = pair
-        .master
-        .try_clone_reader()
-        .map_err(|e| AppError::Ssh(format!("failed to clone pty reader: {e}")))?;
-
-    // 4) 后台读线程：把远端输出回调给前端，直到 EOF / 出错。
-    std::thread::spawn(move || {
-        let mut buf = [0u8; 8192];
-        loop {
-            match reader.read(&mut buf) {
-                // EOF：会话结束，退出线程。
-                Ok(0) => break,
-                Ok(n) => {
-                    // PTY 字节流可能在任意位置切断多字节 UTF-8 序列；from_utf8_lossy
-                    // 用替换字符兜底，保证回调拿到的总是合法 String。
-                    let chunk = String::from_utf8_lossy(&buf[..n]).into_owned();
-                    on_data(chunk);
-                }
-                // 读出错（通常是 master 被关闭）：退出线程。
-                Err(_) => break,
-            }
+    // spawn 之后若任一步失败,必须 kill 已启动的子进程,否则会留下持有 SSHPASS 密钥
+    // 环境的孤儿进程(且无 session_id 可供前端回收)。
+    let writer = match pair.master.take_writer() {
+        Ok(w) => w,
+        Err(e) => {
+            let _ = child.kill();
+            return Err(AppError::Ssh(format!("failed to take pty writer: {e}")));
         }
-    });
+    };
+    let mut reader = match pair.master.try_clone_reader() {
+        Ok(r) => r,
+        Err(e) => {
+            let _ = child.kill();
+            return Err(AppError::Ssh(format!("failed to clone pty reader: {e}")));
+        }
+    };
 
-    // 5) 登记会话并返回 id。
+    // 4) 先登记会话(在起读线程之前,避免「立即 EOF 的线程先于 insert 调 close」的竞态)。
     let session_id = crate::core::types::new_id();
     sessions().lock().unwrap().insert(
         session_id.clone(),
@@ -256,6 +246,31 @@ pub fn open(
             _keyfile: keyfile,
         },
     );
+
+    // 5) 后台读线程：把远端输出回调给前端,直到 EOF / 出错 / 前端 Channel 断开;
+    // 线程退出即自我回收会话(杀子进程 + 移除注册表),使后端寿命不依赖前端是否调用 close
+    // (例如 webview 硬刷新导致 Channel 失效时也能回收)。
+    let thread_id = session_id.clone();
+    std::thread::spawn(move || {
+        let mut buf = [0u8; 8192];
+        loop {
+            match reader.read(&mut buf) {
+                // EOF：会话结束，退出线程。
+                Ok(0) => break,
+                Ok(n) => {
+                    // PTY 字节流可能在任意位置切断多字节 UTF-8 序列；from_utf8_lossy
+                    // 用替换字符兜底，保证回调拿到的总是合法 String。
+                    let chunk = String::from_utf8_lossy(&buf[..n]).into_owned();
+                    if !on_data(chunk) {
+                        break; // 前端 Channel 已断开,无需继续读
+                    }
+                }
+                // 读出错（通常是 master 被关闭）：退出线程。
+                Err(_) => break,
+            }
+        }
+        let _ = close(&thread_id);
+    });
 
     Ok(session_id)
 }
