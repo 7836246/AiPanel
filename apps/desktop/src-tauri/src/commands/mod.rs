@@ -226,3 +226,9 @@ pub async fn execute_confirmed_plan(
 pub fn test_provider(config: ProviderConfig) -> ProviderTestResult {
     crate::agent::test_provider(&config)
 }
+
+/// The AiPanel Tools surface the agent may call (names, permissions, audit policy).
+#[tauri::command]
+pub fn list_tools() -> Vec<crate::tools::ToolSpec> {
+    crate::tools::registry()
+}
