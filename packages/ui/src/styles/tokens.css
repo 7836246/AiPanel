@@ -1,0 +1,58 @@
+/**
+ * AiPanel design tokens.
+ *
+ * Tailwind v4 reads `@theme` and (a) emits the CSS custom properties below and
+ * (b) generates matching utilities — e.g. `--color-surface-1` powers
+ * `bg-surface-1` / `text-surface-1` / `border-surface-1`, `--radius-md` powers
+ * `rounded-md`, `--font-mono` powers `font-mono`.
+ *
+ * AiPanel is an operations/security console, so the palette is dark-first and
+ * the risk scale (low/medium/high/blocked) mirrors docs/SECURITY_MODEL.zh-Hans.md.
+ */
+@theme {
+  /* Typography */
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", "Menlo", monospace;
+
+  /* Radius */
+  --radius-sm: 0.25rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+
+  /* Neutral surface scale (dark console) */
+  --color-bg: #0b0f14;
+  --color-surface-1: #11161d;
+  --color-surface-2: #161d26;
+  --color-surface-3: #1d2630;
+  --color-border: #263038;
+  --color-border-strong: #36424c;
+
+  /* Foreground */
+  --color-fg: #e6edf3;
+  --color-fg-muted: #9aa7b4;
+  --color-fg-subtle: #6b7884;
+
+  /* Brand (teal — README primary) + accent */
+  --color-brand: #14b8a6;
+  --color-brand-strong: #0f766e;
+  --color-brand-fg: #04201d;
+  --color-accent: #38bdf8;
+  --color-accent-strong: #0284c7;
+
+  /* Risk scale — Low / Medium / High / Blocked */
+  --color-risk-low: #22c55e;
+  --color-risk-low-soft: #052e16;
+  --color-risk-medium: #f59e0b;
+  --color-risk-medium-soft: #3a2606;
+  --color-risk-high: #f97316;
+  --color-risk-high-soft: #3a1d06;
+  --color-risk-blocked: #ef4444;
+  --color-risk-blocked-soft: #3a0a0a;
+
+  /* Generic status (reuses the risk hues for consistency) */
+  --color-success: #22c55e;
+  --color-warning: #f59e0b;
+  --color-danger: #ef4444;
+  --color-info: #38bdf8;
+}
