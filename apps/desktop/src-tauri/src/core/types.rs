@@ -359,7 +359,8 @@ pub struct CommandExecution {
 }
 
 /// 只读服务器体检报告。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+// 含 f64（cpuPercent）字段，故不派生 Eq（f64 不实现 Eq）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DoctorReport {
     pub server_id: String,
@@ -383,6 +384,30 @@ pub struct DoctorReport {
     pub services: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub docker: Option<String>,
+    // ---- Doctor v2：从原始探测输出中解析出的结构化指标 ----
+    // 全部为可选字段并带 #[serde(default)]，因此旧的 JSON（没有这些字段）仍可正常反序列化，
+    // 审计读取（audit::record_for_doctor）也不会因新增字段而被破坏。
+    /// CPU 使用率百分比（0-100）。当前探测不直接采集，保留为 None（负载见 facts 的「Load」）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cpu_percent: Option<f64>,
+    /// 已用内存（MB），由 `free -m` 解析。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mem_used_mb: Option<u64>,
+    /// 总内存（MB），由 `free -m` 解析。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mem_total_mb: Option<u64>,
+    /// 根分区（/）使用率百分比，由 `df` 解析。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disk_used_percent: Option<u64>,
+    /// 运行中的服务数量。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service_count: Option<usize>,
+    /// 运行中的容器数量。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub container_count: Option<usize>,
+    /// 监听端口数量。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub port_count: Option<usize>,
     #[serde(default)]
     pub warnings: Vec<String>,
     /// 生成此报告所执行的只读命令。

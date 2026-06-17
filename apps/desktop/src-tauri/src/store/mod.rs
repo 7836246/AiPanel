@@ -334,6 +334,38 @@ impl Store {
         Ok(out)
     }
 
+    /// 在审计记录中做不区分大小写的子串搜索（意图 / 总结 / 命令）。
+    ///
+    /// 空 query 退化为 [`list_audit_records`](Self::list_audit_records)。完整 JSON
+    /// 已脱敏（执行输出不含密钥），因此对其整体做 SQL LIKE 即可命中
+    /// intent/summary/命令等字段；再在 Rust 侧按上限截断。
+    pub fn search_audit_records(&self, query: &str, limit: u32) -> AppResult<Vec<AuditRecord>> {
+        let q = query.trim();
+        if q.is_empty() {
+            return self.list_audit_records(limit);
+        }
+        let conn = self.conn.lock().unwrap();
+        // SQLite 的 LIKE 对 ASCII 默认不区分大小写；为兼顾非 ASCII，
+        // 统一对 data 列与模式做 lower() 处理。
+        let pattern = format!("%{}%", escape_like(&q.to_lowercase()));
+        let mut stmt = conn.prepare(
+            "SELECT data FROM audit_records \
+             WHERE lower(data) LIKE ?1 ESCAPE '\\' \
+             ORDER BY created_at DESC LIMIT ?2",
+        )?;
+        let rows = stmt
+            .query_map(params![pattern, limit], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut out = Vec::with_capacity(rows.len());
+        for data in rows {
+            match serde_json::from_str(&data) {
+                Ok(r) => out.push(r),
+                Err(e) => eprintln!("[store] skipping unreadable audit row: {e}"),
+            }
+        }
+        Ok(out)
+    }
+
     /// 按 id 获取一条审计记录，不存在则返回 NotFound。
     pub fn get_audit_record(&self, id: &str) -> AppResult<AuditRecord> {
         let conn = self.conn.lock().unwrap();
@@ -399,6 +431,76 @@ impl Store {
             }
         }
         Ok(out)
+    }
+
+    /// 在运行历史中做不区分大小写的子串搜索（标题 / 意图），可按服务器过滤。
+    ///
+    /// 空 query 退化为 [`list_tasks`](Self::list_tasks)。完整 JSON 已脱敏，
+    /// 对其整体做 SQL LIKE 可命中 title/intent 等字段；再在 Rust 侧按上限截断。
+    pub fn search_tasks(
+        &self,
+        server_id: Option<&str>,
+        query: &str,
+        limit: u32,
+    ) -> AppResult<Vec<TaskRecord>> {
+        let q = query.trim();
+        if q.is_empty() {
+            return self.list_tasks(server_id, limit);
+        }
+        let conn = self.conn.lock().unwrap();
+        let pattern = format!("%{}%", escape_like(&q.to_lowercase()));
+        let rows: Vec<String> = match server_id {
+            Some(sid) => {
+                let mut stmt = conn.prepare(
+                    "SELECT data FROM tasks \
+                     WHERE server_id = ?1 AND lower(data) LIKE ?2 ESCAPE '\\' \
+                     ORDER BY created_at DESC LIMIT ?3",
+                )?;
+                let v = stmt
+                    .query_map(params![sid, pattern, limit], |row| row.get::<_, String>(0))?
+                    .collect::<Result<Vec<_>, _>>()?;
+                v
+            }
+            None => {
+                let mut stmt = conn.prepare(
+                    "SELECT data FROM tasks \
+                     WHERE lower(data) LIKE ?1 ESCAPE '\\' \
+                     ORDER BY created_at DESC LIMIT ?2",
+                )?;
+                let v = stmt
+                    .query_map(params![pattern, limit], |row| row.get::<_, String>(0))?
+                    .collect::<Result<Vec<_>, _>>()?;
+                v
+            }
+        };
+        let mut out = Vec::with_capacity(rows.len());
+        for data in rows {
+            match serde_json::from_str(&data) {
+                Ok(t) => out.push(t),
+                Err(e) => eprintln!("[store] skipping unreadable task row: {e}"),
+            }
+        }
+        Ok(out)
+    }
+
+    /// 导出全部审计记录为格式化 JSON 字符串（最新在前）。
+    ///
+    /// 记录中的执行输出已脱敏、不含密钥，可安全交给前端写盘/分享。
+    pub fn export_audit_records_json(&self) -> AppResult<String> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt =
+            conn.prepare("SELECT data FROM audit_records ORDER BY created_at DESC")?;
+        let rows = stmt
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut records: Vec<AuditRecord> = Vec::with_capacity(rows.len());
+        for data in rows {
+            match serde_json::from_str(&data) {
+                Ok(r) => records.push(r),
+                Err(e) => eprintln!("[store] skipping unreadable audit row on export: {e}"),
+            }
+        }
+        Ok(serde_json::to_string_pretty(&records)?)
     }
 
     /// 按 id 获取一条运行历史，不存在则返回 NotFound。
@@ -496,6 +598,22 @@ fn parse_provider_kind(s: &str) -> ProviderKind {
         "openai_compatible" => ProviderKind::OpenAiCompatible,
         _ => ProviderKind::Custom,
     }
+}
+
+/// 转义 SQL LIKE 模式中的特殊字符（`\`、`%`、`_`），配合 `ESCAPE '\'` 使用，
+/// 使用户输入只作为普通子串匹配，而不被当作通配符。
+fn escape_like(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            '\\' | '%' | '_' => {
+                out.push('\\');
+                out.push(ch);
+            }
+            _ => out.push(ch),
+        }
+    }
+    out
 }
 
 /// 解析 RFC3339 时间戳，失败时回退为当前时间。

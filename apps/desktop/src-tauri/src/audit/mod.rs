@@ -94,6 +94,13 @@ mod tests {
             ports: vec![],
             services: vec![],
             docker: None,
+            cpu_percent: None,
+            mem_used_mb: None,
+            mem_total_mb: None,
+            disk_used_percent: None,
+            service_count: None,
+            container_count: None,
+            port_count: None,
             warnings: vec!["磁盘偏高".into()],
             executions: vec![CommandExecution {
                 command: "uname -a".into(),

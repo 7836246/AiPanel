@@ -194,6 +194,14 @@ export interface DoctorReport {
   warnings: string[];
   executions: CommandExecution[];
   createdAt: string;
+  // Doctor v2：从原始探测输出解析出的结构化指标（旧记录可能没有，故均为可选）。
+  cpuPercent?: number;
+  memUsedMb?: number;
+  memTotalMb?: number;
+  diskUsedPercent?: number;
+  serviceCount?: number;
+  containerCount?: number;
+  portCount?: number;
 }
 
 export type TaskStatus =
@@ -336,7 +344,7 @@ export type PlanExecEvent =
 /** 流式执行已确认的计划；逐事件回调 onEvent，完成后返回审计记录。 */
 export async function runConfirmedPlanStream(
   plan: Plan,
-  opts: { confirmed: boolean; doubleConfirmed: boolean; readOnlyMode?: boolean },
+  opts: { confirmed: boolean; doubleConfirmed: boolean; readOnlyMode?: boolean; runId?: string },
   onEvent: (ev: PlanExecEvent) => void
 ): Promise<AuditRecord> {
   if (!isTauri()) {
@@ -355,8 +363,35 @@ export async function runConfirmedPlanStream(
     confirmed: opts.confirmed,
     doubleConfirmed: opts.doubleConfirmed,
     readOnlyMode: opts.readOnlyMode ?? false,
+    runId: opts.runId ?? "",
     onEvent: ch,
   });
+}
+
+/** 请求中断某次正在运行的流式任务（doctor/计划执行）。 */
+export async function cancelRun(runId: string): Promise<void> {
+  if (!isTauri() || !runId) return;
+  return invoke<void>("cancel_run", { runId });
+}
+
+// ---- 审计/任务 搜索与导出 -------------------------------------
+
+/** 关键字搜索审计记录（意图/总结/命令的子串匹配）。空查询退化为列表。 */
+export async function searchAuditRecords(query: string, limit = 100): Promise<AuditRecord[]> {
+  if (!isTauri()) return [];
+  return invoke<AuditRecord[]>("search_audit_records", { query, limit });
+}
+
+/** 关键字搜索运行历史（标题/意图）。空查询退化为列表。 */
+export async function searchTasks(serverId: string | undefined, query: string, limit = 100): Promise<TaskRecord[]> {
+  if (!isTauri()) return mockTasks.filter((t) => (!serverId || t.serverId === serverId) && (!query || t.title.includes(query)));
+  return invoke<TaskRecord[]>("search_tasks", { serverId, query, limit });
+}
+
+/** 导出全部审计记录为格式化 JSON 字符串（已脱敏，可安全写盘/分享）。 */
+export async function exportAuditJson(): Promise<string> {
+  if (!isTauri()) return JSON.stringify([], null, 2);
+  return invoke<string>("export_audit_json", {});
 }
 
 export async function serverDoctorPlan(id: string): Promise<Plan> {
@@ -380,7 +415,8 @@ export type DoctorStreamEvent =
 /** 以流式方式运行体检；完成后返回最终报告。 */
 export async function runServerDoctorStream(
   id: string,
-  onEvent: (ev: DoctorStreamEvent) => void
+  onEvent: (ev: DoctorStreamEvent) => void,
+  runId = ""
 ): Promise<DoctorReport> {
   if (!isTauri()) {
     const report = await runServerDoctor(id);
@@ -394,7 +430,7 @@ export async function runServerDoctorStream(
   }
   const ch = new Channel<DoctorStreamEvent>();
   ch.onmessage = onEvent;
-  return invoke<DoctorReport>("run_server_doctor_stream", { id, onEvent: ch });
+  return invoke<DoctorReport>("run_server_doctor_stream", { id, runId, onEvent: ch });
 }
 
 export async function runServerDoctor(id: string): Promise<DoctorReport> {

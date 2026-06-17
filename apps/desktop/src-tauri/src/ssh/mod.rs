@@ -10,11 +10,14 @@
 //! - stdout/stderr 离开本模块前都会经过脱敏；
 //! - 私钥被写入仅本次调用使用的 0600 权限临时文件，调用结束立即删除。
 
+use std::collections::HashMap;
 use std::process::Stdio;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
+use tokio::sync::Notify;
 use tokio::time::timeout;
 
 use crate::core::error::{AppError, AppResult};
@@ -26,6 +29,47 @@ use crate::risk::classify_command;
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 /// 默认连接超时（同时传给 ssh 的 ConnectTimeout）。
 pub const CONNECT_TIMEOUT_SECS: u64 = 10;
+
+/// 取消注册表：把每次流式运行的 `run_id` 映射到一个 [`Notify`]。前端可以通过
+/// `cancel_run(run_id)` 唤醒对应的 [`Notify`]，正在运行的流式循环 select 到它后
+/// 立即跳出并 drop 子进程（kill_on_drop 已设），从而中断本地 ssh 以及——配合
+/// `-tt` 强制分配的 tty——中断远端命令（远端收到 SIGHUP）。
+///
+/// 只依赖标准库 + 已有的 tokio，不引入新依赖。
+static CANCEL_REGISTRY: OnceLock<Mutex<HashMap<String, Arc<Notify>>>> = OnceLock::new();
+
+/// 取回（必要时初始化）全局取消注册表。
+fn registry() -> &'static Mutex<HashMap<String, Arc<Notify>>> {
+    CANCEL_REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// 为一次运行登记取消句柄并返回它。流式命令在开始执行前调用，把返回的
+/// [`Notify`] 传给可取消的流式执行器；运行结束后必须调用 [`unregister`]。
+pub fn register(run_id: &str) -> Arc<Notify> {
+    let notify = Arc::new(Notify::new());
+    registry()
+        .lock()
+        .unwrap()
+        .insert(run_id.to_string(), notify.clone());
+    notify
+}
+
+/// 注销一次运行的取消句柄。无论成功、失败还是被取消都应调用，避免句柄泄漏。
+pub fn unregister(run_id: &str) {
+    registry().lock().unwrap().remove(run_id);
+}
+
+/// 请求取消指定运行。若该 `run_id` 仍在注册表中，唤醒其 [`Notify`]。
+/// 找不到（已结束 / 从未登记）时静默忽略。
+///
+/// 用 `notify_one` 而非 `notify_waiters`：前者会在当前没有等待者时**存下一个许可**，
+/// 这样即便取消请求恰好落在流式循环两次迭代之间（此刻没有 `.notified()` 在等待），
+/// 下一次 `.notified()` 也会立刻返回，不会漏掉取消。
+pub fn cancel(run_id: &str) {
+    if let Some(notify) = registry().lock().unwrap().get(run_id) {
+        notify.notify_one();
+    }
+}
 
 /// 对流式输出的单行做脱敏。私钥块只有在 `sanitize` 对整个缓冲区匹配时才能命中，
 /// 按行流式输出时其内容会泄露；这里抑制内容、只输出一个占位符。存储的输出仍会
@@ -94,15 +138,24 @@ struct Invocation {
 
 /// 按认证方式为「服务器 + 命令」构建 ssh 调用。阻塞式与流式执行器共用此函数，
 /// 以保证两者与 ssh 的交互方式完全一致。
+///
+/// `force_tty` 为 `true` 时追加 `-tt`，强制 ssh 分配伪终端。这样当本地 ssh 进程
+/// 被杀（取消 / 超时触发 kill_on_drop）时，远端会收到 SIGHUP，从而把远端命令也
+/// 一并终止——而不是留下一个孤儿进程继续跑。仅流式执行器使用。
 fn build_invocation(
     server: &ServerProfile,
     secret: Option<&str>,
     command: &str,
+    force_tty: bool,
 ) -> AppResult<Invocation> {
+    // 强制 tty 的两个 `-tt`。放在 ssh 自身参数最前面，对三种认证方式都适用
+    //（password 分支里 ssh 的参数从第 2 项起，见下方）。
+    let tty_opts: &[&str] = if force_tty { &["-tt"] } else { &[] };
     let mut keyfile: Option<KeyFile> = None;
     let (program, args, env) = match server.auth_kind {
         AuthKind::Agent => {
             let mut a = vec!["-o".into(), "BatchMode=yes".into()];
+            a.extend(tty_opts.iter().map(|s| s.to_string()));
             a.extend(common_opts(CONNECT_TIMEOUT_SECS));
             a.push("-p".into());
             a.push(server.port.to_string());
@@ -121,6 +174,7 @@ fn build_invocation(
                 "-i".into(),
                 kf.path.display().to_string(),
             ];
+            a.extend(tty_opts.iter().map(|s| s.to_string()));
             a.extend(common_opts(CONNECT_TIMEOUT_SECS));
             a.push("-p".into());
             a.push(server.port.to_string());
@@ -139,6 +193,7 @@ fn build_invocation(
             // sshpass -e 从 SSHPASS 环境变量读取密码（而非 argv，
             // 这样密码不会在 `ps` 中可见）。
             let mut a = vec!["-e".into(), "ssh".into(), "-o".into(), "PreferredAuthentications=password".into(), "-o".into(), "PubkeyAuthentication=no".into()];
+            a.extend(tty_opts.iter().map(|s| s.to_string()));
             a.extend(common_opts(CONNECT_TIMEOUT_SECS));
             a.push("-p".into());
             a.push(server.port.to_string());
@@ -178,7 +233,8 @@ pub async fn run_command(
 
     // 按认证方式构建调用。`inv` 持有密钥文件（如果有），因此密钥会在 drop 时
     // 删除——包括下面的超时分支，那里 `inv` 在返回时离开作用域。
-    let inv = build_invocation(server, secret, command)?;
+    // 阻塞式执行不需要强制 tty。
+    let inv = build_invocation(server, secret, command, false)?;
     let child = spawn_child(&inv)?;
 
     let output = match timeout(duration, child.wait_with_output()).await {
@@ -228,6 +284,28 @@ pub async fn run_readonly_streamed(
     duration: Duration,
     on_line: &(dyn Fn(&str, bool) + Sync + Send),
 ) -> AppResult<CommandExecution> {
+    // 不可取消的兼容入口：传入一个永远不会被唤醒的 Notify，因此结果必然是
+    // `Some`（取消是唯一会产生 `None` 的分支）。
+    let never = Notify::new();
+    let res =
+        run_readonly_streamed_cancellable(server, secret, command, duration, on_line, &never)
+            .await?;
+    res.ok_or_else(|| AppError::Ssh("stream ended unexpectedly".into()))
+}
+
+/// [`run_readonly_streamed`] 的可取消版本。除了多一个 `cancel` 参数外行为完全一致：
+/// 流式循环在读取每一行的同时还 select `cancel.notified()`。一旦被唤醒就跳出循环
+/// 并返回 `Ok(None)` 表示「被用户取消」（不是错误——调用方应把已产生的部分照常
+/// 落库/审计）。函数返回时 `inv` 离开作用域，其子进程被 drop，kill_on_drop 杀掉
+/// 本地 ssh；配合 `-tt` 强制的 tty，远端命令也会随之收到 SIGHUP。
+pub async fn run_readonly_streamed_cancellable(
+    server: &ServerProfile,
+    secret: Option<&str>,
+    command: &str,
+    duration: Duration,
+    on_line: &(dyn Fn(&str, bool) + Sync + Send),
+    cancel: &Notify,
+) -> AppResult<Option<CommandExecution>> {
     // 与 run_readonly 相同的安全闸门：只有检查类命令才能流式执行。
     if classify_command(command).level != RiskLevel::Low {
         return Err(AppError::Blocked(format!(
@@ -238,78 +316,12 @@ pub async fn run_readonly_streamed(
     let started_at = crate::core::types::now();
     let start = Instant::now();
 
-    // `inv` 在整个调用生命周期内持有密钥文件（如果有）。
-    let inv = build_invocation(server, secret, command)?;
-    let mut child = spawn_child(&inv)?;
+    // `inv` 在整个调用生命周期内持有密钥文件（如果有）。强制分配 tty，使本地 ssh
+    // 被杀时远端命令能随之终止。
+    let inv = build_invocation(server, secret, command, true)?;
+    let child = spawn_child(&inv)?;
 
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| AppError::Ssh("failed to capture ssh stdout".into()))?;
-    let stderr = child
-        .stderr
-        .take()
-        .ok_or_else(|| AppError::Ssh("failed to capture ssh stderr".into()))?;
-
-    // 并发读取两个流，通过回调转发每一条脱敏后的行，同时累积完整输出。
-    let mut in_key_block = false;
-    let stream = async {
-        let mut out_reader = BufReader::new(stdout).lines();
-        let mut err_reader = BufReader::new(stderr).lines();
-        let mut out_buf = String::new();
-        let mut err_buf = String::new();
-        let mut out_done = false;
-        let mut err_done = false;
-        while !out_done || !err_done {
-            tokio::select! {
-                line = out_reader.next_line(), if !out_done => match line {
-                    Ok(Some(line)) => {
-                        // 实时回调拿到的是按行（行内范围）脱敏的结果，用于临时展示；
-                        // 存储的缓冲区保留原始行，以便最后做一次整缓冲区脱敏
-                        //（私钥等跨行的敏感信息只有跨行才能匹配——见 core::sanitize）。
-                        if let Some(t) = redact_live_line(&line, &mut in_key_block) { on_line(&t, false); }
-                        out_buf.push_str(&line);
-                        out_buf.push('\n');
-                    }
-                    Ok(None) => out_done = true,
-                    Err(e) => return Err(AppError::Ssh(e.to_string())),
-                },
-                line = err_reader.next_line(), if !err_done => match line {
-                    Ok(Some(line)) => {
-                        if let Some(t) = redact_live_line(&line, &mut in_key_block) { on_line(&t, true); }
-                        err_buf.push_str(&line);
-                        err_buf.push('\n');
-                    }
-                    Ok(None) => err_done = true,
-                    Err(e) => return Err(AppError::Ssh(e.to_string())),
-                },
-            }
-        }
-        let status = child.wait().await.map_err(|e| AppError::Ssh(e.to_string()))?;
-        Ok::<_, AppError>((status, out_buf, err_buf))
-    };
-
-    let (status, out_buf, err_buf) = match timeout(duration, stream).await {
-        Ok(res) => res?,
-        Err(_) => {
-            // `inv`（及其密钥文件）在返回时 drop；kill_on_drop 会回收子进程。
-            return Err(AppError::Ssh(format!(
-                "command timed out after {}s",
-                duration.as_secs()
-            )));
-        }
-    };
-
-    Ok(CommandExecution {
-        command: command.to_string(),
-        exit_code: status.code().unwrap_or(-1),
-        // 对整个累积缓冲区做一次脱敏（与 run_command 一致），确保跨行的敏感
-        // 信息在输出被存储/审计前已被脱敏。上面的按行回调只对实时流做了弱脱敏。
-        stdout: sanitize(out_buf.trim_end_matches('\n')),
-        stderr: sanitize(err_buf.trim_end_matches('\n')),
-        duration_ms: start.elapsed().as_millis() as u64,
-        started_at,
-    })
+    stream_child(child, command, started_at, start, duration, on_line, cancel).await
 }
 
 /// [`run_command`] 的流式版本：执行**已确认**的步骤（包括写操作），并在每一行
@@ -325,13 +337,55 @@ pub async fn run_command_streamed(
     duration: Duration,
     on_line: &(dyn Fn(&str, bool) + Sync + Send),
 ) -> AppResult<CommandExecution> {
+    // 不可取消的兼容入口：传入一个永远不会被唤醒的 Notify，因此结果必然是 `Some`。
+    let never = Notify::new();
+    let res =
+        run_command_streamed_cancellable(server, secret, command, duration, on_line, &never)
+            .await?;
+    res.ok_or_else(|| AppError::Ssh("stream ended unexpectedly".into()))
+}
+
+/// [`run_command_streamed`] 的可取消版本——见 [`run_readonly_streamed_cancellable`]
+/// 的取消语义（取消返回 `Ok(None)`）。同样没有 `Low` 等级闸门（确认 / 二次确认
+/// 已由调用方强制执行）。
+pub async fn run_command_streamed_cancellable(
+    server: &ServerProfile,
+    secret: Option<&str>,
+    command: &str,
+    duration: Duration,
+    on_line: &(dyn Fn(&str, bool) + Sync + Send),
+    cancel: &Notify,
+) -> AppResult<Option<CommandExecution>> {
     let started_at = crate::core::types::now();
     let start = Instant::now();
 
-    // `inv` 在整个调用生命周期内持有密钥文件（如果有）。
-    let inv = build_invocation(server, secret, command)?;
-    let mut child = spawn_child(&inv)?;
+    // `inv` 在整个调用生命周期内持有密钥文件（如果有）。强制分配 tty，使本地 ssh
+    // 被杀时远端命令能随之终止。
+    let inv = build_invocation(server, secret, command, true)?;
+    let child = spawn_child(&inv)?;
 
+    stream_child(child, command, started_at, start, duration, on_line, cancel).await
+}
+
+/// 流式执行的共享核心：并发按行读取子进程的 stdout/stderr，通过 `on_line` 转发
+/// 每一条脱敏后的行并累积完整输出，同时受超时与 `cancel` 约束。
+///
+/// 三种结束方式：
+/// - 正常结束：两个流都读完，等待子进程退出并返回 `Ok(Some(execution))`；
+/// - 超时：返回 `Ssh` 错误（沿用既有文案）；
+/// - 取消：`cancel` 被唤醒，返回 `Ok(None)`（不是错误，调用方照常处理已产生的部分）。
+///
+/// 后两种情况下 `child` 随函数返回而 drop，kill_on_drop 杀掉本地 ssh；配合 `-tt`
+/// 强制的 tty，远端命令也会收到 SIGHUP。
+async fn stream_child(
+    mut child: tokio::process::Child,
+    command: &str,
+    started_at: chrono::DateTime<chrono::Utc>,
+    start: Instant,
+    duration: Duration,
+    on_line: &(dyn Fn(&str, bool) + Sync + Send),
+    cancel: &Notify,
+) -> AppResult<Option<CommandExecution>> {
     let stdout = child
         .stdout
         .take()
@@ -342,6 +396,7 @@ pub async fn run_command_streamed(
         .ok_or_else(|| AppError::Ssh("failed to capture ssh stderr".into()))?;
 
     // 并发读取两个流，通过回调转发每一条脱敏后的行，同时累积完整输出。
+    // 内层 future 返回 `Ok(None)` 表示被取消，`Ok(Some(..))` 表示正常读完。
     let mut in_key_block = false;
     let stream = async {
         let mut out_reader = BufReader::new(stdout).lines();
@@ -352,13 +407,19 @@ pub async fn run_command_streamed(
         let mut err_done = false;
         while !out_done || !err_done {
             tokio::select! {
+                // 取消优先：被唤醒后返回 None，让上层把它当作「正常取消」处理。
+                _ = cancel.notified() => {
+                    return Ok::<_, AppError>(None);
+                }
                 line = out_reader.next_line(), if !out_done => match line {
                     Ok(Some(line)) => {
+                        // 因为加了 `-tt`（tty），行尾可能多出 \r；按行展示前去掉它。
+                        let line = line.strip_suffix('\r').unwrap_or(&line);
                         // 实时回调拿到的是按行（行内范围）脱敏的结果，用于临时展示；
                         // 存储的缓冲区保留原始行，以便最后做一次整缓冲区脱敏
                         //（私钥等跨行的敏感信息只有跨行才能匹配——见 core::sanitize）。
-                        if let Some(t) = redact_live_line(&line, &mut in_key_block) { on_line(&t, false); }
-                        out_buf.push_str(&line);
+                        if let Some(t) = redact_live_line(line, &mut in_key_block) { on_line(&t, false); }
+                        out_buf.push_str(line);
                         out_buf.push('\n');
                     }
                     Ok(None) => out_done = true,
@@ -366,8 +427,9 @@ pub async fn run_command_streamed(
                 },
                 line = err_reader.next_line(), if !err_done => match line {
                     Ok(Some(line)) => {
-                        if let Some(t) = redact_live_line(&line, &mut in_key_block) { on_line(&t, true); }
-                        err_buf.push_str(&line);
+                        let line = line.strip_suffix('\r').unwrap_or(&line);
+                        if let Some(t) = redact_live_line(line, &mut in_key_block) { on_line(&t, true); }
+                        err_buf.push_str(line);
                         err_buf.push('\n');
                     }
                     Ok(None) => err_done = true,
@@ -376,13 +438,18 @@ pub async fn run_command_streamed(
             }
         }
         let status = child.wait().await.map_err(|e| AppError::Ssh(e.to_string()))?;
-        Ok::<_, AppError>((status, out_buf, err_buf))
+        Ok::<_, AppError>(Some((status, out_buf, err_buf)))
     };
 
     let (status, out_buf, err_buf) = match timeout(duration, stream).await {
-        Ok(res) => res?,
+        // 正常读完。
+        Ok(Ok(Some(triple))) => triple,
+        // 被取消：返回 None，`child` 随之 drop 被杀。
+        Ok(Ok(None)) => return Ok(None),
+        // 流式读取过程中出错。
+        Ok(Err(e)) => return Err(e),
         Err(_) => {
-            // `inv`（及其密钥文件）在返回时 drop；kill_on_drop 会回收子进程。
+            // `child` 在返回时 drop；kill_on_drop 会回收子进程。
             return Err(AppError::Ssh(format!(
                 "command timed out after {}s",
                 duration.as_secs()
@@ -390,7 +457,7 @@ pub async fn run_command_streamed(
         }
     };
 
-    Ok(CommandExecution {
+    Ok(Some(CommandExecution {
         command: command.to_string(),
         exit_code: status.code().unwrap_or(-1),
         // 对整个累积缓冲区做一次脱敏（与 run_command 一致），确保跨行的敏感
@@ -399,7 +466,7 @@ pub async fn run_command_streamed(
         stderr: sanitize(err_buf.trim_end_matches('\n')),
         duration_ms: start.elapsed().as_millis() as u64,
         started_at,
-    })
+    }))
 }
 
 /// 连通性 + 认证探测。当一条简单的远程命令执行成功时返回 Ok(true)。

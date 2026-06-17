@@ -14,6 +14,7 @@ import EditServerDialog from "./EditServerDialog";
 import SettingsPanel from "./SettingsPanel";
 import {
   isTauri,
+  cancelRun,
   checkSshConnection,
   createPlan,
   reviewPlan,
@@ -307,6 +308,8 @@ export default function CodexConsole() {
   const [confirmReview, setConfirmReview] = useState<RiskReview | null>(null);
   // 单调递增的运行标识：每次发起新操作就自增，用于丢弃切换上下文后过期的异步回调。
   const runIdRef = useRef(0);
+  // 当前流式任务的后端取消句柄（doctor/计划执行），供「停止」真正中断远端命令。
+  const cancelIdRef = useRef("");
   // 轻量通知（错误/成功提示），替代仅在终端里报错。
   const { toasts, push, dismiss } = useToasts();
 
@@ -459,6 +462,8 @@ export default function CodexConsole() {
     await refreshTasks();
     const lines: TerminalLine[] = [{ text: `正在体检 ${selected?.name ?? ""} …`, tone: "muted" }];
     setTermLines([...lines]);
+    const cancelId = newId();
+    cancelIdRef.current = cancelId;
     try {
       const report = await runServerDoctorStream(selectedServerId, (ev) => {
         if (runIdRef.current !== myId) return;
@@ -471,7 +476,7 @@ export default function CodexConsole() {
           lines.push({ text: `⚠ ${ev.message}`, tone: "danger" });
         }
         setTermLines([...lines]);
-      });
+      }, cancelId);
       if (runIdRef.current !== myId) return;
       const failed = report.executions.filter((e) => e.exitCode !== 0).length;
       const ok = failed === 0;
@@ -524,8 +529,10 @@ export default function CodexConsole() {
     setStepStatus(plan.steps.map(() => "pending"));
     const lines: TerminalLine[] = [{ text: "执行中…", tone: "muted" }];
     setTermLines([...lines]);
+    const cancelId = newId();
+    cancelIdRef.current = cancelId;
     try {
-      const rec = await runConfirmedPlanStream(plan, { confirmed, doubleConfirmed, readOnlyMode }, (ev) => {
+      const rec = await runConfirmedPlanStream(plan, { confirmed, doubleConfirmed, readOnlyMode, runId: cancelId }, (ev) => {
         if (runIdRef.current !== myId) return;
         if (ev.type === "step") {
           setStepStatus((prev) => { const n = [...prev]; n[ev.index] = ev.status === "running" ? "running" : ev.status; return n; });
@@ -558,6 +565,7 @@ export default function CodexConsole() {
   // 停止当前运行：作废进行中的回调，并把仍在运行的步骤回退为待执行。
   function stop() {
     runIdRef.current += 1;
+    if (cancelIdRef.current) { cancelRun(cancelIdRef.current); cancelIdRef.current = ""; } // 真正中断远端命令
     setRunning(false);
     setStepStatus((prev) => prev.map((s) => (s === "running" ? "pending" : s)));
   }

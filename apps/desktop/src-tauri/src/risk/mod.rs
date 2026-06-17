@@ -26,16 +26,96 @@ fn contains(haystack: &str, needle: &str) -> bool {
     haystack.contains(needle)
 }
 
-/// 取命令的首个 token（跳过 `sudo` 前缀）作为「实际执行的命令名」。
-/// 用于按命令名匹配危险命令，避免误伤把关键字出现在参数 / grep 模式 / 管道里的只读命令。
-fn head_command(cmd: &str) -> &str {
-    let tokens: Vec<&str> = cmd.split_whitespace().collect();
-    let first = tokens.first().copied().unwrap_or("");
-    if first == "sudo" {
-        tokens.get(1).copied().unwrap_or("")
-    } else {
-        first
+/// 从单个管道段中提取「实际执行的命令名」：
+/// 跳过 `sudo` 前缀与 `VAR=value` 形式的环境变量赋值前缀，返回剩下的首个 token。
+/// 例如 `sudo FOO=1 mkfs.ext4 /dev/sdb` -> `mkfs.ext4`；`echo hi` -> `echo`。
+fn segment_head(segment: &str) -> &str {
+    for tok in segment.split_whitespace() {
+        // 跳过 sudo（提权前缀，真正执行的命令在其后）。
+        if tok == "sudo" {
+            continue;
+        }
+        // 跳过 `env`（`env VAR=v cmd` 同样会改写环境后执行 cmd）。
+        if tok == "env" {
+            continue;
+        }
+        // 跳过 `VAR=value` 形式的环境变量赋值前缀（不含 `/`，避免误吞路径；等号在首字符之后）。
+        if let Some(eq) = tok.find('=') {
+            if eq > 0 && !tok[..eq].contains('/') {
+                continue;
+            }
+        }
+        return tok;
     }
+    ""
+}
+
+/// 把命令按管道/逻辑/顺序分隔符（`|`、`&&`、`||`、`;`）切成段，
+/// 返回每段「被执行命令名」的集合（已跳过 sudo / env / VAR= 前缀）。
+///
+/// 这是健壮命令名匹配的核心：只看「段首命令」，因此
+/// `grep mkfs log`、`echo "rm -rf /"`、`history | grep 'drop database'`
+/// 不会因关键字出现在参数 / 引号 / grep 模式里而被误判。
+fn command_heads(cmd: &str) -> Vec<String> {
+    // 先把所有分隔符统一替换为换行，再逐段取首命令。
+    // 注意：`&&` 含 `&`、`||` 含 `|`，统一替换为换行后单字符 `&`/`;` 同样被切开，
+    // 对「取段首命令」而言粒度足够（不需要区分逻辑与管道）。
+    let unified = cmd
+        .replace("&&", "\n")
+        .replace("||", "\n")
+        .replace('|', "\n")
+        .replace('&', "\n")
+        .replace(';', "\n");
+    unified
+        .split('\n')
+        .map(|seg| segment_head(seg).to_string())
+        .filter(|h| !h.is_empty())
+        .collect()
+}
+
+/// 判断 `cmd` 的任一管道段是否以命令名 `name` 执行：
+/// 段首命令等于 `name`，或以 `name.` 开头（覆盖 `mkfs.ext4`、`mkfs.xfs` 这类带后缀的命令族）。
+fn invokes(cmd: &str, name: &str) -> bool {
+    let prefix = format!("{name}.");
+    command_heads(cmd)
+        .iter()
+        .any(|h| h.as_str() == name || h.starts_with(&prefix))
+}
+
+/// 判断 `cmd` 是否执行了给定集合中的任意一个命令名（语义同 [`invokes`]，批量版）。
+fn invokes_any(cmd: &str, names: &[&str]) -> bool {
+    names.iter().any(|n| invokes(cmd, n))
+}
+
+/// 判断这条命令「看起来是在执行 SQL」：
+/// - 任一段首命令是数据库客户端（psql/mysql/mariadb/sqlite3 等）；或
+/// - 命令含 `-c` / `-e`（客户端内联执行语句的常见标志）；或
+/// - 命令引用了 `.sql` 脚本文件。
+/// 仅在该上下文下才对 DROP/TRUNCATE/DELETE 等 SQL 危险语句判级，
+/// 避免 `grep 'drop database' app.log` 这类只读命令被误升级。
+fn looks_like_sql_context(cmd: &str) -> bool {
+    const SQL_CLIENTS: &[&str] = &[
+        "psql", "mysql", "mariadb", "sqlite3", "mysqladmin", "mongo", "mongosh", "clickhouse-client",
+    ];
+    if invokes_any(cmd, SQL_CLIENTS) {
+        return true;
+    }
+    // `-c "SQL"` / `-e "SQL"` 作为独立 token 出现（客户端内联执行）。
+    let inline_flag = cmd
+        .split_whitespace()
+        .any(|t| matches!(t, "-c" | "-e" | "--command" | "--execute"));
+    if inline_flag {
+        return true;
+    }
+    // 引用 .sql 脚本（`< dump.sql`、`-f schema.sql` 等）。
+    if cmd.split_whitespace().any(|t| t.trim_matches(|ch| ch == '"' || ch == '\'').ends_with(".sql")) {
+        return true;
+    }
+    // 命令本身就是一条裸 SQL 语句：某段的首 token 即 SQL 关键字（drop/truncate/delete/insert/update/create/alter）。
+    // 这覆盖计划步骤直接把 SQL 当命令的情况（如 `DROP DATABASE production;`），
+    // 同时把 grep/echo 把 SQL 文本当参数的情况排除在外（它们的段首是 grep/echo）。
+    const SQL_KEYWORDS: &[&str] = &["drop", "truncate", "delete", "insert", "update", "create", "alter"];
+    command_heads(cmd).iter().any(|h| SQL_KEYWORDS.contains(&h.as_str()))
 }
 
 /// 一旦被递归删除/格式化便会造成灾难性后果的顶层系统路径。
@@ -70,8 +150,10 @@ fn is_firewall_readonly(cmd: &str) -> bool {
 }
 
 /// 判断命令是否通过重定向/tee/sed -i 向给定路径前缀写入。
+/// 注意：tee 必须是「被执行的命令」（段首），不能用裸子串——否则
+/// `grep tee /etc/profile` 这类把 tee 当参数的只读命令会被误判为写入。
 fn writes_to(cmd: &str, path_prefixes: &[&str]) -> bool {
-    let redirect = contains(cmd, ">") || contains(cmd, "tee ") || contains(cmd, "sed -i") ;
+    let redirect = contains(cmd, ">") || invokes(cmd, "tee") || contains(cmd, "sed -i");
     redirect && path_prefixes.iter().any(|p| contains(cmd, p))
 }
 
@@ -85,7 +167,10 @@ pub fn classify_command(command: &str) -> Classification {
     };
 
     // ---- Blocked：默认禁止 --------------------------------
-    if contains(&c, "rm ") && (contains(&c, "-rf") || contains(&c, "-fr") || (contains(&c, "-r") && contains(&c, "-f")))
+    // 递归删除系统根路径：仅当某段确实在执行 `rm`、带递归/强制标志、且目标是系统根路径时拦截。
+    // 用 invokes 确保 `echo "rm -rf /"` 这类把命令文本放进引号/参数的情况不被误判。
+    if invokes(&c, "rm")
+        && (contains(&c, "-rf") || contains(&c, "-fr") || (contains(&c, "-r") && contains(&c, "-f")))
         && rm_targets_system_root(&c)
     {
         return mk(RiskLevel::Blocked, "delete", "recursive delete of a system root path");
@@ -93,56 +178,65 @@ pub fn classify_command(command: &str) -> Classification {
     if contains(&c, ":(){") || contains(&c, ":|:&") {
         return mk(RiskLevel::Blocked, "fork-bomb", "shell fork bomb");
     }
-    if contains(&c, "dd ") && contains(&c, "of=/dev/") {
+    // dd 直写块设备：必须是 dd 在执行（而非把 `of=/dev/...` 当作 grep 模式/参数）。
+    if invokes(&c, "dd") && contains(&c, "of=/dev/") {
         return mk(RiskLevel::Blocked, "disk", "dd writing directly to a block device");
     }
     if contains(&c, "> /dev/sd") || contains(&c, "> /dev/nvme") || contains(&c, "> /dev/vd") {
         return mk(RiskLevel::Blocked, "disk", "overwriting a raw disk device");
     }
-    if contains(&c, "mkfs") && (contains(&c, "/dev/sda") || contains(&c, "/dev/vda") || contains(&c, "/dev/nvme0n1")) {
+    // 格式化系统盘：必须是 mkfs（含 mkfs.ext4 等）在执行，且目标为系统盘设备。
+    if invokes(&c, "mkfs") && (contains(&c, "/dev/sda") || contains(&c, "/dev/vda") || contains(&c, "/dev/nvme0n1")) {
         return mk(RiskLevel::Blocked, "disk", "formatting a system disk");
     }
-    if contains(&c, "drop database") {
+    // 删除数据库：仅在 SQL 执行上下文里出现 `drop database` 才拦截，
+    // 避免 `grep 'drop database' app.log` / `history | grep 'drop database'` 被误升级。
+    if contains(&c, "drop database") && looks_like_sql_context(&c) {
         return mk(RiskLevel::Blocked, "database", "dropping a database");
     }
-    if (contains(&c, "systemctl") || contains(&c, "service "))
+    // 停用 / 停止 / 屏蔽 SSH 服务会锁死远程登录入口，默认禁止。
+    // 仅当某段确实在执行 systemctl/service 时判定，避免命令文本里「提到」ssh 被误判。
+    if invokes_any(&c, &["systemctl", "service"])
         && (contains(&c, "disable") || contains(&c, "stop") || contains(&c, "mask"))
         && (contains(&c, "ssh") || contains(&c, "sshd"))
     {
         return mk(RiskLevel::Blocked, "ssh-lockout", "disabling or stopping the SSH service");
     }
     // 关机 / 重启 / 停机会直接中断服务且无远程恢复手段，默认禁止。
-    // 用单词边界式匹配（前后带空格或位于命令开头），避免误伤 `systemctl reboot` 之外的子串。
+    // 按「任一段首命令」匹配，避免 `echo shutdown` / `grep reboot log` 被误判。
     {
-        // 取命令的首个 token（可能带 sudo 前缀），用于匹配 shutdown/reboot 等独立命令。
-        let tokens: Vec<&str> = c.split_whitespace().collect();
-        let first = tokens.first().copied().unwrap_or("");
-        let second = tokens.get(1).copied().unwrap_or("");
-        // 跳过 sudo 前缀后的真实命令名。
-        let head = if first == "sudo" { second } else { first };
         let halt_cmds = ["shutdown", "reboot", "halt", "poweroff"];
         // `shutdown -c` 取消已计划的关机，是无害操作，不拦截（交由后续归类，通常 Low）。
-        let is_cancel = head == "shutdown" && tokens.iter().any(|t| *t == "-c");
-        if halt_cmds.contains(&head) && !is_cancel {
+        let is_cancel = invokes(&c, "shutdown") && c.split_whitespace().any(|t| t == "-c");
+        if invokes_any(&c, &halt_cmds) && !is_cancel {
             return mk(RiskLevel::Blocked, "shutdown", "system shutdown/reboot/halt");
         }
-        // `init 0`（关机）/ `init 6`（重启）。
-        if head == "init" && (contains(&c, "init 0") || contains(&c, "init 6")) {
-            return mk(RiskLevel::Blocked, "shutdown", "init 0/6 halts or reboots the system");
+        // `init 0`（关机）/ `init 6`（重启）：必须是 init 在执行且参数为 0/6。
+        if invokes(&c, "init") {
+            let toks: Vec<&str> = c.split_whitespace().collect();
+            if toks.iter().any(|t| *t == "0" || *t == "6") {
+                return mk(RiskLevel::Blocked, "shutdown", "init 0/6 halts or reboots the system");
+            }
         }
     }
     // shred / wipefs 作用于块设备会不可逆地销毁磁盘数据，默认禁止。
-    if (contains(&c, "shred") || contains(&c, "wipefs")) && contains(&c, "/dev/") {
+    // 必须是 shred/wipefs 在执行，避免 `grep wipefs /dev/null` 这类误判。
+    if invokes_any(&c, &["shred", "wipefs"]) && contains(&c, "/dev/") {
         return mk(RiskLevel::Blocked, "disk", "shred/wipefs destroying a disk device");
     }
     // 杀死 PID 1（init/systemd）会使系统瘫痪，默认禁止。
-    // 用按 token 精确匹配避免误伤 `kill 12345`（"kill 1" 是其子串）这类正常用法。
-    if contains(&c, "kill") {
-        let tokens: Vec<&str> = c.split_whitespace().collect();
-        // 任一裸参数恰为 "1"（目标 PID），且命令是 kill 系列，即视为杀死 PID 1。
-        let head_is_kill = tokens.first().map(|t| *t == "kill" || *t == "sudo").unwrap_or(false)
-            && (contains(&c, "kill"));
-        if head_is_kill && tokens.iter().any(|t| *t == "1") {
+    // 仅当某段确实在执行 kill 系列、且有裸参数恰为 "1" 时判定，避免 `kill 12345` 误判。
+    if invokes_any(&c, &["kill", "pkill", "killall"]) {
+        // 在 kill 命令族里查找「目标 PID 恰为 1」的段；pkill/killall 以名字匹配进程，不在此列。
+        let kill_pid1 = c
+            .replace("&&", "\n")
+            .replace("||", "\n")
+            .replace('|', "\n")
+            .replace('&', "\n")
+            .replace(';', "\n")
+            .split('\n')
+            .any(|seg| segment_head(seg) == "kill" && seg.split_whitespace().any(|t| t == "1"));
+        if kill_pid1 {
             return mk(RiskLevel::Blocked, "process", "killing PID 1 (init/systemd)");
         }
     }
@@ -153,72 +247,89 @@ pub fn classify_command(command: &str) -> Classification {
     }
 
     // ---- High：数据丢失 / 服务中断 / 安全边界变更 ----------
-    if contains(&c, "find ") && contains(&c, "-delete") {
+    // find -delete 删除文件：必须是 find 在执行且带 -delete 标志。
+    if invokes(&c, "find") && c.split_whitespace().any(|t| t == "-delete") {
         return mk(RiskLevel::High, "delete", "find -delete removes files");
     }
-    if contains(&c, "rm ") && (contains(&c, "-r") || contains(&c, "-f")) {
+    // 递归/强制删除：必须是 rm 在执行（非系统根，否则上面已 Blocked）。
+    if invokes(&c, "rm") && (contains(&c, "-r") || contains(&c, "-f")) {
         return mk(RiskLevel::High, "delete", "recursive/forced file deletion");
     }
-    if contains(&c, "chmod -r") || contains(&c, "chown -r") {
+    // 递归改权限/属主：必须是 chmod/chown 在执行，且递归标志（-R/-r/--recursive）作为独立 token 出现。
+    if invokes_any(&c, &["chmod", "chown"])
+        && c.split_whitespace().any(|t| matches!(t, "-r" | "-R" | "--recursive"))
+    {
         return mk(RiskLevel::High, "permissions", "recursive ownership/permission change");
     }
-    if contains(&c, "mkfs") || contains(&c, "fdisk") || contains(&c, "parted") {
+    // 磁盘分区/格式化工具：必须是 mkfs（含 mkfs.*）/fdisk/parted 在执行。
+    if invokes(&c, "mkfs") || invokes_any(&c, &["fdisk", "parted", "sfdisk", "gdisk", "cfdisk"]) {
         return mk(RiskLevel::High, "disk", "disk partitioning/formatting tool");
     }
-    if (contains(&c, "iptables") || contains(&c, "ufw") || contains(&c, "firewall-cmd") || head_command(&c) == "nft")
-        && !is_firewall_readonly(&c)
-    {
+    // 修改防火墙规则：必须是 iptables/ip6tables/ufw/firewall-cmd/nft 在执行，且非只读查询。
+    if invokes_any(&c, &["iptables", "ip6tables", "ufw", "firewall-cmd", "nft"]) && !is_firewall_readonly(&c) {
         return mk(RiskLevel::High, "firewall", "modifies firewall rules");
     }
-    if contains(&c, "sshd_config") && (contains(&c, ">") || contains(&c, "tee ") || contains(&c, "sed -i") || contains(&c, "vi ") || contains(&c, "vim ") || contains(&c, "emacs ") || contains(&c, "nano ")) {
+    // 编辑 SSH 服务端配置：内容型检测（重定向/tee/sed -i），或某段确实在用编辑器打开。
+    // 用 invokes 限定编辑器，避免 `grep vim /etc/ssh/sshd_config` 把只读 grep 误判。
+    if contains(&c, "sshd_config")
+        && (contains(&c, ">") || contains(&c, "tee ") || contains(&c, "sed -i")
+            || invokes_any(&c, &["vi", "vim", "nvim", "emacs", "nano"]))
+    {
         return mk(RiskLevel::High, "ssh-config", "edits the SSH server config");
     }
     if writes_to(&c, &["/etc/nginx", "/etc/caddy", "/etc/apache2"]) {
         return mk(RiskLevel::High, "proxy-config", "overwrites a web server / proxy config");
     }
-    if contains(&c, "truncate") || contains(&c, "drop table") || contains(&c, "delete from") {
+    // SQL 破坏性语句（DROP TABLE / TRUNCATE / DELETE FROM）：仅在 SQL 执行上下文里判定，
+    // 避免 `grep 'drop table' app.log`、`echo "delete from users"` 等只读/无害命令被误升级。
+    if (contains(&c, "drop table") || contains(&c, "truncate table") || contains(&c, "delete from"))
+        && looks_like_sql_context(&c)
+    {
         return mk(RiskLevel::High, "database", "destructive database statement");
     }
+    // 把下载脚本管入 shell：内容型检测（保持原样，看的是 `| sh` / `| bash` 这一管道动作）。
     if (contains(&c, "curl") || contains(&c, "wget")) && (contains(&c, "| sh") || contains(&c, "| bash") || contains(&c, "|sh") || contains(&c, "|bash")) {
         return mk(RiskLevel::High, "remote-script", "pipes a downloaded script into a shell");
     }
-    // 删除 SSH 的 authorized_keys 会导致基于密钥的登录失效（可能锁死自己）。
+    // 删除/覆盖 SSH 的 authorized_keys 会导致基于密钥的登录失效（可能锁死自己）。
+    // 内容型检测：看的是「针对 authorized_keys 的删除/写入动作」（rm/重定向/tee/truncate/sed -i）。
     // 放在通用系统写入之前，确保即便只是普通 rm 也能被识别为 High。
     if contains(&c, "authorized_keys")
-        && (contains(&c, "rm ") || contains(&c, ">") || contains(&c, "truncate") || contains(&c, "tee ") || contains(&c, "sed -i"))
+        && (invokes(&c, "rm") || contains(&c, ">") || invokes(&c, "truncate") || contains(&c, "tee ") || contains(&c, "sed -i"))
     {
         return mk(RiskLevel::High, "ssh-keys", "removing/overwriting SSH authorized_keys");
     }
     // ufw disable 会整体关闭防火墙；iptables -F / nft flush 会清空规则。
-    // 通用防火墙检查（下方）已能覆盖，这里显式标注语义更清晰的发现。
-    if (contains(&c, "ufw disable"))
-        || (contains(&c, "iptables") && contains(&c, "-f"))
-        || (contains(&c, "nft") && contains(&c, "flush"))
+    // 必须是对应工具在执行（上方通用防火墙检查多数已覆盖，这里给出语义更清晰的发现）。
+    if (invokes(&c, "ufw") && contains(&c, "disable"))
+        || (invokes_any(&c, &["iptables", "ip6tables"]) && c.split_whitespace().any(|t| matches!(t, "-f" | "--flush")))
+        || (invokes(&c, "nft") && contains(&c, "flush"))
     {
         return mk(RiskLevel::High, "firewall", "flushing/disabling the firewall");
     }
     // 软件包卸载/清除可能移除依赖、删除配置，属于不可轻易恢复的变更。
-    let removes = ["apt remove", "apt purge", "apt-get remove", "apt-get purge", "yum remove", "dnf remove", "apk del", "zypper remove", "pacman -r"];
-    if removes.iter().any(|p| contains(&c, p)) {
+    // 必须是对应包管理器在执行，且子命令为 remove/purge/del 等。
+    if (invokes_any(&c, &["apt", "apt-get"]) && (contains(&c, "remove") || contains(&c, "purge")))
+        || (invokes_any(&c, &["yum", "dnf", "zypper"]) && contains(&c, "remove"))
+        || (invokes(&c, "apk") && contains(&c, "del"))
+        || (invokes(&c, "pacman") && c.split_whitespace().any(|t| matches!(t, "-r" | "-rs" | "-rns" | "-rsn" | "--remove")))
+    {
         return mk(RiskLevel::High, "package-remove", "removes/purges software packages");
     }
     // 账户变更：删除用户、修改用户、改密码，均涉及登录与权限边界。
-    // 注意：只匹配命令名 passwd，避免误伤读取 /etc/passwd 的命令。
-    {
-        let tokens: Vec<&str> = c.split_whitespace().collect();
-        let first = tokens.first().copied().unwrap_or("");
-        let second = tokens.get(1).copied().unwrap_or("");
-        let head = if first == "sudo" { second } else { first };
-        if head == "userdel" || head == "usermod" || head == "passwd" {
-            return mk(RiskLevel::High, "account", "user account/password change");
-        }
+    // 用段首命令匹配，避免误伤读取 /etc/passwd 或把 userdel 当 grep 模式的命令。
+    if invokes_any(&c, &["userdel", "usermod", "passwd"]) {
+        return mk(RiskLevel::High, "account", "user account/password change");
     }
-    // crontab -r 会删除整个用户的定时任务表，不可恢复。
-    if contains(&c, "crontab") && contains(&c, "-r") && !contains(&c, "-l") {
+    // crontab -r 会删除整个用户的定时任务表，不可恢复。必须是 crontab 在执行。
+    if invokes(&c, "crontab")
+        && c.split_whitespace().any(|t| t == "-r")
+        && !c.split_whitespace().any(|t| t == "-l")
+    {
         return mk(RiskLevel::High, "cron", "crontab -r removes all cron jobs");
     }
-    // 将文件截断为 0 字节：truncate -s 0 或 `: > file` / `> file`（清空已有文件）。
-    if (contains(&c, "truncate") && (contains(&c, "-s 0") || contains(&c, "--size 0") || contains(&c, "-s0")))
+    // 将文件截断为 0 字节：truncate -s 0（必须是 truncate 在执行）或 `: > file` / `> file`（清空已有文件）。
+    if (invokes(&c, "truncate") && (contains(&c, "-s 0") || contains(&c, "--size 0") || contains(&c, "-s0")))
         || contains(&c, ": >")
         || contains(&c, ":>")
     {
@@ -226,13 +337,13 @@ pub fn classify_command(command: &str) -> Classification {
     }
     // chattr 可设置不可变/只追加等属性，可能锁死文件或绕过常规保护。
     // 仅当 chattr 是实际执行的命令时拦截，避免误伤把它当作 grep 模式/参数的只读命令。
-    if head_command(&c) == "chattr" {
+    if invokes(&c, "chattr") {
         return mk(RiskLevel::High, "attributes", "changes file attributes (chattr)");
     }
     // sysctl -w/-p 会在运行时改写/加载内核参数（影响网络、内存、安全策略）。
     // 仅当 sysctl 是实际执行的命令、且写/加载标志作为独立 token 出现时才拦截，
     // 避免 `-p` 子串误伤只读长选项（如 `--pattern`），读取类 sysctl 保持 Low。
-    if head_command(&c) == "sysctl" {
+    if invokes(&c, "sysctl") {
         let toks: Vec<&str> = c.split_whitespace().collect();
         if toks.iter().any(|t| matches!(*t, "-w" | "--write" | "-p" | "--load")) {
             return mk(RiskLevel::High, "kernel-param", "writes/loads a kernel parameter (sysctl -w/-p)");
@@ -240,7 +351,7 @@ pub fn classify_command(command: &str) -> Classification {
     }
     // mkswap 会在分区/文件上写入交换签名，破坏原有内容。
     // 仅当 mkswap 是实际执行的命令时拦截，避免误伤 `ps aux | grep mkswap` 这类只读命令。
-    if head_command(&c) == "mkswap" {
+    if invokes(&c, "mkswap") {
         return mk(RiskLevel::High, "disk", "mkswap writes a swap signature");
     }
     if writes_to(&c, &["/etc", "/usr", "/boot"]) {
@@ -250,44 +361,102 @@ pub fn classify_command(command: &str) -> Classification {
     // ---- Medium：可恢复的状态变更 -----------------------------
     // 挂载 / 卸载文件系统会改变系统状态（通常可恢复）。
     // 注意：不带参数的 `mount`（仅一个 token）是列出挂载点，属只读，保持 Low。
+    // 仅检查命令的首段（避免 `mount | grep ...` 这类只读管道被误判为挂载操作）。
     {
-        let tokens: Vec<&str> = c.split_whitespace().collect();
-        let head = tokens.first().copied().unwrap_or("");
+        let first_seg = c
+            .split(|ch| ch == '|' || ch == ';' || ch == '&')
+            .next()
+            .unwrap_or(&c);
+        let tokens: Vec<&str> = first_seg.split_whitespace().collect();
+        let head = segment_head(first_seg);
         // umount 一定带目标，归 Medium；mount 仅在带参数时归 Medium。
         if head == "umount" || (head == "mount" && tokens.len() > 1) {
             return mk(RiskLevel::Medium, "mount", "mounts/unmounts a filesystem");
         }
     }
     // 编辑或写入 crontab（新增/修改定时任务）。`crontab -l` 为列出，保持 Low。
-    if contains(&c, "crontab")
-        && !contains(&c, "-l")
-        && (contains(&c, "-e") || contains(&c, ">") || contains(&c, "tee ") || contains(&c, "crontab "))
-        && !(c.trim() == "crontab" || contains(&c, "crontab -r"))
+    // 必须是 crontab 在执行：带 -e，或带文件参数（如 `crontab /tmp/jobs.txt`），或重定向/tee 写入。
+    if invokes(&c, "crontab")
+        && !c.split_whitespace().any(|t| t == "-l")
+        && !c.split_whitespace().any(|t| t == "-r")
     {
-        return mk(RiskLevel::Medium, "cron", "edits/writes the crontab");
+        let toks: Vec<&str> = c.split_whitespace().collect();
+        // crontab 段是否带「文件参数」：crontab 后跟一个非选项 token。
+        let has_file_arg = toks
+            .windows(2)
+            .any(|w| w[0] == "crontab" && !w[1].starts_with('-'));
+        if c.split_whitespace().any(|t| t == "-e")
+            || contains(&c, ">")
+            || contains(&c, "tee ")
+            || has_file_arg
+        {
+            return mk(RiskLevel::Medium, "cron", "edits/writes the crontab");
+        }
     }
     // 在系统路径下创建符号链接可能改变系统行为（如替换 /usr/bin、/etc 下的目标）。
-    if contains(&c, "ln -s") && (contains(&c, "/etc") || contains(&c, "/usr") || contains(&c, "/bin") || contains(&c, "/lib") || contains(&c, "/boot") || contains(&c, "/sbin")) {
+    // 必须是 ln 在执行且带 -s。
+    if invokes(&c, "ln") && c.split_whitespace().any(|t| t == "-s")
+        && (contains(&c, "/etc") || contains(&c, "/usr") || contains(&c, "/bin") || contains(&c, "/lib") || contains(&c, "/boot") || contains(&c, "/sbin"))
+    {
         return mk(RiskLevel::Medium, "symlink", "creates a symlink into a system path");
     }
     // systemctl daemon-reload 会重新加载 unit 定义（影响服务管理，通常可恢复）。
-    if contains(&c, "systemctl") && contains(&c, "daemon-reload") {
+    if invokes(&c, "systemctl") && contains(&c, "daemon-reload") {
         return mk(RiskLevel::Medium, "service", "reloads systemd unit definitions");
     }
-    let installs = ["apt install", "apt-get install", "yum install", "dnf install", "apk add", "zypper install", "pacman -s"];
-    if installs.iter().any(|p| contains(&c, p)) {
+    // 安装软件包：必须是对应包管理器在执行，子命令为 install/add 等。
+    if (invokes_any(&c, &["apt", "apt-get", "yum", "dnf", "zypper"]) && contains(&c, "install"))
+        || (invokes(&c, "apk") && contains(&c, "add"))
+        || (invokes(&c, "pacman") && c.split_whitespace().any(|t| t.starts_with("-s") || t == "--sync" || t == "-S"))
+    {
         return mk(RiskLevel::Medium, "install", "installs software packages");
     }
-    if contains(&c, "docker pull") || contains(&c, "docker run") || contains(&c, "docker compose up") || contains(&c, "docker-compose up") {
-        return mk(RiskLevel::Medium, "container", "pulls/starts containers");
+    // 容器：仅当 docker / docker-compose 执行「状态变更类」子命令时判为 Medium；
+    // 只读子命令（ps/images/inspect/logs/stats/version/...）保持 Low。按 token 精确
+    // 匹配子命令，避免 `docker ps --format ...` 因 "format" 含 "rm" 子串被误判。
+    if invokes(&c, "docker") || invokes(&c, "docker-compose") {
+        let toks: Vec<&str> = c.split_whitespace().collect();
+        // docker / docker-compose 之后的第一个非 flag token 即子命令；compose 再向后取一层。
+        let mut sub = "";
+        let mut after = false;
+        for t in &toks {
+            if !after {
+                if *t == "docker" || *t == "docker-compose" {
+                    after = true;
+                }
+                continue;
+            }
+            if t.starts_with('-') {
+                continue;
+            }
+            sub = t;
+            break;
+        }
+        if sub == "compose" {
+            sub = toks
+                .iter()
+                .skip_while(|t| **t != "compose")
+                .skip(1)
+                .find(|t| !t.starts_with('-'))
+                .copied()
+                .unwrap_or("");
+        }
+        const CHANGING: &[&str] = &[
+            "run", "start", "stop", "restart", "rm", "kill", "pull", "push", "exec", "up", "down",
+            "prune", "build", "create", "load", "import", "rename", "update", "commit", "tag",
+        ];
+        if CHANGING.contains(&sub) {
+            return mk(RiskLevel::Medium, "container", "changes container/image state (docker)");
+        }
     }
-    if contains(&c, "docker compose down") || contains(&c, "docker-compose down") || contains(&c, "docker stop") || contains(&c, "docker rm") {
-        return mk(RiskLevel::Medium, "container", "stops/removes containers (recoverable)");
-    }
-    if contains(&c, "systemctl") && (contains(&c, "restart") || contains(&c, "start") || contains(&c, "reload") || contains(&c, "stop") || contains(&c, "enable")) {
+    // 改变服务运行状态：必须是 systemctl 在执行。
+    if invokes(&c, "systemctl")
+        && (contains(&c, "restart") || contains(&c, "start") || contains(&c, "reload") || contains(&c, "stop") || contains(&c, "enable"))
+    {
         return mk(RiskLevel::Medium, "service", "changes a service's running state");
     }
-    if contains(&c, ">") || contains(&c, ">>") || contains(&c, "tee ") || contains(&c, "sed -i") {
+    // 写文件：内容型检测（重定向 / tee / sed -i）。tee 用 invokes 限定为实际执行。
+    if contains(&c, ">") || contains(&c, ">>") || invokes(&c, "tee") || contains(&c, "sed -i") {
         return mk(RiskLevel::Medium, "write", "writes to a file");
     }
     if contains(&c, "sudo ") || c.starts_with("sudo") {
@@ -474,6 +643,111 @@ mod tests {
         assert_eq!(lvl("docker ps | grep chattr"), RiskLevel::Low);
         assert_eq!(lvl("grep nft /etc/hosts"), RiskLevel::Low);
         assert_eq!(lvl("echo 'do not chattr'"), RiskLevel::Low);
+    }
+
+    #[test]
+    // 健壮性收敛：危险关键字出现在 grep 模式 / echo / 管道 / 引号里时，必须保持 Low。
+    // 这些都是「命令文本里提到了危险词，但实际执行的是只读命令」的反例。
+    fn keywords_in_grep_echo_pipes_stay_low() {
+        // grep 把危险命令名当作搜索模式 —— 实际执行的是 grep（只读）。
+        assert_eq!(lvl("grep mkfs /var/log/syslog"), RiskLevel::Low);
+        assert_eq!(lvl("grep -r 'rm -rf /' /etc"), RiskLevel::Low);
+        assert_eq!(lvl("grep fdisk install.log"), RiskLevel::Low);
+        assert_eq!(lvl("grep iptables /etc/hosts"), RiskLevel::Low);
+        assert_eq!(lvl("grep -i shutdown /var/log/auth.log"), RiskLevel::Low);
+        assert_eq!(lvl("grep dd notes.txt"), RiskLevel::Low);
+        assert_eq!(lvl("grep userdel /etc/login.defs"), RiskLevel::Low);
+        assert_eq!(lvl("grep crontab README"), RiskLevel::Low);
+        assert_eq!(lvl("grep wipefs dmesg.txt"), RiskLevel::Low);
+        assert_eq!(lvl("grep parted disk-notes.md"), RiskLevel::Low);
+        // echo / printf 仅打印文本 —— 不会执行其中提到的命令。
+        assert_eq!(lvl("echo \"rm -rf /\""), RiskLevel::Low);
+        assert_eq!(lvl("echo 'mkfs.ext4 /dev/sda'"), RiskLevel::Low);
+        assert_eq!(lvl("echo do not run shutdown now"), RiskLevel::Low);
+        assert_eq!(lvl("echo reboot is dangerous"), RiskLevel::Low);
+        // history | grep 检索历史命令 —— 实际执行的是 history 与 grep（只读）。
+        assert_eq!(lvl("history | grep 'drop database'"), RiskLevel::Low);
+        assert_eq!(lvl("history | grep iptables"), RiskLevel::Low);
+        // ps/docker 管道里 grep 危险词 —— 只读过滤。
+        assert_eq!(lvl("ps aux | grep mkswap"), RiskLevel::Low);
+        assert_eq!(lvl("ps aux | grep chattr"), RiskLevel::Low);
+        assert_eq!(lvl("docker ps | grep nft"), RiskLevel::Low);
+        assert_eq!(lvl("ps aux | grep 'kill 1'"), RiskLevel::Low);
+        // SQL 危险语句出现在日志检索里 —— 非 SQL 执行上下文，保持 Low。
+        assert_eq!(lvl("grep 'drop database' app.log"), RiskLevel::Low);
+        assert_eq!(lvl("grep 'drop table users' app.log"), RiskLevel::Low);
+        assert_eq!(lvl("grep 'delete from sessions' app.log"), RiskLevel::Low);
+        assert_eq!(lvl("cat migrations/notes.txt | grep 'truncate table'"), RiskLevel::Low);
+    }
+
+    #[test]
+    // 健壮性收敛：真实危险命令（即便经过 sudo / 管道 / 逻辑连接符）仍被正确判级。
+    // 这些是与上面反例一一对应的正例，确保收敛没有放过真实危险。
+    fn real_dangerous_commands_still_flagged() {
+        // mkfs 家族（含带后缀的 mkfs.ext4 / mkfs.xfs）。
+        assert_eq!(lvl("mkfs.ext4 /dev/sdb1"), RiskLevel::High);
+        assert_eq!(lvl("mkfs.xfs /dev/sdb1"), RiskLevel::High);
+        assert_eq!(lvl("sudo mkfs.ext4 /dev/sda"), RiskLevel::Blocked);
+        // 危险命令位于逻辑连接符 / 顺序符之后的段也要识别。
+        assert_eq!(lvl("cd /tmp && rm -rf /var/www/old"), RiskLevel::High);
+        assert_eq!(lvl("true; iptables -F"), RiskLevel::High);
+        assert_eq!(lvl("echo hi && shutdown -h now"), RiskLevel::Blocked);
+        assert_eq!(lvl("ls / || rm -rf /etc"), RiskLevel::Blocked);
+        // env / VAR= 前缀不应掩盖真实命令名。
+        assert_eq!(lvl("DEBIAN_FRONTEND=noninteractive apt remove nginx"), RiskLevel::High);
+        assert_eq!(lvl("env FOO=1 mkswap /swapfile"), RiskLevel::High);
+        assert_eq!(lvl("sudo FOO=1 userdel bob"), RiskLevel::High);
+        // 真实 SQL 执行上下文里的破坏性语句仍判级。
+        assert_eq!(lvl("psql -c 'DROP DATABASE production'"), RiskLevel::Blocked);
+        assert_eq!(lvl("mysql -e 'DROP TABLE users'"), RiskLevel::High);
+        assert_eq!(lvl("psql -c 'DELETE FROM sessions'"), RiskLevel::High);
+        assert_eq!(lvl("mysql app < drop_all.sql"), RiskLevel::Low); // 无 DROP 文本时仅看上下文不升级
+        assert_eq!(lvl("sqlite3 app.db 'DROP TABLE events'"), RiskLevel::High);
+        // 段首命令族（pkill/killall 不应被 PID-1 规则误判，但仍是只读级别的进程操作 -> Low）。
+        assert_eq!(lvl("pkill -f nginx"), RiskLevel::Low);
+        assert_eq!(lvl("killall nginx"), RiskLevel::Low);
+        // kill PID 1 仍 Blocked，即便前面有别的段。
+        assert_eq!(lvl("echo done; kill -9 1"), RiskLevel::Blocked);
+    }
+
+    #[test]
+    // 健壮性收敛：命令名型检测对「同名子串 / 只读子命令」的反例保持正确。
+    fn command_name_carve_outs_stay_correct() {
+        // dd 只在直写块设备时 Blocked；普通 dd / 提到 of=/dev 的 grep 不应误判。
+        assert_eq!(lvl("dd if=/dev/zero of=/tmp/file bs=1M count=10"), RiskLevel::Low);
+        assert_eq!(lvl("grep 'of=/dev/sda' script.sh"), RiskLevel::Low);
+        // chmod/chown 不带递归标志保持非 High（普通写权限变更，归 Low）。
+        assert_eq!(lvl("chmod 644 /tmp/file"), RiskLevel::Low);
+        assert_eq!(lvl("chown app:app /tmp/file"), RiskLevel::Low);
+        // chmod -R 仍 High。
+        assert_eq!(lvl("chmod -R 755 /srv/app"), RiskLevel::High);
+        // find 不带 -delete 保持 Low。
+        assert_eq!(lvl("find /var/log -name '*.log'"), RiskLevel::Low);
+        // crontab -l 列出保持 Low；裸 crontab 保持 Low。
+        assert_eq!(lvl("crontab -l"), RiskLevel::Low);
+        assert_eq!(lvl("crontab"), RiskLevel::Low);
+        // sysctl 读取保持 Low；写/加载 High。
+        assert_eq!(lvl("sysctl net.ipv4.ip_forward"), RiskLevel::Low);
+        assert_eq!(lvl("sysctl -w net.ipv4.ip_forward=1"), RiskLevel::High);
+        // 防火墙只读查询保持 Low。
+        assert_eq!(lvl("firewall-cmd --list-all"), RiskLevel::Low);
+        assert_eq!(lvl("ip6tables-save"), RiskLevel::Low);
+        assert_eq!(lvl("nft list ruleset"), RiskLevel::Low);
+        // ufw 只读 status 保持 Low；ufw disable 仍 High。
+        assert_eq!(lvl("ufw status verbose"), RiskLevel::Low);
+        assert_eq!(lvl("ufw disable"), RiskLevel::High);
+        // tee 作为 grep 模式不应误判为写文件。
+        assert_eq!(lvl("grep tee /etc/profile"), RiskLevel::Low);
+        // 实际 tee 写文件仍 Medium。
+        assert_eq!(lvl("echo x | tee /tmp/out.txt"), RiskLevel::Medium);
+        // mount 只读列出（含管道过滤）保持 Low；带参数挂载 Medium。
+        assert_eq!(lvl("mount | grep ext4"), RiskLevel::Low);
+        assert_eq!(lvl("mount -t ext4 /dev/sdb1 /mnt"), RiskLevel::Medium);
+        // docker 只读保持 Low（ps 在前面 low_examples 已覆盖，这里测 logs）。
+        assert_eq!(lvl("docker logs myapp"), RiskLevel::Low);
+        // install 必须是包管理器在执行；提到 install 的 grep 不误判。
+        assert_eq!(lvl("grep install /var/log/dpkg.log"), RiskLevel::Low);
+        assert_eq!(lvl("apt install -y nginx"), RiskLevel::Medium);
     }
 
     #[test]
