@@ -14,6 +14,12 @@ python "$IMAGE_GEN" generate \
 
 The current environment needs `OPENAI_API_KEY` before real generation can run.
 
+Current project assets:
+
+- `assets/logo-gpt-image-2.png`: original generated horizontal logo, kept as the transparent-style source.
+- `assets/logo-white-bg.png`: white-background logo used by README files.
+- `assets/preview.png`: Chinese README preview image.
+
 ## App icon prompt
 
 Use case: logo-brand

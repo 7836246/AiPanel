@@ -1,4 +1,4 @@
-<p align="center"><a href="#"><img src="../assets/logo-gpt-image-2.png" alt="AiPanel" width="420" /></a></p>
+<p align="center"><a href="#"><img src="../assets/logo-white-bg.png" alt="AiPanel" width="420" /></a></p>
 <p align="center"><b>Local AI Server Operations Client</b></p>
 <p align="center"><b>本地运行、通过 SSH 管理服务器的 AI 运维客户端</b></p>
 
