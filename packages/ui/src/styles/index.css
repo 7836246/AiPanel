@@ -1,0 +1,15 @@
+@import "tailwindcss";
+@import "./tokens.css";
+
+/* Scan the component sources so a standalone build of this package (and the
+ * /design-sync export) includes every utility the components reference. */
+@source "../**/*.{ts,tsx}";
+
+@layer base {
+  body {
+    background-color: var(--color-bg);
+    color: var(--color-fg);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+}

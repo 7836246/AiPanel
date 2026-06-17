@@ -1,0 +1,83 @@
+# Building with AiPanel UI
+
+AiPanel UI is the design system for **AiPanel**, a local AI server-operations console. The look is **Codex-style**: near-monochrome warm grays, hairline borders, the system font stack, and a **near-black primary** — color appears only for status and the four-level **risk scale** (low / medium / high / blocked). It is **light by default with an optional dark theme**. Build screens that look like a calm, dense developer tool — not a marketing site.
+
+## Setup — no provider; light by default, opt into dark
+
+There is **no provider or theme wrapper**. Every component is self-contained and already styled from the bundle's `styles.css`; import it and render. Put content on a token-driven surface so it tracks the theme:
+
+```jsx
+// AiPanelUI.* are the library components (from the bundle global)
+<div style={{ background: "var(--color-bg)", color: "var(--color-fg)", minHeight: "100%" }}>
+  {/* your screen — light theme */}
+</div>
+```
+
+**Theme switching is class-based and light-first.** Default (no class) = light. Add the `dark` class to any ancestor (typically the page root) to flip that subtree to dark — every token, and therefore every component, switches automatically. Never hardcode per-theme colors; always use the tokens so both themes work.
+
+```jsx
+<div className="dark" style={{ background: "var(--color-bg)", color: "var(--color-fg)" }}>
+  {/* same markup, dark theme */}
+</div>
+```
+
+## Styling idiom — compose components; style glue with token variables
+
+Two rules:
+
+1. **Prefer composing library components** over hand-built markup. They already carry the spacing, color, and radius of the system.
+2. **For your own layout/glue, use the design tokens as CSS variables** (`var(--token)`) — via inline `style` or a `<style>` block. The shipped stylesheet is static, so invent-your-own utility classes will not resolve; the tokens always will.
+
+Token vocabulary (all are `var(--…)`):
+
+| Group | Tokens |
+|---|---|
+| Surfaces | `--color-bg`, `--color-surface-1`, `--color-surface-2` (sidebar/inset), `--color-surface-3` |
+| Interaction | `--color-hover` (row hover / code inset), `--color-selected` (selected row) |
+| Borders | `--color-border`, `--color-border-strong` |
+| Text | `--color-fg`, `--color-fg-muted`, `--color-fg-subtle` |
+| Primary | `--color-brand` (near-black action), `--color-brand-fg` (text on it), `--color-brand-strong` |
+| Risk | `--color-risk-low`, `--color-risk-medium`, `--color-risk-high`, `--color-risk-blocked` (+ each `-soft` for fills) |
+| Status | `--color-success`, `--color-warning`, `--color-danger`, `--color-info` |
+| Radius / type | `--radius-sm/md/lg/xl`, `--font-sans` (system stack), `--font-mono` (commands, terminal, durations) |
+
+Use semantic surfaces in order: page = `--color-bg`, cards = `--color-surface-1`, sidebar/inset = `--color-surface-2`, hover/code-inset = `--color-hover`. Depth comes from hairline `--color-border`, not heavy shadows. Never hardcode hex; reach for the token.
+
+## Use the domain components for domain meaning
+
+Don't reinvent these — they encode AiPanel's model:
+
+- **`RiskBadge`** `level="low|medium|high|blocked"` — the canonical way to show operation risk. Use it, not a generic colored tag, wherever a command/step has risk.
+- **`CommandPlan`** `goal` + `steps[]` (`{summary, command, risk, readOnly?}`) — a reviewable execution plan.
+- **`ServerCard`** `name` / `host` / `status` / `facts` — a saved server.
+- **`AuditEntry`** `timestamp` / `command` / `risk` / `exitCode` / `output?` — one audit-trail line.
+- **`Terminal`** `host` / `live?` / `lines[]` (`{text, tone?}`) / `cursor?` — the light SSH-transcript dock; tones `prompt`/`success`/`muted`/`danger`.
+- Primitives: `Button` (`variant` primary/secondary/ghost/outline/danger; primary is the near-black action, `danger` for confirmed high-risk), `IconButton` (`variant` ghost/bordered — square icon-only control for toolbars/inline actions; needs `aria-label`), `Badge`, `Card` (+ `CardHeader/CardTitle/CardDescription/CardContent/CardFooter`), `Input`, `Textarea`, `Spinner`, `CodeBlock` (commands/output), `Dialog` (confirmations — high-risk needs a second one).
+
+## Where the truth lives
+
+Before styling, read the bound `styles.css` (and its `@import`ed `_ds_bundle.css`) for the exact token values, and each component's `<Name>.prompt.md` / `<Name>.d.ts` for its real props. The files beat any summary here.
+
+## Idiomatic snippet
+
+```jsx
+<div style={{ background: "var(--color-bg)", color: "var(--color-fg)", padding: 24 }}>
+  <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
+    <AiPanelUI.ServerCard
+      name="web-prod-1"
+      host="root@10.0.0.4:22"
+      status="online"
+      facts={{ OS: "Ubuntu 22.04", CPU: "12%", Disk: "44%" }}
+    />
+  </div>
+  <div style={{ marginTop: 24 }}>
+    <AiPanelUI.CommandPlan
+      goal="Recover the unreachable website on web-prod-1"
+      steps={[
+        { summary: "Check nginx", command: "systemctl status nginx", risk: "low", readOnly: true },
+        { summary: "Restart nginx", command: "systemctl restart nginx", risk: "medium" },
+      ]}
+    />
+  </div>
+</div>
+```

@@ -1,0 +1,109 @@
+/**
+ * AiPanel design tokens — Codex-style warm-neutral, light-first, with a dark theme.
+ *
+ * Tailwind v4 reads `@theme` and (a) emits the CSS custom properties below and
+ * (b) generates matching utilities — e.g. `--color-surface-1` powers
+ * `bg-surface-1` / `text-surface-1` / `border-surface-1`, `--radius-md` powers
+ * `rounded-md`, `--font-mono` powers `font-mono`.
+ *
+ * Theming: `@theme` holds the LIGHT values (the default). The unlayered
+ * `.dark` block overrides the same `--color-*` variables — unlayered so it
+ * always wins over the layered `@theme` `:root`; add the `dark` class to any
+ * ancestor (typically <html>) to flip the subtree. Components reference the
+ * semantic utilities, so they switch automatically.
+ *
+ * Palette mirrors the Codex visual language: near-monochrome warm grays,
+ * hairline borders, a near-black primary, and color reserved for status / the
+ * risk scale (low/medium/high/blocked, per docs/SECURITY_MODEL.zh-Hans.md).
+ */
+@theme {
+  /* Typography — system stack (Codex), mono for commands/terminal */
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-mono: "SF Mono", ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace;
+
+  /* Radius (theme-invariant) */
+  --radius-sm: 0.4375rem;
+  --radius-md: 0.625rem;
+  --radius-lg: 0.875rem;
+  --radius-xl: 1rem;
+
+  /* ---- LIGHT (default) ---- */
+  --color-bg: #ffffff;
+  --color-surface-1: #ffffff;
+  --color-surface-2: #f8f8f7;
+  --color-surface-3: #f0efed;
+  --color-hover: #f0efed;
+  --color-selected: #e9e8e4;
+  --color-border: #ececeb;
+  --color-border-strong: #e0e0dd;
+
+  --color-fg: #1c1c1a;
+  --color-fg-muted: #6c6c69;
+  --color-fg-subtle: #a3a39e;
+
+  /* Near-black primary (Codex "send"), no chroma */
+  --color-brand: #2f2f2d;
+  --color-brand-strong: #1c1c1a;
+  --color-brand-fg: #ffffff;
+  --color-accent: #2f2f2d;
+  --color-accent-strong: #1c1c1a;
+
+  /* Risk scale — Low / Medium / High / Blocked */
+  --color-risk-low: #1a7f37;
+  --color-risk-low-soft: #dafbe1;
+  --color-risk-medium: #9a6700;
+  --color-risk-medium-soft: #fff8c5;
+  --color-risk-high: #bc4c00;
+  --color-risk-high-soft: #ffe7d4;
+  --color-risk-blocked: #cf222e;
+  --color-risk-blocked-soft: #ffebe9;
+
+  /* Generic status */
+  --color-success: #1a7f37;
+  --color-warning: #9a6700;
+  --color-danger: #cf222e;
+  --color-info: #0969da;
+}
+
+/* Default color-scheme (form controls, scrollbars). */
+:root {
+  color-scheme: light;
+}
+
+/* ---- DARK (opt-in via the `dark` class) ---- */
+.dark {
+  color-scheme: dark;
+
+  --color-bg: #1b1b19;
+  --color-surface-1: #212120;
+  --color-surface-2: #161614;
+  --color-surface-3: #262624;
+  --color-hover: #262624;
+  --color-selected: #2f2f2b;
+  --color-border: #2e2e2b;
+  --color-border-strong: #3b3b37;
+
+  --color-fg: #e7e7e3;
+  --color-fg-muted: #9d9d98;
+  --color-fg-subtle: #6d6d68;
+
+  --color-brand: #e7e7e3;
+  --color-brand-strong: #ffffff;
+  --color-brand-fg: #1b1b19;
+  --color-accent: #e7e7e3;
+  --color-accent-strong: #ffffff;
+
+  --color-risk-low: #3fb950;
+  --color-risk-low-soft: #0f2417;
+  --color-risk-medium: #d29922;
+  --color-risk-medium-soft: #2e2206;
+  --color-risk-high: #db6d28;
+  --color-risk-high-soft: #2e1a0a;
+  --color-risk-blocked: #f85149;
+  --color-risk-blocked-soft: #2d1213;
+
+  --color-success: #3fb950;
+  --color-warning: #d29922;
+  --color-danger: #f85149;
+  --color-info: #4493f8;
+}

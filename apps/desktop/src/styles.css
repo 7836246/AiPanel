@@ -1,0 +1,25 @@
+@import "tailwindcss";
+/* Brand fonts (Inter + JetBrains Mono). */
+@import "@aipanel/ui/fonts.css";
+/* Shared design tokens (defines the @theme + CSS variables). */
+@import "@aipanel/ui/tokens.css";
+
+/* The UI library lives in node_modules (workspace symlink), which Tailwind
+ * ignores by default — point it at the sources so component classes are kept. */
+@source "../../../packages/ui/src/**/*.{ts,tsx}";
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    background-color: var(--color-bg);
+    color: var(--color-fg);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+}
