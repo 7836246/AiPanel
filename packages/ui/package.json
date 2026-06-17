@@ -14,10 +14,13 @@
       "import": "./dist/index.js"
     },
     "./styles.css": "./dist/styles.css",
-    "./tokens.css": "./src/styles/tokens.css"
+    "./tokens.css": "./src/styles/tokens.css",
+    "./fonts.css": "./fonts.css"
   },
   "files": [
     "dist",
+    "fonts",
+    "fonts.css",
     "src/styles/tokens.css"
   ],
   "scripts": {

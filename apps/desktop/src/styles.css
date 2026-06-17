@@ -1,4 +1,6 @@
 @import "tailwindcss";
+/* Brand fonts (Inter + JetBrains Mono). */
+@import "@aipanel/ui/fonts.css";
 /* Shared design tokens (defines the @theme + CSS variables). */
 @import "@aipanel/ui/tokens.css";
 
