@@ -140,6 +140,9 @@ pub enum ProviderKind {
     /// Codex app-server（既定的 Agent 运行时）。
     CodexAppServer,
     /// 任意兼容 OpenAI 的 HTTP API。
+    /// 前端用的是 "openai_compatible"（而非 snake_case 默认的 "open_ai_compatible"），
+    /// 这里显式对齐;并保留旧写法作为 alias 兼容历史数据。
+    #[serde(rename = "openai_compatible", alias = "open_ai_compatible")]
     OpenAiCompatible,
     /// 用户自定义/其他。
     Custom,
@@ -454,6 +457,20 @@ pub struct AuditRecord {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    // ProviderKind 的线格式必须与前端 api.ts 的 ProviderKind 字面量一致,
+    // 否则前端传入的 provider 无法被后端反序列化(save/test 直接报错)。
+    fn provider_kind_wire_format_matches_frontend() {
+        let j = |k: ProviderKind| serde_json::to_value(k).unwrap();
+        assert_eq!(j(ProviderKind::CodexAppServer), serde_json::json!("codex_app_server"));
+        assert_eq!(j(ProviderKind::OpenAiCompatible), serde_json::json!("openai_compatible"));
+        assert_eq!(j(ProviderKind::Custom), serde_json::json!("custom"));
+        // 前端写法可反序列化;旧写法 alias 也兼容。
+        let de = |s: &str| serde_json::from_value::<ProviderKind>(serde_json::json!(s)).unwrap();
+        assert_eq!(de("openai_compatible"), ProviderKind::OpenAiCompatible);
+        assert_eq!(de("open_ai_compatible"), ProviderKind::OpenAiCompatible);
+    }
 
     #[test]
     // 风险等级按 Low < Medium < High < Blocked 排序

@@ -15,6 +15,10 @@ import {
   type ProviderTestResult,
 } from "../lib/api";
 
+// 从后端错误或任意异常中提取可展示的错误文本。
+const errMsg = (e: unknown): string =>
+  e && typeof e === "object" && "message" in e ? String((e as { message: unknown }).message) : String(e);
+
 // 供应商类型到中文标签的映射。
 const KIND_LABEL: Record<ProviderKind, string> = {
   codex_app_server: "Codex app-server",
@@ -106,8 +110,8 @@ export default function SettingsPanel() {
       setTestResult(null);
       await refresh();
       push("success", "供应商已保存");
-    } catch {
-      push("danger", "保存失败，请检查配置");
+    } catch (e) {
+      push("danger", `保存失败: ${errMsg(e)}`);
     } finally {
       setBusy(false);
     }
@@ -146,8 +150,8 @@ export default function SettingsPanel() {
     setTestResult(null);
     try {
       setTestResult(await testProvider(form, apiKey || undefined));
-    } catch {
-      setTestResult({ ok: false, message: "测试请求失败", detail: "无法连接到后端" });
+    } catch (e) {
+      setTestResult({ ok: false, message: "测试请求失败", detail: errMsg(e) });
     } finally {
       setTesting(false);
     }
