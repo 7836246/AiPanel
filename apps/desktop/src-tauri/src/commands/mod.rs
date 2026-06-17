@@ -156,50 +156,49 @@ pub fn get_audit_record(state: State<'_, AppState>, id: String) -> AppResult<Aud
     state.store.get_audit_record(&id)
 }
 
-/// The provider to use for planning: the policy default if enabled, else the
-/// first enabled provider, else None (→ fall back to the offline mock engine).
-fn pick_provider(state: &AppState) -> AppResult<Option<ProviderConfig>> {
-    let enabled: Vec<ProviderConfig> =
-        state.store.list_providers()?.into_iter().filter(|p| p.enabled).collect();
-    if enabled.is_empty() {
-        return Ok(None);
-    }
+/// Ordered AI provider candidates for planning: enabled, non-custom, with the
+/// policy default first. Empty → fall back to the offline mock engine. This is
+/// also the fallback chain — e.g. a selected Codex provider whose turn loop
+/// isn't available is followed by any configured OpenAI-compatible provider.
+fn candidate_providers(state: &AppState) -> AppResult<Vec<ProviderConfig>> {
+    let mut list: Vec<ProviderConfig> = state
+        .store
+        .list_providers()?
+        .into_iter()
+        .filter(|p| p.enabled && !matches!(p.kind, ProviderKind::Custom))
+        .collect();
     if let Some(id) = state.store.get_policy()?.default_provider_id {
-        if let Some(p) = enabled.iter().find(|p| p.id == id) {
-            return Ok(Some(p.clone()));
-        }
+        list.sort_by_key(|p| usize::from(p.id != id)); // default provider first
     }
-    Ok(enabled.into_iter().next())
+    Ok(list)
 }
 
-/// Turn a natural-language intent into a structured, reviewable plan. Uses the
-/// configured AI provider when available; falls back to the offline mock engine
-/// if none is configured or the provider call fails (so the app always works).
+/// Turn a natural-language intent into a structured, reviewable plan. Tries each
+/// configured AI provider in turn (default first); if all fail or none is
+/// configured, falls back to the offline mock engine so the app always works.
 #[tauri::command]
 pub async fn create_plan(
     state: State<'_, AppState>,
     intent: String,
     server_id: Option<String>,
 ) -> AppResult<Plan> {
-    if let Some(provider) = pick_provider(&state)? {
-        if !matches!(provider.kind, ProviderKind::Custom) {
-            let key = provider
-                .credential_ref
-                .as_ref()
-                .and_then(|r| state.credentials.get_secret(r).ok().flatten());
-            // The provider call is blocking HTTP — run it off the UI thread.
-            let p = provider.clone();
-            let intent2 = intent.clone();
-            let sid = server_id.clone();
-            let res = tokio::task::spawn_blocking(move || {
-                crate::agent::plan_with_provider(&p, key, &intent2, sid.as_deref())
-            })
-            .await
-            .map_err(|e| AppError::Provider(format!("plan task failed: {e}")))?;
-            match res {
-                Ok(plan) => return Ok(plan),
-                Err(e) => eprintln!("[plan] provider '{}' failed ({}); falling back to mock", provider.name, e.code()),
-            }
+    for provider in candidate_providers(&state)? {
+        let key = provider
+            .credential_ref
+            .as_ref()
+            .and_then(|r| state.credentials.get_secret(r).ok().flatten());
+        let p = provider.clone();
+        let intent2 = intent.clone();
+        let sid = server_id.clone();
+        // The provider call is blocking HTTP — run it off the UI thread.
+        let res = tokio::task::spawn_blocking(move || {
+            crate::agent::plan_with_provider(&p, key, &intent2, sid.as_deref())
+        })
+        .await
+        .map_err(|e| AppError::Provider(format!("plan task failed: {e}")))?;
+        match res {
+            Ok(plan) => return Ok(plan),
+            Err(e) => eprintln!("[plan] provider '{}' failed ({}); trying next / mock", provider.name, e.code()),
         }
     }
     state.plan_engine.create_plan(&intent, server_id.as_deref())
@@ -273,11 +272,12 @@ pub async fn run_agent_turn(
     intent: String,
     server_id: Option<String>,
 ) -> AppResult<crate::agent::agent_loop::AgentTurnResult> {
-    let provider = pick_provider(&state)?
-        .ok_or_else(|| AppError::Provider("未配置可用的模型供应商".into()))?;
-    if !matches!(provider.kind, ProviderKind::OpenAiCompatible) {
-        return Err(AppError::Provider("自动诊断目前仅支持 OpenAI 兼容供应商".into()));
-    }
+    let provider = candidate_providers(&state)?
+        .into_iter()
+        .find(|p| matches!(p.kind, ProviderKind::OpenAiCompatible))
+        .ok_or_else(|| {
+            AppError::Provider("自动诊断需要一个已启用的 OpenAI 兼容供应商,请在设置中配置".into())
+        })?;
     let key = provider
         .credential_ref
         .as_ref()
