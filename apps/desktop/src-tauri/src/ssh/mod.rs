@@ -29,6 +29,25 @@ pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 /// Default connection timeout (also passed to ssh's ConnectTimeout).
 pub const CONNECT_TIMEOUT_SECS: u64 = 10;
 
+/// Live-stream redaction for a single line. A private-key block only matches
+/// `sanitize`'s pattern across the WHOLE buffer, so streamed line-by-line its
+/// body would leak; suppress the body and emit one placeholder. Stored output is
+/// still whole-buffer sanitized separately.
+fn redact_live_line(line: &str, in_key_block: &mut bool) -> Option<String> {
+    let upper = line.to_uppercase();
+    if *in_key_block {
+        if upper.contains("END") && upper.contains("PRIVATE KEY") {
+            *in_key_block = false;
+        }
+        return None;
+    }
+    if upper.contains("BEGIN") && upper.contains("PRIVATE KEY") {
+        *in_key_block = true;
+        return Some("[redacted-private-key]".to_string());
+    }
+    Some(sanitize(line))
+}
+
 /// Temp private-key file, deleted on drop.
 struct KeyFile {
     path: std::path::PathBuf,
@@ -239,6 +258,7 @@ pub async fn run_readonly_streamed(
 
     // Read both streams concurrently, forwarding each sanitized line via the
     // callback and accumulating the full output.
+    let mut in_key_block = false;
     let stream = async {
         let mut out_reader = BufReader::new(stdout).lines();
         let mut err_reader = BufReader::new(stderr).lines();
@@ -255,7 +275,7 @@ pub async fn run_readonly_streamed(
                         // so it can be whole-buffer sanitized once at the end
                         // (multi-line secrets like private keys only match across
                         // lines — see core::sanitize).
-                        on_line(&sanitize(&line), false);
+                        if let Some(t) = redact_live_line(&line, &mut in_key_block) { on_line(&t, false); }
                         out_buf.push_str(&line);
                         out_buf.push('\n');
                     }
@@ -264,7 +284,7 @@ pub async fn run_readonly_streamed(
                 },
                 line = err_reader.next_line(), if !err_done => match line {
                     Ok(Some(line)) => {
-                        on_line(&sanitize(&line), true);
+                        if let Some(t) = redact_live_line(&line, &mut in_key_block) { on_line(&t, true); }
                         err_buf.push_str(&line);
                         err_buf.push('\n');
                     }
@@ -334,6 +354,7 @@ pub async fn run_command_streamed(
 
     // Read both streams concurrently, forwarding each sanitized line via the
     // callback and accumulating the full output.
+    let mut in_key_block = false;
     let stream = async {
         let mut out_reader = BufReader::new(stdout).lines();
         let mut err_reader = BufReader::new(stderr).lines();
@@ -350,7 +371,7 @@ pub async fn run_command_streamed(
                         // so it can be whole-buffer sanitized once at the end
                         // (multi-line secrets like private keys only match across
                         // lines — see core::sanitize).
-                        on_line(&sanitize(&line), false);
+                        if let Some(t) = redact_live_line(&line, &mut in_key_block) { on_line(&t, false); }
                         out_buf.push_str(&line);
                         out_buf.push('\n');
                     }
@@ -359,7 +380,7 @@ pub async fn run_command_streamed(
                 },
                 line = err_reader.next_line(), if !err_done => match line {
                     Ok(Some(line)) => {
-                        on_line(&sanitize(&line), true);
+                        if let Some(t) = redact_live_line(&line, &mut in_key_block) { on_line(&t, true); }
                         err_buf.push_str(&line);
                         err_buf.push('\n');
                     }

@@ -306,12 +306,19 @@ export default function CodexConsole() {
 
   // Load run history for the selected server; reset the open run.
   useEffect(() => {
+    runIdRef.current += 1; // invalidate any in-flight run before switching context
+    setRunning(false);
     setCurrent(null);
     setStepStatus([]);
     setTermLines([]);
     if (!selectedServerId) { setTasks([]); return; }
     listTasks(selectedServerId).then(setTasks).catch(() => setTasks([]));
   }, [selectedServerId]);
+
+  // Re-fetch providers when returning from Settings so the banner/selector refresh.
+  useEffect(() => {
+    if (view !== "settings") listProviders().then(setProviders).catch(() => {});
+  }, [view]);
 
   async function refreshTasks() {
     if (selectedServerId) setTasks(await listTasks(selectedServerId).catch(() => []));
@@ -338,25 +345,30 @@ export default function CodexConsole() {
   async function generatePlan() {
     const intent = intentValue.trim();
     if (!intent || !selectedServerId) return;
+    const myId = ++runIdRef.current;
+    const serverId = selectedServerId;
     setRunning(true);
     setTermLines([{ text: aiProvider ? "AI 规划中…" : "生成计划中(本地规则)…", tone: "muted" }]);
     try {
-      const plan = await createPlan(intent, selectedServerId);
+      const plan = await createPlan(intent, serverId);
+      if (runIdRef.current !== myId) return;
       const task: TaskRecord = {
-        id: newId(), serverId: selectedServerId, title: plan.goal, intent, kind: "plan",
+        id: newId(), serverId, title: plan.goal, intent, kind: "plan",
         plan, executions: [], status: "awaiting_confirmation", createdAt: nowIso(), updatedAt: nowIso(),
       };
       await saveTask(task);
+      if (runIdRef.current !== myId) return;
       setCurrent(task);
       setStepStatus(plan.steps.map(() => "pending"));
       setTermLines([]);
       setIntentValue("");
       await refreshTasks();
     } catch (e) {
+      if (runIdRef.current !== myId) return;
       setTermLines([{ text: `生成计划失败: ${errMsg(e)}`, tone: "danger" }]);
       setTerminalOpen(true);
     } finally {
-      setRunning(false);
+      if (runIdRef.current === myId) setRunning(false);
     }
   }
 
@@ -364,28 +376,33 @@ export default function CodexConsole() {
     const intent = intentValue.trim();
     if (!intent || !selectedServerId) return;
     if (!aiProvider) { setView("settings"); return; }
+    const myId = ++runIdRef.current;
+    const serverId = selectedServerId;
     setRunning(true);
     setTerminalOpen(true);
     setCurrent(null);
     setTermLines([{ text: "AI 诊断中…", tone: "muted" }]);
     try {
-      const r = await runAgentTurn(intent, selectedServerId);
+      const r = await runAgentTurn(intent, serverId);
+      if (runIdRef.current !== myId) return;
       const lines: TerminalLine[] = r.toolCalls.map((t) => ({ text: `▸ ${t.name} ${t.ok ? "✓" : "✗"}`, tone: t.ok ? "success" : "danger" }));
       if (lines.length) lines.push({ text: "", tone: "muted" });
       for (const l of r.summary.split("\n")) lines.push({ text: l });
       setTermLines(lines);
       const task: TaskRecord = {
-        id: newId(), serverId: selectedServerId, title: intent, intent, kind: "diagnose",
+        id: newId(), serverId, title: intent, intent, kind: "diagnose",
         executions: [], summary: r.summary, status: "completed", createdAt: nowIso(), updatedAt: nowIso(),
       };
       await saveTask(task);
+      if (runIdRef.current !== myId) return;
       setCurrent(task);
       setIntentValue("");
       await refreshTasks();
     } catch (e) {
+      if (runIdRef.current !== myId) return;
       setTermLines([{ text: `诊断失败: ${errMsg(e)}`, tone: "danger" }]);
     } finally {
-      setRunning(false);
+      if (runIdRef.current === myId) setRunning(false);
     }
   }
 
@@ -401,6 +418,8 @@ export default function CodexConsole() {
     };
     setCurrent(task);
     setStepStatus((plan?.steps ?? []).map(() => "pending"));
+    await saveTask(task); // persist the running run so an interrupted one still shows in history
+    await refreshTasks();
     const lines: TerminalLine[] = [{ text: `正在体检 ${selected?.name ?? ""} …`, tone: "muted" }];
     setTermLines([...lines]);
     try {
@@ -417,8 +436,12 @@ export default function CodexConsole() {
         setTermLines([...lines]);
       });
       if (runIdRef.current !== myId) return;
-      const ok = report.executions.some((e) => e.exitCode === 0);
-      const summary = report.warnings.length ? `${report.warnings.length} 条告警` : "体检完成,无告警";
+      const failed = report.executions.filter((e) => e.exitCode !== 0).length;
+      const ok = failed === 0;
+      const parts: string[] = [];
+      if (failed) parts.push(`${failed} 项检查失败`);
+      if (report.warnings.length) parts.push(`${report.warnings.length} 条告警`);
+      const summary = parts.length ? parts.join(" · ") : "体检完成,无告警";
       const done: TaskRecord = { ...task, executions: report.executions, summary, status: ok ? "completed" : "failed", updatedAt: nowIso() };
       await saveTask(done);
       setCurrent(done);
@@ -491,6 +514,7 @@ export default function CodexConsole() {
   function stop() {
     runIdRef.current += 1;
     setRunning(false);
+    setStepStatus((prev) => prev.map((s) => (s === "running" ? "pending" : s)));
   }
 
   function openAudit() {
@@ -681,7 +705,7 @@ export default function CodexConsole() {
                   </div>
                   <div className="flex items-center gap-2.5">
                     <button onClick={() => setView("settings")} className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[12.5px] text-fg-muted transition-colors hover:bg-hover" title="模型供应商设置">
-                      {aiProvider ? `${aiProvider.name}${aiProvider.model ? " · " + aiProvider.model : ""}` : "未配置模型 ▾"}
+                      {aiProvider ? `${aiProvider.name}${aiProvider.model ? " · " + aiProvider.model : ""}` : "未配置模型 · 去设置"}
                     </button>
                     <button aria-label="发送" onClick={generatePlan} className="flex h-[30px] w-[30px] flex-none items-center justify-center rounded-full bg-brand text-brand-fg transition-opacity hover:opacity-90 disabled:opacity-40" disabled={!intentValue.trim() || !selectedServerId}>
                       <SendArrow />

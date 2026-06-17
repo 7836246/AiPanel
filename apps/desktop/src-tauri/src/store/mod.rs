@@ -373,7 +373,12 @@ impl Store {
         };
         let mut out = Vec::with_capacity(rows.len());
         for data in rows {
-            out.push(serde_json::from_str(&data)?);
+            // Skip an unreadable row rather than failing the whole history (e.g. a
+            // legacy/empty row, or future schema drift).
+            match serde_json::from_str(&data) {
+                Ok(t) => out.push(t),
+                Err(e) => eprintln!("[store] skipping unreadable task row: {e}"),
+            }
         }
         Ok(out)
     }

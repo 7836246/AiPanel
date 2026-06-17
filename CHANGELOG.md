@@ -8,6 +8,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- Real task/run model: every plan / AI diagnosis / doctor run is persisted per
+  server and listed in the sidebar (restore or delete a run); the main screen is
+  driven entirely by real data — no mock plans, terminal transcripts, titles, or
+  history. First-run onboarding and a no-provider banner replace the empty shell.
+- Streaming plan execution over a Tauri channel (live per-step status + output),
+  with the same server-side re-review + confirmation enforcement as the blocking path.
+- Provider fallback chain for planning (default → other enabled providers → local
+  mock) so planning always works and degrades clearly.
 - Real AI: OpenAI-compatible provider over HTTP (chat / structured-output planning
   / summarize), with AiPanel re-classifying every step's risk; create_plan uses the
   configured provider and falls back to the offline mock engine.

@@ -190,15 +190,17 @@ pub async fn create_plan(
         let p = provider.clone();
         let intent2 = intent.clone();
         let sid = server_id.clone();
-        // The provider call is blocking HTTP — run it off the UI thread.
-        let res = tokio::task::spawn_blocking(move || {
+        // The provider call is blocking HTTP — run it off the UI thread. A task
+        // panic must not abort the whole command: log and fall through to the next
+        // candidate / mock.
+        let joined = tokio::task::spawn_blocking(move || {
             crate::agent::plan_with_provider(&p, key, &intent2, sid.as_deref())
         })
-        .await
-        .map_err(|e| AppError::Provider(format!("plan task failed: {e}")))?;
-        match res {
-            Ok(plan) => return Ok(plan),
-            Err(e) => eprintln!("[plan] provider '{}' failed ({}); trying next / mock", provider.name, e.code()),
+        .await;
+        match joined {
+            Ok(Ok(plan)) => return Ok(plan),
+            Ok(Err(e)) => eprintln!("[plan] provider '{}' failed ({}); trying next / mock", provider.name, e.code()),
+            Err(e) => eprintln!("[plan] provider '{}' task panicked ({e}); trying next / mock", provider.name),
         }
     }
     state.plan_engine.create_plan(&intent, server_id.as_deref())
