@@ -1,9 +1,8 @@
-//! Server Doctor: a read-only health check.
+//! 服务器体检（Doctor）：只读健康检查。
 //!
-//! Runs a fixed set of inspection commands (all `Low` per the Risk Reviewer)
-//! over SSH and assembles a [`DoctorReport`]. Diagnosis mode never changes
-//! server state (docs/SECURITY_MODEL.zh-Hans.md). The commands here ARE the
-//! read-only allowlist for the doctor flow.
+//! 通过 SSH 执行一组固定的检查类命令（按 Risk Reviewer 判定全部为 `Low`），
+//! 并汇总成一份 [`DoctorReport`]。诊断模式永远不改变服务器状态
+//!（docs/SECURITY_MODEL.zh-Hans.md）。这里的命令本身就是体检流程的只读白名单。
 
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -17,7 +16,7 @@ use crate::core::types::{
 
 const PROBE_TIMEOUT: Duration = Duration::from_secs(15);
 
-/// (key, summary, command) for each read-only probe.
+/// 每个只读探针的 (key, 摘要, 命令)。
 const PROBES: &[(&str, &str, &str)] = &[
     ("os", "操作系统", "cat /etc/os-release"),
     ("kernel", "内核", "uname -rs"),
@@ -35,7 +34,7 @@ const PROBES: &[(&str, &str, &str)] = &[
     ("docker", "Docker", "docker ps --format '{{.Names}} {{.Status}}'"),
 ];
 
-/// The read-only plan the doctor will execute, for showing the user before running.
+/// 体检将要执行的只读计划，用于在运行前展示给用户。
 pub fn doctor_plan(server_id: &str) -> Plan {
     Plan {
         id: new_id(),
@@ -55,26 +54,25 @@ pub fn doctor_plan(server_id: &str) -> Plan {
     }
 }
 
-/// A streaming event emitted while the doctor runs, so the frontend terminal can
-/// fill in live instead of all-at-once.
+/// 体检运行过程中发出的流式事件，让前端终端可以实时填充而非一次性输出。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum DoctorStreamEvent {
-    /// A probe started / finished. `status` is "running" | "done" | "failed".
+    /// 某个探针开始 / 结束。`status` 为 "running" | "done" | "failed"。
     Step {
         index: usize,
         total: usize,
         summary: String,
         status: String,
     },
-    /// A single line of (sanitized) output from the current probe.
+    /// 当前探针输出的单行（已脱敏）。
     Line { text: String, stderr: bool },
-    /// A health warning derived from the collected output.
+    /// 从采集到的输出中推导出的健康告警。
     Warning { message: String },
 }
 
-/// Assemble a [`DoctorReport`] from the collected probe output + warnings. Shared
-/// by [`run_doctor`] and [`run_doctor_streamed`] so both produce the same shape.
+/// 从采集到的探针输出 + 告警汇总出一份 [`DoctorReport`]。由 [`run_doctor`] 和
+/// [`run_doctor_streamed`] 共用，保证两者产出的结构一致。
 fn build_report(
     server_id: &str,
     out: &BTreeMap<&str, String>,
@@ -100,9 +98,8 @@ fn build_report(
     }
 }
 
-/// Record one probe's result into the running output/warnings/executions, matching
-/// run_doctor's bookkeeping exactly. Returns the warnings appended for this probe
-/// so streaming callers can surface them as they happen.
+/// 将单个探针的结果记入累积中的 output/warnings/executions，与 run_doctor 的
+/// 记账方式完全一致。返回本次探针新增的告警，以便流式调用方能够即时展示。
 fn record_probe(
     key: &'static str,
     result: AppResult<CommandExecution>,
@@ -116,7 +113,7 @@ fn record_probe(
             if exec.exit_code == 0 {
                 out.insert(key, exec.stdout.trim().to_string());
             } else if key != "docker" {
-                // docker often absent — not worth a warning
+                // docker 经常缺失——不值得为此发告警
                 emitted.push(format!("{key} 探测失败 (exit {})", exec.exit_code));
             }
             executions.push(exec);
@@ -127,8 +124,8 @@ fn record_probe(
     emitted
 }
 
-/// Check the disk output for high usage and append a warning if found. Returns the
-/// warning if one was added, so streaming callers can surface it.
+/// 检查磁盘输出是否使用率过高，若是则追加一条告警。若新增了告警则将其返回，
+/// 以便流式调用方能够展示。
 fn check_disk_pressure(out: &BTreeMap<&str, String>, warnings: &mut Vec<String>) -> Option<String> {
     if let Some(disk) = out.get("disk") {
         if disk_under_pressure(disk) {
@@ -140,7 +137,7 @@ fn check_disk_pressure(out: &BTreeMap<&str, String>, warnings: &mut Vec<String>)
     None
 }
 
-/// Run the doctor over SSH. Returns the assembled report plus every execution.
+/// 通过 SSH 运行体检。返回汇总后的报告以及每一次命令执行记录。
 pub async fn run_doctor(
     server: &ServerProfile,
     secret: Option<&str>,
@@ -151,7 +148,7 @@ pub async fn run_doctor(
 
     for (key, _summary, cmd) in PROBES {
         let result = crate::ssh::run_readonly(server, secret, cmd, PROBE_TIMEOUT).await;
-        // `key` is `&&'static str`; record_probe takes `&'static str`.
+        // `key` 的类型是 `&&'static str`；record_probe 接收 `&'static str`。
         record_probe(*key, result, &mut out, &mut warnings, &mut executions);
     }
 
@@ -160,9 +157,9 @@ pub async fn run_doctor(
     Ok(build_report(&server.id, &out, warnings, executions))
 }
 
-/// Streaming counterpart to [`run_doctor`]: emits per-step / per-line events via
-/// `on_event` as it runs, then returns the SAME [`DoctorReport`] shape. Read-only
-/// safety is unchanged — every probe still goes through [`crate::ssh::run_readonly_streamed`].
+/// [`run_doctor`] 的流式版本：运行时通过 `on_event` 发出按步骤 / 按行的事件，
+/// 最后返回与之相同结构的 [`DoctorReport`]。只读安全性不变——每个探针仍然
+/// 走 [`crate::ssh::run_readonly_streamed`]。
 pub async fn run_doctor_streamed(
     server: &ServerProfile,
     secret: Option<&str>,
@@ -192,8 +189,8 @@ pub async fn run_doctor_streamed(
         )
         .await;
 
-        // Did this probe succeed? Mirror run_doctor's bookkeeping: a non-zero
-        // docker exit is benign (docker is often absent), so don't mark it failed.
+        // 本次探针是否成功？沿用 run_doctor 的记账逻辑：docker 非零退出是良性的
+        //（docker 经常缺失），因此不将其标记为失败。
         let ok = matches!(&result, Ok(exec) if exec.exit_code == 0) || *key == "docker";
         let emitted = record_probe(*key, result, &mut out, &mut warnings, &mut executions);
         for message in emitted {
@@ -215,7 +212,7 @@ pub async fn run_doctor_streamed(
     Ok(build_report(&server.id, &out, warnings, executions))
 }
 
-/// Compact facts for caching on the server card.
+/// 用于缓存到服务器卡片上的精简信息（facts）。
 pub fn facts_from_report(report: &DoctorReport) -> BTreeMap<String, String> {
     let mut facts = BTreeMap::new();
     if let Some(os) = &report.os {
@@ -230,6 +227,7 @@ pub fn facts_from_report(report: &DoctorReport) -> BTreeMap<String, String> {
     facts
 }
 
+/// 从 /etc/os-release 内容中解析出 PRETTY_NAME（发行版友好名称）。
 fn parse_pretty_name(os_release: &str) -> Option<String> {
     os_release.lines().find_map(|line| {
         line.strip_prefix("PRETTY_NAME=")
@@ -237,10 +235,12 @@ fn parse_pretty_name(os_release: &str) -> Option<String> {
     })
 }
 
+/// 按行拆分，过滤空行并去除每行首尾空白。
 fn split_lines(s: &str) -> Vec<String> {
     s.lines().filter(|l| !l.trim().is_empty()).map(|l| l.trim().to_string()).collect()
 }
 
+/// 判断 df 输出中是否存在任一分区使用率达到或超过 90%。
 fn disk_under_pressure(df_output: &str) -> bool {
     df_output.split_whitespace().any(|tok| {
         tok.strip_suffix('%')
@@ -259,7 +259,7 @@ mod tests {
         let p = doctor_plan("s1");
         assert_eq!(p.steps.len(), PROBES.len());
         assert!(p.steps.iter().all(|s| s.read_only && s.risk == RiskLevel::Low));
-        // every probe must classify Low, or run_readonly would block it
+        // 每个探针都必须被判定为 Low，否则 run_readonly 会拦截它
         for s in &p.steps {
             assert_eq!(crate::risk::classify_command(&s.command).level, RiskLevel::Low);
         }

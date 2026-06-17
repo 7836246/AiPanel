@@ -6,9 +6,9 @@ export interface RiskBadgeProps extends React.HTMLAttributes<HTMLSpanElement> {
 }
 
 /**
- * Risk indicator for a planned operation. The four levels map to the security
- * model: Low (read-only), Medium (recoverable), High (data loss / outage /
- * boundary change), Blocked (forbidden by default).
+ * 计划操作的风险指示器。四个等级对应安全模型：
+ * Low（只读）、Medium（可恢复的状态变更）、High（数据丢失/服务中断/安全边界变化）、
+ * Blocked（默认禁止）。
  */
 export function RiskBadge({ level, className, ...props }: RiskBadgeProps) {
   const meta = RISK_META[level];

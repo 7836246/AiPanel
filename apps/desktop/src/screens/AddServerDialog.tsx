@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Button, Dialog, Input, Textarea } from "@aipanel/ui";
 import { createServer, setServerSecret, type AuthKind, type ServerProfile } from "../lib/api";
 
+// 添加服务器对话框：填写连接信息与凭据，凭据仅写入本地 Keychain。
 export default function AddServerDialog({
   open,
   onClose,
@@ -20,6 +21,7 @@ export default function AddServerDialog({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // 把表单恢复到初始默认值。
   function reset() {
     setName("");
     setHost("");
@@ -30,6 +32,7 @@ export default function AddServerDialog({
     setError(null);
   }
 
+  // 校验并提交：先创建服务器，再（非 agent 且填了凭据时）单独保存凭据。
   async function submit() {
     if (!name.trim() || !host.trim() || !username.trim()) {
       setError("名称、主机、用户名必填");

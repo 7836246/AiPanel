@@ -28,11 +28,12 @@ const button = cva(
   }
 );
 
+/** 按钮属性：原生 button 属性 + cva 变体（variant / size）。 */
 export interface ButtonProps
   extends React.ButtonHTMLAttributes<HTMLButtonElement>,
     VariantProps<typeof button> {}
 
-/** Primary action control. Use `variant="danger"` for confirmed high-risk actions. */
+/** 主操作按钮。高风险且已确认的操作请用 `variant="danger"`。 */
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
   ({ className, variant, size, type = "button", ...props }, ref) => (
     <button

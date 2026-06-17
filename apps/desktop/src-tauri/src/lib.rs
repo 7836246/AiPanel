@@ -1,9 +1,8 @@
-//! AiPanel desktop backend.
+//! AiPanel 桌面端后端。
 //!
-//! `lib.rs` only assembles application state and registers Tauri commands. All
-//! business logic lives in the Core layer and its modules — AiPanel owns the
-//! security boundary (SSH execution, risk review, audit), never the agent. See
-//! CLAUDE.md and docs/SECURITY_MODEL.zh-Hans.md.
+//! `lib.rs` 只负责组装应用状态、注册 Tauri 命令。所有业务逻辑都在 Core 层及其
+//! 子模块里——安全边界（SSH 执行、风险审查、审计）由 AiPanel 自己掌控，绝不
+//! 交给 agent。详见 CLAUDE.md 与 docs/SECURITY_MODEL.zh-Hans.md。
 
 pub mod core;
 
@@ -23,14 +22,14 @@ use tauri::Manager;
 use credentials::{default_credential_store, CredentialStore};
 use store::Store;
 
-/// Shared application state, managed by Tauri and injected into commands.
+/// 共享的应用状态，由 Tauri 托管并注入到各命令中。
 pub struct AppState {
     pub store: Store,
     pub credentials: Box<dyn CredentialStore>,
     pub plan_engine: Box<dyn plan::PlanEngine>,
 }
 
-/// Backend version, surfaced to the frontend so the UI can show what it's talking to.
+/// 后端版本号，暴露给前端，让 UI 能显示自己正在对接的版本。
 #[tauri::command]
 fn app_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()

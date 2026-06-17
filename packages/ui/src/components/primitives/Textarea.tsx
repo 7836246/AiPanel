@@ -4,7 +4,7 @@ import { cn } from "../../lib/cn";
 export interface TextareaProps
   extends React.TextareaHTMLAttributes<HTMLTextAreaElement> {}
 
-/** Multi-line field — e.g. the natural-language request the agent plans from. */
+/** 多行文本框——例如用户输入、供 Agent 生成计划的自然语言请求。 */
 export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(
   ({ className, rows = 3, ...props }, ref) => (
     <textarea

@@ -1,22 +1,23 @@
-//! Plan Engine.
+//! 计划引擎（Plan Engine）。
 //!
-//! Turns a natural-language intent into a structured, reviewable [`Plan`]. The
-//! agent's job (later) is to produce plans; AiPanel always converts them to this
-//! shape and runs them through the Risk Reviewer before execution — the AI's
-//! output is a plan, not a fact (docs/SECURITY_MODEL.zh-Hans.md).
+//! 将自然语言意图转换成结构化、可审查的 [`Plan`]。Agent（后续）的职责是产出
+//! 计划；AiPanel 始终把它们转换成这种结构，并在执行前先过 Risk Reviewer——
+//! AI 的输出是计划，不是事实（docs/SECURITY_MODEL.zh-Hans.md）。
 //!
-//! [`MockPlanEngine`] is a deterministic, offline stand-in: it routes on
-//! keywords and only ever emits **read-only diagnostics**, so it can never
-//! propose a destructive step (honoring intents like "不要删除任何文件").
+//! [`MockPlanEngine`] 是一个确定性的离线替身：它基于关键词路由，且只产出
+//! **只读诊断命令**，因此永远不会提出破坏性步骤（尊重诸如「不要删除任何文件」
+//! 这类意图）。
 
 use crate::core::error::AppResult;
 use crate::core::types::{new_id, now, Plan, PlanStep};
 use crate::risk::classify_command;
 
+/// 计划引擎抽象：把意图转换为结构化计划。可由不同实现（Mock / 真实 Agent）提供。
 pub trait PlanEngine: Send + Sync {
     fn create_plan(&self, intent: &str, server_id: Option<&str>) -> AppResult<Plan>;
 }
 
+/// 离线 Mock 计划引擎：只产出只读诊断步骤。
 pub struct MockPlanEngine;
 
 impl PlanEngine for MockPlanEngine {
@@ -44,11 +45,12 @@ impl PlanEngine for MockPlanEngine {
     }
 }
 
+/// 判断 haystack 是否包含 needles 中的任意一个子串。
 fn has_any(haystack: &str, needles: &[&str]) -> bool {
     needles.iter().any(|n| haystack.contains(n))
 }
 
-/// Route an intent to a read-only diagnostic command set.
+/// 将意图路由到一组只读诊断命令。
 fn pick_commands(intent: &str) -> Vec<(&'static str, &'static str)> {
     let i = intent.to_lowercase();
 
@@ -78,7 +80,7 @@ fn pick_commands(intent: &str) -> Vec<(&'static str, &'static str)> {
             ("查看容器资源占用", "docker stats --no-stream"),
         ];
     }
-    // Default: a general read-only health snapshot.
+    // 默认：一份通用的只读健康快照。
     vec![
         ("系统信息", "uname -rs"),
         ("运行时长", "uptime -p"),
@@ -88,6 +90,7 @@ fn pick_commands(intent: &str) -> Vec<(&'static str, &'static str)> {
     ]
 }
 
+/// 由意图推导出计划目标文案（过长时截断到 60 个字符并加省略号）。
 fn derive_goal(intent: &str) -> String {
     let trimmed = intent.trim();
     let short: String = trimmed.chars().take(60).collect();

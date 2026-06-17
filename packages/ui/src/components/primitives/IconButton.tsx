@@ -23,11 +23,11 @@ const iconButton = cva(
 export interface IconButtonProps
   extends React.ButtonHTMLAttributes<HTMLButtonElement>,
     VariantProps<typeof iconButton> {
-  /** Accessible name — icon-only buttons have no visible text. */
+  /** 无障碍名称——纯图标按钮没有可见文字，必须提供。 */
   "aria-label": string;
 }
 
-/** Square, icon-only control. Use for toolbar/window/inline actions (copy, toggles). */
+/** 方形纯图标按钮。用于工具栏/窗口/行内操作（复制、切换等）。 */
 export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(
   ({ className, variant, size, type = "button", ...props }, ref) => (
     <button

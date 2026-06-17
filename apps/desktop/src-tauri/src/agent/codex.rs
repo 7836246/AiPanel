@@ -1,15 +1,15 @@
-//! Codex app-server bridge transport.
+//! Codex app-server 桥接的传输层。
 //!
-//! Launches `codex app-server` as a subprocess and speaks **newline-delimited
-//! JSON-RPC 2.0** over its stdio. AiPanel drives the agent through this; the
-//! agent reaches servers ONLY via AiPanel Tools (advertised at `initialize`),
-//! never raw SSH/shell (docs/SECURITY_MODEL.zh-Hans.md).
+//! 把 `codex app-server` 作为子进程启动，并在其 stdio 上以**换行分隔的
+//! JSON-RPC 2.0** 通信。AiPanel 通过它驱动 agent；agent 只能经由 AiPanel Tools
+//! （在 `initialize` 时声明）触达服务器，绝不走裸 SSH/shell
+//! （见 docs/SECURITY_MODEL.zh-Hans.md）。
 //!
-//! Scope of this module: the transport (spawn, framed request/response, the
-//! `initialize` handshake) — implemented and unit-tested at the framing level.
-//! The higher-level turn / tool-call loop builds on this; until it is verified
-//! against an installed `codex app-server`, `CodexAppServerProvider`'s chat/plan
-//! return a clear, documented error and `test()` performs a real `initialize`.
+//! 本模块范围：传输层（启动、带帧的请求/响应、`initialize` 握手）——已实现
+//! 并在分帧层面有单元测试。更上层的 turn / 工具调用回路在此之上构建；在它
+//! 对照已安装的 `codex app-server` 验证通过之前，`CodexAppServerProvider` 的
+//! chat/plan 返回明确且有文档说明的错误，而 `test()` 会执行一次真实的
+//! `initialize`。
 
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};
@@ -20,17 +20,17 @@ use serde_json::{json, Value};
 
 use crate::core::error::{AppError, AppResult};
 
-/// Build a single JSON-RPC request line (newline-terminated).
+/// 构造单行 JSON-RPC 请求（以换行符结尾）。
 pub fn build_request(id: u64, method: &str, params: Value) -> String {
     let mut line = json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params }).to_string();
     line.push('\n');
     line
 }
 
-/// Given a JSON-RPC response value, extract `result` or turn `error` into AppError.
+/// 给定一个 JSON-RPC 响应值，提取 `result`，或把 `error` 转成 AppError。
 pub fn parse_response(value: &Value, id: u64) -> Option<AppResult<Value>> {
     if value.get("id").and_then(|v| v.as_u64()) != Some(id) {
-        return None; // not our response (notification or a different id)
+        return None; // 不是我们要的响应（通知，或别的 id）
     }
     if let Some(err) = value.get("error") {
         let msg = err.get("message").and_then(|v| v.as_str()).unwrap_or("unknown error");
@@ -39,7 +39,7 @@ pub fn parse_response(value: &Value, id: u64) -> Option<AppResult<Value>> {
     Some(Ok(value.get("result").cloned().unwrap_or(Value::Null)))
 }
 
-/// A live connection to a `codex app-server` subprocess.
+/// 到 `codex app-server` 子进程的一个活动连接。
 pub struct CodexClient {
     child: Child,
     stdin: ChildStdin,
@@ -48,7 +48,7 @@ pub struct CodexClient {
 }
 
 impl CodexClient {
-    /// Spawn `<codex_path> app-server` and start reading its stdout.
+    /// 启动 `<codex_path> app-server` 并开始读取其 stdout。
     pub fn start(codex_path: &str) -> AppResult<Self> {
         let mut child = Command::new(codex_path)
             .arg("app-server")
@@ -79,7 +79,7 @@ impl CodexClient {
         Ok(CodexClient { child, stdin, rx, next_id: 1 })
     }
 
-    /// Send a request and wait (bounded) for the matching response.
+    /// 发送一个请求，并（带超时地）等待匹配的响应。
     pub fn request(&mut self, method: &str, params: Value, timeout: Duration) -> AppResult<Value> {
         let id = self.next_id;
         self.next_id += 1;
@@ -100,7 +100,7 @@ impl CodexClient {
                         if let Some(result) = parse_response(&v, id) {
                             return result;
                         }
-                        // else: a notification or other id — keep waiting.
+                        // 否则：是通知或别的 id —— 继续等。
                     }
                 }
                 Err(RecvTimeoutError::Timeout) => {
@@ -113,8 +113,8 @@ impl CodexClient {
         }
     }
 
-    /// The JSON-RPC `initialize` handshake. `tools` is the AiPanel Tools surface
-    /// advertised to the agent — the only capability it may call.
+    /// JSON-RPC `initialize` 握手。`tools` 是向 agent 声明的 AiPanel Tools
+    /// 能力清单——也是它唯一可调用的能力。
     pub fn initialize(&mut self, tools: Value) -> AppResult<Value> {
         self.request(
             "initialize",

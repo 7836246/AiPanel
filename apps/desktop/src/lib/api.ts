@@ -1,20 +1,21 @@
 /**
- * Typed bridge to the Rust backend.
+ * 与 Rust 后端通信的类型化桥接层。
  *
- * Every backend capability goes through here. Under Tauri it calls the real
- * `#[tauri::command]`s; in a plain browser (`pnpm dev`, no Tauri shell) it falls
- * back to small mocks so the UI still renders. Mirrors apps/desktop/src-tauri
- * core types (camelCase). Secrets are passed to dedicated commands, never kept
- * in these structs.
+ * 所有后端能力都从这里走。在 Tauri 环境下调用真实的 `#[tauri::command]`；
+ * 在纯浏览器（`pnpm dev`，无 Tauri 壳）下回退到轻量 mock，保证 UI 仍能渲染。
+ * 类型镜像 apps/desktop/src-tauri 的核心类型（camelCase）。凭据只通过专用命令传递，
+ * 绝不存放在这些结构体中。
  */
 import { invoke, Channel } from "@tauri-apps/api/core";
 
+/** 判断当前是否运行在 Tauri 壳内（否则为浏览器开发模式）。 */
 export const isTauri = (): boolean =>
   typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 export type ServerStatus = "online" | "offline" | "unknown";
 export type AuthKind = "password" | "key" | "agent";
 
+/** 已保存的服务器档案（凭据不在此处，仅以 credentialRef 引用）。 */
 export interface ServerProfile {
   id: string;
   name: string;
@@ -29,6 +30,7 @@ export interface ServerProfile {
   updatedAt: string;
 }
 
+/** 创建/更新服务器的输入（不含凭据）。 */
 export interface ServerInput {
   name: string;
   host: string;
@@ -37,6 +39,7 @@ export interface ServerInput {
   authKind: AuthKind;
 }
 
+/** 后端返回的结构化错误。 */
 export interface AppError {
   code: string;
   message: string;
@@ -44,6 +47,7 @@ export interface AppError {
 
 export type RiskLevel = "low" | "medium" | "high" | "blocked";
 
+/** 计划中的单个步骤：摘要、命令、风险等级、是否只读。 */
 export interface PlanStep {
   summary: string;
   command: string;
@@ -52,6 +56,7 @@ export interface PlanStep {
   tool?: string;
 }
 
+/** Agent 计划转换出的结构化执行计划。 */
 export interface Plan {
   id: string;
   serverId?: string;
@@ -60,6 +65,7 @@ export interface Plan {
   createdAt: string;
 }
 
+/** 风险审查中针对某一步骤的单条发现。 */
 export interface RiskFinding {
   stepIndex: number;
   category: string;
@@ -67,6 +73,7 @@ export interface RiskFinding {
   message: string;
 }
 
+/** 整个计划的风险审查结果：总体等级、是否需确认/二次确认/被阻止。 */
 export interface RiskReview {
   overall: RiskLevel;
   requiresConfirmation: boolean;
@@ -76,7 +83,7 @@ export interface RiskReview {
   stepLevels: RiskLevel[];
 }
 
-/** Display metadata for a risk level (Chinese label + token-driven colors). */
+/** 风险等级的展示元信息（中文标签 + 由设计 token 驱动的颜色类）。 */
 export const RISK_META: Record<RiskLevel, { label: string; dot: string; text: string }> = {
   low: { label: "低风险", dot: "bg-risk-low", text: "text-risk-low" },
   medium: { label: "中风险", dot: "bg-risk-medium", text: "text-risk-medium" },
@@ -84,7 +91,7 @@ export const RISK_META: Record<RiskLevel, { label: string; dot: string; text: st
   blocked: { label: "已阻止", dot: "bg-risk-blocked", text: "text-risk-blocked" },
 };
 
-// ---- browser-dev mocks (only used when not under Tauri) -------------------
+// ---- 浏览器开发模式的 mock 数据（仅在非 Tauri 环境使用） -------------------
 
 const MOCK_SERVERS: ServerProfile[] = [
   mockServer("prod-ai-01", "root@10.0.0.4:22", "online"),
@@ -110,7 +117,7 @@ function mockServer(name: string, target: string, status: ServerStatus): ServerP
   };
 }
 
-// ---- commands -------------------------------------------------------------
+// ---- 后端命令封装 -------------------------------------------------------------
 
 export async function listServers(): Promise<ServerProfile[]> {
   if (!isTauri()) return MOCK_SERVERS;
@@ -137,12 +144,13 @@ export async function deleteServer(id: string): Promise<void> {
   return invoke<void>("delete_server", { id });
 }
 
-/** Store an SSH secret (password/private key). Goes straight to the credential store. */
+/** 保存 SSH 凭据（密码/私钥），直接写入凭据存储（Keychain），不经数据库。 */
 export async function setServerSecret(id: string, secret: string): Promise<void> {
   if (!isTauri()) return;
   return invoke<void>("set_server_secret", { id, secret });
 }
 
+/** 一条命令的执行结果（含退出码与脱敏后的输出）。 */
 export interface CommandExecution {
   command: string;
   exitCode: number;
@@ -153,7 +161,7 @@ export interface CommandExecution {
 }
 
 export async function checkSshConnection(id: string): Promise<boolean> {
-  if (!isTauri()) return Math.random() > 0.3; // demo only
+  if (!isTauri()) return Math.random() > 0.3; // 仅用于演示
   return invoke<boolean>("check_ssh_connection", { id });
 }
 
@@ -162,7 +170,7 @@ export async function runReadonlyCommand(id: string, command: string): Promise<C
     return {
       command,
       exitCode: 0,
-      stdout: "(browser mock — no SSH)",
+      stdout: "(browser mock — no SSH)", // 浏览器 mock：不实际执行 SSH
       stderr: "",
       durationMs: 0,
       startedAt: new Date().toISOString(),
@@ -170,6 +178,7 @@ export async function runReadonlyCommand(id: string, command: string): Promise<C
   return invoke<CommandExecution>("run_readonly_command", { id, command });
 }
 
+/** 只读体检（doctor）报告：系统概况、端口、服务、告警与各命令执行明细。 */
 export interface DoctorReport {
   serverId: string;
   os?: string;
@@ -196,6 +205,7 @@ export type TaskStatus =
   | "failed"
   | "blocked";
 
+/** 一条审计记录：意图、计划、风险判定、确认、执行明细与总结。 */
 export interface AuditRecord {
   id: string;
   serverId?: string;
@@ -266,10 +276,11 @@ export async function executeConfirmedPlan(
   });
 }
 
-// ---- tasks / runs (user-facing history) -----------------------------------
+// ---- 任务 / 运行记录（面向用户的历史） -----------------------------------
 
 export type TaskKind = "plan" | "diagnose" | "doctor";
 
+/** 一次任务/运行记录，对应侧栏历史中的一项。 */
 export interface TaskRecord {
   id: string;
   serverId?: string;
@@ -314,19 +325,22 @@ export async function deleteTask(id: string): Promise<void> {
   return invoke<void>("delete_task", { id });
 }
 
-// ---- streaming plan execution ---------------------------------------------
+// ---- 流式计划执行 ---------------------------------------------
 
+/** 计划执行过程中的流式事件：步骤状态、输出行、整体完成。 */
 export type PlanExecEvent =
   | { type: "step"; index: number; total: number; summary: string; status: "running" | "done" | "failed" }
   | { type: "line"; text: string; stderr: boolean }
   | { type: "done"; status: "done" | "failed"; exitCode: number };
 
+/** 流式执行已确认的计划；逐事件回调 onEvent，完成后返回审计记录。 */
 export async function runConfirmedPlanStream(
   plan: Plan,
   opts: { confirmed: boolean; doubleConfirmed: boolean; readOnlyMode?: boolean },
   onEvent: (ev: PlanExecEvent) => void
 ): Promise<AuditRecord> {
   if (!isTauri()) {
+    // 浏览器 mock：先一次性拿到结果，再把每条命令/输出补发成流式行。
     const rec = await executeConfirmedPlan(plan, opts);
     for (const ex of rec.executions) {
       onEvent({ type: "line", text: `$ ${ex.command}`, stderr: false });
@@ -357,13 +371,13 @@ export async function serverDoctorPlan(id: string): Promise<Plan> {
   return invoke<Plan>("server_doctor_plan", { id });
 }
 
-/** Live events streamed while the server doctor runs. */
+/** 只读体检运行期间流式推送的事件。 */
 export type DoctorStreamEvent =
   | { type: "step"; index: number; total: number; summary: string; status: "running" | "done" | "failed" }
   | { type: "line"; text: string; stderr: boolean }
   | { type: "warning"; message: string };
 
-/** Run the doctor with live streaming; resolves with the final report. */
+/** 以流式方式运行体检；完成后返回最终报告。 */
 export async function runServerDoctorStream(
   id: string,
   onEvent: (ev: DoctorStreamEvent) => void
@@ -413,12 +427,13 @@ export interface ToolTrace {
   name: string;
   ok: boolean;
 }
+/** 一次 Agent 轮次的结果：总结文本 + 调用过的工具轨迹。 */
 export interface AgentTurnResult {
   summary: string;
   toolCalls: ToolTrace[];
 }
 
-/** Autonomous read-only diagnosis: the model investigates via read-only tools, then summarizes. */
+/** 自主只读诊断：模型通过只读工具调查后给出总结。 */
 export async function runAgentTurn(intent: string, serverId?: string): Promise<AgentTurnResult> {
   if (!isTauri())
     return {
@@ -433,7 +448,9 @@ export async function reviewPlan(plan: Plan, readOnlyMode = false): Promise<Risk
   return invoke<RiskReview>("review_plan", { plan, readOnlyMode });
 }
 
+// 风险等级从低到高的顺序，用于在 mock 中取「最高」总体风险。
 const RISK_ORDER: RiskLevel[] = ["low", "medium", "high", "blocked"];
+// 浏览器 mock 的风险审查：只读模式下把非 low 的步骤标记为 blocked，并据此推导总体等级。
 function mockReview(plan: Plan, readOnlyMode: boolean): RiskReview {
   const levels = plan.steps.map((s) =>
     readOnlyMode && s.risk !== "low" ? ("blocked" as RiskLevel) : s.risk
@@ -450,10 +467,11 @@ function mockReview(plan: Plan, readOnlyMode: boolean): RiskReview {
   };
 }
 
-// ---- providers / model selection ------------------------------------------
+// ---- 供应商 / 模型选择 ------------------------------------------
 
 export type ProviderKind = "codex_app_server" | "openai_compatible" | "custom";
 
+/** 已保存的模型供应商配置（API Key 不在此处，仅以 credentialRef 引用）。 */
 export interface ProviderConfig {
   id: string;
   name: string;
@@ -467,6 +485,7 @@ export interface ProviderConfig {
   updatedAt: string;
 }
 
+/** 新增/编辑供应商的输入（API Key 单独通过参数传递）。 */
 export interface ProviderInput {
   id?: string;
   name: string;
@@ -477,11 +496,13 @@ export interface ProviderInput {
   enabled: boolean;
 }
 
+/** 模型选择策略：是否按任务自动选择，否则使用指定的默认供应商。 */
 export interface ModelSelectionPolicy {
   auto: boolean;
   defaultProviderId?: string;
 }
 
+/** 供应商连通性测试结果。 */
 export interface ProviderTestResult {
   ok: boolean;
   message: string;
@@ -546,15 +567,18 @@ export async function testProvider(input: ProviderInput, apiKey?: string): Promi
     updatedAt: new Date().toISOString(),
   };
   if (!isTauri())
+    // 浏览器 mock：仅做最基本的配置完整性检查（OpenAI 兼容须填 baseUrl）。
     return { ok: input.kind !== "openai_compatible" || !!input.baseUrl, message: "(browser mock) 配置检查" };
   return invoke<ProviderTestResult>("test_provider", { config, apiKey: apiKey ?? null });
 }
 
+/** 返回当前凭据存储后端标识（如 "mock" 表示开发期内存存储）。 */
 export async function credentialBackend(): Promise<string> {
   if (!isTauri()) return "mock";
   return invoke<string>("credential_backend");
 }
 
+/** 返回应用版本号（浏览器开发模式下为占位值）。 */
 export async function appVersion(): Promise<string> {
   if (!isTauri()) return "0.1.0-dev";
   return invoke<string>("app_version");

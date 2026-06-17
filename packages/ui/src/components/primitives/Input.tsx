@@ -3,7 +3,7 @@ import { cn } from "../../lib/cn";
 
 export interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {}
 
-/** Single-line text field. Use `type="password"` for credentials — never log the value. */
+/** 单行文本输入框。凭据请用 `type="password"`——绝不记录其值。 */
 export const Input = forwardRef<HTMLInputElement, InputProps>(
   ({ className, ...props }, ref) => (
     <input

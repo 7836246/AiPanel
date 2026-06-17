@@ -2,7 +2,7 @@ import { cn } from "../../lib/cn";
 
 type DivProps = React.HTMLAttributes<HTMLDivElement>;
 
-/** Surface container for grouped content. */
+/** 用于聚合内容的卡片容器。 */
 export function Card({ className, ...props }: DivProps) {
   return (
     <div

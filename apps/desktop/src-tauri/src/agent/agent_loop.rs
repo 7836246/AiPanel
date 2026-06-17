@@ -1,15 +1,13 @@
-//! Autonomous agent turn: the model investigates via AiPanel Tools, then answers.
+//! 自主 agent 回合：模型通过 AiPanel Tools 自行调查，然后给出回答。
 //!
-//! The agent is offered ONLY the **read-only** tools (server.list/info,
-//! server.doctor.readonly, ssh.run_readonly, task.plan, task.review). It can call
-//! them to gather facts and then summarize — but it can NEVER change a server
-//! this way: write/execute tools are not exposed to the autonomous loop, so any
-//! mutation still goes through the explicit plan → user-confirm → execute path
-//! (docs/SECURITY_MODEL.zh-Hans.md). Tool results are already sanitized + audited
-//! by `tools::dispatch`.
+//! 只向 agent 提供**只读**工具（server.list/info、server.doctor.readonly、
+//! ssh.run_readonly、task.plan、task.review）。它能调用这些工具收集事实再做总结
+//! ——但绝不能借此修改服务器：写/执行类工具不会暴露给自主回路，因此任何变更
+//! 仍走显式的 计划 → 用户确认 → 执行 链路（见 docs/SECURITY_MODEL.zh-Hans.md）。
+//! 工具结果已由 `tools::dispatch` 完成脱敏 + 审计。
 //!
-//! Uses the async reqwest client (the loop awaits async tool dispatch), separate
-//! from the provider's blocking one-shot calls.
+//! 使用异步 reqwest 客户端（回路需 await 异步的工具分发），与 provider 那套
+//! 阻塞式的一次性调用相互独立。
 
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -21,6 +19,7 @@ use crate::AppState;
 
 const MAX_ITERS: usize = 6;
 
+/// 单次工具调用的轨迹（工具名 + 是否成功），用于回放本回合调用了什么。
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolTrace {
@@ -28,6 +27,7 @@ pub struct ToolTrace {
     pub ok: bool,
 }
 
+/// 一次自主回合的结果：最终总结，以及途中调用过的工具轨迹。
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentTurnResult {
@@ -35,7 +35,7 @@ pub struct AgentTurnResult {
     pub tool_calls: Vec<ToolTrace>,
 }
 
-/// OpenAI `tools` array for the read-only AiPanel Tools.
+/// 把只读的 AiPanel Tools 转成 OpenAI 的 `tools` 数组。
 pub fn read_only_tool_specs() -> Vec<Value> {
     registry()
         .into_iter()
@@ -60,7 +60,7 @@ fn params_schema(name: &str) -> Value {
         "ssh.run_readonly" => json!({"type":"object","properties":{"serverId":{"type":"string"},"command":{"type":"string"}},"required":["serverId","command"]}),
         "task.plan" => json!({"type":"object","properties":{"intent":{"type":"string"},"serverId":{"type":"string"}},"required":["intent"]}),
         "task.review" => json!({"type":"object","properties":{"plan":{"type":"object"},"readOnlyMode":{"type":"boolean"}},"required":["plan"]}),
-        // server.list
+        // server.list（无参数）
         _ => json!({"type":"object","properties":{}}),
     }
 }
@@ -91,7 +91,7 @@ async fn chat(
     serde_json::from_str(&text).map_err(|e| AppError::Provider(format!("响应解析失败: {e}")))
 }
 
-/// Run one autonomous, read-only investigation turn.
+/// 执行一次自主的、只读的调查回合。
 pub async fn run_turn(
     state: &AppState,
     provider: &ProviderConfig,
@@ -134,7 +134,7 @@ pub async fn run_turn(
 
         match tool_calls {
             Some(calls) if !calls.is_empty() => {
-                // Echo the assistant message (with tool_calls) back into context.
+                // 把带 tool_calls 的 assistant 消息回放进上下文。
                 messages.push(msg.clone());
                 for call in calls {
                     let id = call["id"].as_str().unwrap_or_default().to_string();
@@ -144,7 +144,7 @@ pub async fn run_turn(
                         .and_then(|s| serde_json::from_str(s).ok())
                         .unwrap_or_else(|| json!({}));
 
-                    // Only read-only tools are offered, but enforce again here.
+                    // 虽然只提供了只读工具，这里再强制校验一次。
                     let is_read_only = read_only_tool_specs()
                         .iter()
                         .any(|t| t["function"]["name"] == name);
@@ -152,8 +152,8 @@ pub async fn run_turn(
                         ("该工具需用户确认,自动诊断回路不执行写操作。".to_string(), false)
                     } else {
                         match crate::tools::dispatch(state, &name, args).await {
-                            // Sanitize tool results before they go back to the model
-                            // (redacts IPs/secrets in server.list / server.info / output).
+                            // 工具结果回灌给模型前先脱敏
+                            // （在 server.list / server.info / 输出中抹掉 IP / 密钥）。
                             Ok(v) => (truncate(&crate::core::sanitize::sanitize(&v.to_string()), 4000), true),
                             Err(e) => (format!("工具错误: {}", e), false),
                         }
@@ -161,7 +161,7 @@ pub async fn run_turn(
                     trace.push(ToolTrace { name, ok });
                     messages.push(json!({"role":"tool","tool_call_id": id,"content": content}));
                 }
-                // loop again so the model can use the results
+                // 再循环一轮，让模型用上这些结果
             }
             _ => {
                 let summary = msg["content"].as_str().unwrap_or("").to_string();
@@ -193,7 +193,7 @@ mod tests {
             .collect();
         assert!(names.contains(&"server.list".to_string()));
         assert!(names.contains(&"ssh.run_readonly".to_string()));
-        // write/execute tools must NOT be exposed to the autonomous loop
+        // 写/执行类工具绝不能暴露给自主回路
         assert!(!names.contains(&"task.execute_confirmed".to_string()));
         assert!(!names.contains(&"audit.write".to_string()));
     }

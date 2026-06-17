@@ -8,13 +8,13 @@ export interface TerminalLine {
 }
 
 export interface TerminalProps extends React.HTMLAttributes<HTMLDivElement> {
-  /** Host shown in the dock header, e.g. "prod-ai-01". */
+  /** 标题栏中展示的主机名，例如 "prod-ai-01"。 */
   host: string;
-  /** Show the pulsing "live" indicator. */
+  /** 是否显示脉冲的「实时」指示点。 */
   live?: boolean;
-  /** Transcript lines, rendered in monospace. */
+  /** 终端文本行，以等宽字体渲染。 */
   lines: TerminalLine[];
-  /** Append a blinking cursor after the last line. */
+  /** 是否在最后一行追加闪烁光标。 */
   cursor?: boolean;
 }
 
@@ -27,8 +27,8 @@ const TONE: Record<TerminalLineTone, string> = {
 };
 
 /**
- * Light SSH-transcript dock (Codex-style): a host header with an optional live
- * dot, and a scrollable monospace body. Presentational — pass redacted lines.
+ * 轻量的 SSH 输出面板（Codex 风格）：带可选实时指示点的主机标题栏，
+ * 加上可滚动的等宽正文。纯展示组件——传入的行须已脱敏。
  */
 export function Terminal({ host, live, lines, cursor, className, ...props }: TerminalProps) {
   return (

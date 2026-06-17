@@ -1,9 +1,8 @@
-//! Application error type shared across all Core modules and Tauri commands.
+//! 应用级错误类型，供所有 Core 模块与 Tauri 命令共享。
 //!
-//! `AppError` implements `serde::Serialize` so it can be returned directly from
-//! `#[tauri::command]` functions as `Result<T, AppError>`; the frontend receives
-//! `{ code, message }`. Error messages must never contain secrets (see
-//! docs/SECURITY_MODEL.zh-Hans.md) — callers redact before constructing.
+//! `AppError` 实现了 `serde::Serialize`，因此可直接作为 `Result<T, AppError>`
+//! 从 `#[tauri::command]` 函数返回；前端收到的是 `{ code, message }`。错误消息
+//! 绝不能包含密钥（见 docs/SECURITY_MODEL.zh-Hans.md）——调用方需在构造前先脱敏。
 
 use serde::{Serialize, Serializer};
 
@@ -23,8 +22,8 @@ pub enum AppError {
     #[error("credential: {0}")]
     Credential(String),
 
-    /// A planned step was rejected by the Risk Reviewer (Blocked level, or a
-    /// write/high-risk step that was not confirmed).
+    /// 计划中的某一步被风险审查器拒绝（Blocked 等级，或未经确认的
+    /// 写操作/高风险步骤）。
     #[error("blocked by risk policy: {0}")]
     Blocked(String),
 
@@ -42,7 +41,7 @@ pub enum AppError {
 }
 
 impl AppError {
-    /// Stable machine-readable code for the frontend to branch on.
+    /// 稳定的、供前端据以分支处理的机器可读错误码。
     pub fn code(&self) -> &'static str {
         match self {
             AppError::NotFound(_) => "not_found",
@@ -91,6 +90,7 @@ mod tests {
     use super::*;
 
     #[test]
+    // 序列化结果应同时包含 code 与 message 两个字段
     fn serializes_with_code_and_message() {
         let err = AppError::NotFound("server x".into());
         let v = serde_json::to_value(&err).unwrap();
@@ -99,6 +99,7 @@ mod tests {
     }
 
     #[test]
+    // 错误码保持稳定不变
     fn codes_are_stable() {
         assert_eq!(AppError::Blocked("rm -rf /".into()).code(), "blocked");
         assert_eq!(AppError::Ssh("timeout".into()).code(), "ssh");

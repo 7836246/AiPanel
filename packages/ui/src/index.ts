@@ -1,7 +1,7 @@
-// Utilities
+// 工具函数
 export { cn } from "./lib/cn";
 
-// Primitives
+// 基础组件（primitives）
 export { Button, type ButtonProps } from "./components/primitives/Button";
 export { Badge, type BadgeProps } from "./components/primitives/Badge";
 export {
@@ -25,7 +25,7 @@ export {
 } from "./components/primitives/Terminal";
 export { Dialog, type DialogProps } from "./components/primitives/Dialog";
 
-// Domain
+// 领域组件（domain）
 export { RiskBadge, type RiskBadgeProps } from "./components/domain/RiskBadge";
 export { RISK_META, type RiskLevel } from "./components/domain/risk";
 export {

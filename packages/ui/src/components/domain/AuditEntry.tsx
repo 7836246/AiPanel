@@ -4,17 +4,17 @@ import { RiskBadge } from "./RiskBadge";
 import type { RiskLevel } from "./risk";
 
 export interface AuditEntryProps extends React.HTMLAttributes<HTMLDivElement> {
-  /** When the command ran (already-formatted, local time). */
+  /** 命令执行时间（已格式化的本地时间）。 */
   timestamp: string;
   command: string;
   risk: RiskLevel;
-  /** Process exit code; 0 is success. */
+  /** 进程退出码；0 表示成功。 */
   exitCode: number;
-  /** Redacted command output. Never pass unredacted secrets here. */
+  /** 脱敏后的命令输出。绝不在此传入未脱敏的敏感信息。 */
   output?: string;
 }
 
-/** One immutable line in the local audit trail: what ran, when, and the result. */
+/** 本地审计轨迹中的一条不可变记录：执行了什么、何时执行、结果如何。 */
 export function AuditEntry({
   timestamp,
   command,

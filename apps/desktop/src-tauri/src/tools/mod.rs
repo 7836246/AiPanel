@@ -1,17 +1,17 @@
-//! AiPanel Tools — the ONLY way the agent reaches server capability.
+//! AiPanel Tools —— agent 触达服务器能力的**唯一**通道。
 //!
-//! Codex never gets raw SSH or an unrestricted shell; it calls these vetted
-//! tools instead (CLAUDE.md, docs/SECURITY_MODEL.zh-Hans.md). Each tool declares
-//! its permission and audit policy:
+//! Codex 永远拿不到裸 SSH 或不受限的 shell，只能调用这些经过审核的工具
+//! （见 CLAUDE.md、docs/SECURITY_MODEL.zh-Hans.md）。每个工具都声明自己的
+//! 权限与审计策略：
 //!
-//! - read-only tools are available by default;
-//! - write/execute tools require an explicit user confirmation that the agent
-//!   CANNOT mint itself — `task.execute_confirmed` refuses unless the call
-//!   carries a confirmation that originated from the user via the app;
-//! - every execution is audited locally.
+//! - 只读工具默认可用；
+//! - 写/执行类工具需要用户明确确认，且 agent **无法**自行伪造——
+//!   `task.execute_confirmed` 除非调用携带了来自用户、经由 app 产生的确认，
+//!   否则一律拒绝；
+//! - 每次执行都在本地审计。
 //!
-//! Dispatch is internal JSON-RPC-shaped (`name` + JSON `args` → JSON result);
-//! an MCP adapter can wrap this later without changing the boundary.
+//! 分发采用内部的类 JSON-RPC 形态（`name` + JSON `args` → JSON 结果）；
+//! 以后可在不改动安全边界的前提下，用一个 MCP 适配器把它包起来。
 
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -23,9 +23,9 @@ use crate::AppState;
 #[derive(Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ToolPermission {
-    /// Inspection only; never changes server state. Available by default.
+    /// 仅检查；绝不改变服务器状态。默认可用。
     ReadOnly,
-    /// Changes state or executes a plan; requires user confirmation.
+    /// 改变状态或执行计划；需要用户确认。
     Write,
 }
 
@@ -35,13 +35,13 @@ pub struct ToolSpec {
     pub name: &'static str,
     pub description: &'static str,
     pub permission: ToolPermission,
-    /// Whether invoking this tool writes an audit record.
+    /// 调用此工具是否写入审计记录。
     pub audited: bool,
-    /// A short example of the expected args, for the agent.
+    /// 给 agent 看的、预期参数的简短示例。
     pub args_example: Value,
 }
 
-/// The full tool surface exposed to the agent.
+/// 暴露给 agent 的完整工具清单。
 pub fn registry() -> Vec<ToolSpec> {
     use ToolPermission::*;
     vec![
@@ -70,7 +70,7 @@ fn server_secret(state: &AppState, server: &crate::core::types::ServerProfile) -
     }
 }
 
-/// Dispatch a tool call. The agent runtime routes every tool invocation here.
+/// 分发一次工具调用。agent 运行时把每一次工具调用都路由到这里。
 pub async fn dispatch(state: &AppState, name: &str, args: Value) -> AppResult<Value> {
     match name {
         "server.list" => Ok(json!(state.store.list_servers()?)),
@@ -97,7 +97,7 @@ pub async fn dispatch(state: &AppState, name: &str, args: Value) -> AppResult<Va
             let command = arg_str(&args, "command")?;
             let server = state.store.get_server(&id)?;
             let secret = server_secret(state, &server)?;
-            // run_readonly enforces the Low classification; this is the boundary.
+            // run_readonly 会强制要求命令被判为 Low —— 这就是安全边界。
             let exec = crate::ssh::run_readonly(&server, secret.as_deref(), &command, crate::ssh::DEFAULT_TIMEOUT).await?;
             Ok(json!(exec))
         }
@@ -115,8 +115,8 @@ pub async fn dispatch(state: &AppState, name: &str, args: Value) -> AppResult<Va
         }
 
         "task.execute_confirmed" => {
-            // The agent CANNOT self-authorize execution: confirmation must come
-            // from the user via the app. We refuse unless the call carries it.
+            // agent **不能**自行授权执行：确认必须来自用户、经由 app。
+            // 调用不携带确认就拒绝。
             let confirmed = args.get("confirmed").and_then(|v| v.as_bool()).unwrap_or(false);
             if !confirmed {
                 return Err(AppError::Blocked(
@@ -205,7 +205,7 @@ mod tests {
 
     #[tokio::test]
     async fn execute_requires_confirmation() {
-        // Build a minimal AppState with in-memory store + mock credentials/engine.
+        // 用内存 store + mock 凭据/引擎构造一个最小可用的 AppState。
         let state = AppState {
             store: crate::store::Store::open_in_memory().unwrap(),
             credentials: Box::new(crate::credentials::LocalMockCredentialStore::default()),

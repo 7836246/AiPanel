@@ -7,13 +7,12 @@ export interface DialogProps {
   title: string;
   description?: string;
   children?: React.ReactNode;
-  /** Footer actions (rendered right-aligned). Defaults to a Close button. */
+  /** 底部操作区（右对齐）。默认为一个「关闭」按钮。 */
   footer?: React.ReactNode;
   className?: string;
 }
 
-/** Controlled modal dialog. Use for confirmations — high-risk actions need a
- *  second, explicit confirmation per the security model. */
+/** 受控模态对话框。用于确认操作——按安全模型，高风险操作需要二次明确确认。 */
 export function Dialog({
   open,
   onClose,

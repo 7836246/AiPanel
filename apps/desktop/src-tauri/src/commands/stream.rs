@@ -1,9 +1,8 @@
-//! Streaming Tauri command(s).
+//! 流式 Tauri 命令。
 //!
-//! These mirror the blocking commands in [`super`] but push live progress to the
-//! frontend over a [`tauri::ipc::Channel`] as the work happens. The security
-//! boundary is unchanged — streaming goes through the same read-only SSH path,
-//! caches status/facts, and writes the same local audit record.
+//! 这些命令对应 [`super`] 里的阻塞版，但在执行过程中通过
+//! [`tauri::ipc::Channel`] 把实时进度推送给前端。安全边界不变——流式仍走相同的
+//! 只读 SSH 路径，缓存状态/事实，并写入相同的本地审计记录。
 
 use serde::{Deserialize, Serialize};
 use tauri::ipc::Channel;
@@ -12,17 +11,16 @@ use crate::core::error::{AppError, AppResult};
 use crate::core::types::{AuditRecord, DoctorReport, Plan, ServerStatus, TaskStatus};
 use crate::AppState;
 
-/// Run the read-only server doctor, streaming per-step / per-line events to the
-/// frontend as they happen. Returns the same [`DoctorReport`] as
-/// [`super::run_server_doctor`], and mirrors its tail exactly: cache status +
-/// quick facts on the server, and write a local audit record.
+/// 执行只读的服务器 doctor，并在过程中按步 / 按行把事件流式推给前端。返回与
+/// [`super::run_server_doctor`] 相同的 [`DoctorReport`]，收尾逻辑也完全一致：
+/// 把状态 + 快速事实缓存到服务器上，并写入一条本地审计记录。
 #[tauri::command]
 pub async fn run_server_doctor_stream(
     state: tauri::State<'_, AppState>,
     id: String,
     on_event: Channel<crate::doctor::DoctorStreamEvent>,
 ) -> AppResult<DoctorReport> {
-    // Resolve the server and its SSH secret (if its auth method stores one).
+    // 取出服务器及其 SSH 密钥（若其认证方式存有密钥）。
     let server = state.store.get_server(&id)?;
     let secret = match &server.credential_ref {
         Some(reference) => state.credentials.get_secret(reference)?,
@@ -30,7 +28,7 @@ pub async fn run_server_doctor_stream(
     };
 
     let report = crate::doctor::run_doctor_streamed(&server, secret.as_deref(), &|ev| {
-        // Send failures (e.g. the channel was dropped) must not abort the run.
+        // 发送失败（例如通道被丢弃）不能中断本次执行。
         let _ = on_event.send(ev);
     })
     .await?;
@@ -40,39 +38,37 @@ pub async fn run_server_doctor_stream(
     let facts = crate::doctor::facts_from_report(&report);
     state.store.set_server_status(&id, status, Some(&facts))?;
 
-    // Every execution is audited locally.
+    // 每次执行都在本地审计。
     let plan = crate::doctor::doctor_plan(&id);
-    let review = crate::risk::review_plan(&plan, true); // doctor runs in read-only mode
+    let review = crate::risk::review_plan(&plan, true); // doctor 以只读模式运行
     let record = crate::audit::record_for_doctor(&id, plan, review, &report);
     state.store.insert_audit_record(&record)?;
 
     Ok(report)
 }
 
-/// A streaming event emitted while a confirmed plan executes, so the console can
-/// fill in live as each step runs instead of all-at-once.
+/// 已确认计划执行过程中发出的流式事件，让控制台能随每一步实时填充，而非一次性出结果。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum PlanExecEvent {
-    /// A step started / finished. `status` is "running" | "done" | "failed".
+    /// 某一步开始 / 结束。`status` 取 "running" | "done" | "failed"。
     Step {
         index: usize,
         total: usize,
         summary: String,
         status: String,
     },
-    /// A single line of (sanitized) output from the current step.
+    /// 当前步骤输出的单行（已脱敏）内容。
     Line { text: String, stderr: bool },
-    /// The whole run finished. `status` is "done" | "failed"; `exit_code` is the
-    /// last step's exit code (or -1 if a step errored before producing one).
+    /// 整个执行结束。`status` 取 "done" | "failed"；`exit_code` 是最后一步的
+    /// 退出码（若某步在产生退出码前就出错，则为 -1）。
     Done { status: String, exit_code: i32 },
 }
 
-/// Execute a user-confirmed plan, streaming per-step / per-line events to the
-/// frontend as each step runs. Mirrors [`super::execute_confirmed_plan`]'s
-/// security boundary EXACTLY: the plan is ALWAYS re-reviewed server-side (never
-/// trust the client), blocked steps are rejected, and the required confirmation
-/// level is enforced before anything runs. Returns the same [`AuditRecord`].
+/// 执行用户已确认的计划，并在每一步运行时按步 / 按行把事件流式推给前端。
+/// 安全边界与 [`super::execute_confirmed_plan`] **完全一致**：计划总是在服务端
+/// 重新审查（绝不信任客户端），拒绝被 Blocked 的步骤，并在任何命令运行前
+/// 强制要求达到所需确认级别。返回相同的 [`AuditRecord`]。
 #[tauri::command]
 pub async fn run_confirmed_plan_stream(
     state: tauri::State<'_, AppState>,
@@ -86,7 +82,7 @@ pub async fn run_confirmed_plan_stream(
         .server_id
         .clone()
         .ok_or_else(|| AppError::Validation("plan has no target server".into()))?;
-    // Resolve the server and its SSH secret (if its auth method stores one).
+    // 取出服务器及其 SSH 密钥（若其认证方式存有密钥）。
     let server = state.store.get_server(&server_id)?;
     let secret = match &server.credential_ref {
         Some(reference) => state.credentials.get_secret(reference)?,
@@ -117,11 +113,10 @@ pub async fn run_confirmed_plan_stream(
             })
             .ok();
 
-        // Read-only steps still go through the Low-classification gate; everything
-        // else has already cleared confirmation above and runs via the ungated
-        // streaming executor.
+        // 只读步骤仍要过 Low 等级的校验门；其余步骤已在上方通过确认，走不带
+        // 校验门的流式执行器。
         let on_line = |line: &str, stderr: bool| {
-            // Send failures (e.g. the channel was dropped) must not abort the run.
+            // 发送失败（例如通道被丢弃）不能中断本次执行。
             on_event.send(PlanExecEvent::Line { text: line.to_string(), stderr }).ok();
         };
         let res = if step.read_only {
@@ -185,7 +180,7 @@ pub async fn run_confirmed_plan_stream(
         })
         .ok();
 
-    // Every execution is audited locally.
+    // 每次执行都在本地审计。
     let intent = plan.goal.clone();
     let record =
         crate::audit::record_for_plan(Some(&server_id), &intent, plan, review, executions, status);

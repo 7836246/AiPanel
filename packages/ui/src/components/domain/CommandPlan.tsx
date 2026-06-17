@@ -6,26 +6,25 @@ import { RiskBadge } from "./RiskBadge";
 import type { RiskLevel } from "./risk";
 
 export interface PlanStep {
-  /** What this step does, in plain language. */
+  /** 该步骤做什么，用通俗语言描述。 */
   summary: string;
-  /** The exact command or tool call to run. */
+  /** 要执行的确切命令或工具调用。 */
   command: string;
   risk: RiskLevel;
-  /** Read-only steps never change server state. */
+  /** 只读步骤不会改变服务器状态。 */
   readOnly?: boolean;
 }
 
 export interface CommandPlanProps extends React.HTMLAttributes<HTMLDivElement> {
-  /** The task goal, restated by the agent. */
+  /** Agent 复述的任务目标。 */
   goal: string;
   steps: PlanStep[];
 }
 
 /**
- * A reviewable, structured execution plan produced by the agent. Renders each
- * step with its command, read-only flag, and risk level so the user can audit
- * before approving. The agent's natural-language plan must become this shape —
- * and pass risk review — before anything runs.
+ * Agent 产出的、可审查的结构化执行计划。逐步渲染命令、只读标记与风险等级，
+ * 供用户在批准前审计。Agent 的自然语言计划必须先转换成此结构、并通过风险审查，
+ * 才能执行任何操作。
  */
 export function CommandPlan({ goal, steps, className, ...props }: CommandPlanProps) {
   return (

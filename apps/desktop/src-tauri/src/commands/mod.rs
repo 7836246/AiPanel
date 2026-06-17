@@ -1,7 +1,7 @@
-//! Tauri command handlers — the thin boundary between the frontend and Core.
+//! Tauri 命令处理器 —— 前端与 Core 之间的薄边界层。
 //!
-//! Commands validate, delegate to Core modules, and return serde types. They
-//! never embed business logic and never log or return secrets.
+//! 命令负责校验、委托给 Core 模块、并返回 serde 类型。它们绝不内嵌业务逻辑，
+//! 也绝不记录或返回密钥。
 
 use tauri::State;
 
@@ -16,7 +16,7 @@ use crate::core::types::{
 };
 use crate::AppState;
 
-/// Resolve a server and its SSH secret (if its auth method stores one).
+/// 取出一个服务器及其 SSH 密钥（若其认证方式存有密钥）。
 fn load_server_and_secret(
     state: &AppState,
     id: &str,
@@ -55,7 +55,7 @@ pub fn update_server(
 
 #[tauri::command]
 pub fn delete_server(state: State<'_, AppState>, id: String) -> AppResult<()> {
-    // Remove the secret first so deleting a server never orphans a credential.
+    // 先删密钥，避免删服务器时把凭据遗留成孤儿。
     if let Ok(profile) = state.store.get_server(&id) {
         if let Some(reference) = &profile.credential_ref {
             let _ = state.credentials.delete_secret(reference);
@@ -64,9 +64,8 @@ pub fn delete_server(state: State<'_, AppState>, id: String) -> AppResult<()> {
     state.store.delete_server(&id)
 }
 
-/// Store an SSH secret (password or private key) for a server. The secret goes
-/// straight to the credential store and is never logged, persisted to SQLite, or
-/// written to the audit log.
+/// 为某个服务器保存 SSH 密钥（密码或私钥）。密钥直接进凭据库，绝不记录日志、
+/// 绝不写入 SQLite、绝不写进审计日志。
 #[tauri::command]
 pub fn set_server_secret(state: State<'_, AppState>, id: String, secret: String) -> AppResult<()> {
     let profile = state.store.get_server(&id)?;
@@ -78,21 +77,20 @@ pub fn set_server_secret(state: State<'_, AppState>, id: String, secret: String)
     state.credentials.put_secret(&reference, &secret)
 }
 
-/// Which credential backend is active ("keychain" or "mock"), so the UI can warn
-/// when secrets are only in memory.
+/// 当前启用的凭据后端（"keychain" 或 "mock"），便于 UI 在密钥仅存于内存时给出提示。
 #[tauri::command]
 pub fn credential_backend(state: State<'_, AppState>) -> String {
     state.credentials.backend().to_string()
 }
 
-/// Review a plan's risk. `readOnlyMode` escalates any non-inspection step to
-/// Blocked. Pure function — no side effects, no state needed.
+/// 审查一个计划的风险。`readOnlyMode` 会把任何非检查类步骤升级为 Blocked。
+/// 纯函数——无副作用，也无需 state。
 #[tauri::command]
 pub fn review_plan(plan: Plan, read_only_mode: bool) -> RiskReview {
     crate::risk::review_plan(&plan, read_only_mode)
 }
 
-/// Test SSH connectivity + auth, caching the result as the server's status.
+/// 测试 SSH 连通性 + 认证，并把结果缓存为该服务器的状态。
 #[tauri::command]
 pub async fn check_ssh_connection(state: State<'_, AppState>, id: String) -> AppResult<bool> {
     let (server, secret) = load_server_and_secret(&state, &id)?;
@@ -105,8 +103,8 @@ pub async fn check_ssh_connection(state: State<'_, AppState>, id: String) -> App
     Ok(ok)
 }
 
-/// Run a single read-only command (gated by the Risk Reviewer). Developer/diagnostic
-/// entry point; the user-facing flow goes through the Server Doctor and plans.
+/// 执行单条只读命令（受风险审查器把关）。这是开发/诊断入口；面向用户的流程
+/// 走 Server Doctor 与计划。
 #[tauri::command]
 pub async fn run_readonly_command(
     state: State<'_, AppState>,
@@ -117,19 +115,19 @@ pub async fn run_readonly_command(
     crate::ssh::run_readonly(&server, secret.as_deref(), &command, crate::ssh::DEFAULT_TIMEOUT).await
 }
 
-/// The read-only plan the doctor would run, for previewing before execution.
+/// doctor 将要执行的只读计划，供执行前预览。
 #[tauri::command]
 pub fn server_doctor_plan(state: State<'_, AppState>, id: String) -> AppResult<Plan> {
-    state.store.get_server(&id)?; // ensure it exists
+    state.store.get_server(&id)?; // 确认存在
     Ok(crate::doctor::doctor_plan(&id))
 }
 
-/// Run the read-only server doctor, caching status + quick facts on the server.
+/// 执行只读的服务器 doctor，并把状态 + 快速事实缓存到该服务器上。
 #[tauri::command]
 pub async fn run_server_doctor(state: State<'_, AppState>, id: String) -> AppResult<DoctorReport> {
     let (server, secret) = load_server_and_secret(&state, &id)?;
     let plan = crate::doctor::doctor_plan(&id);
-    let review = crate::risk::review_plan(&plan, true); // doctor runs in read-only mode
+    let review = crate::risk::review_plan(&plan, true); // doctor 以只读模式运行
     let report = crate::doctor::run_doctor(&server, secret.as_deref()).await?;
 
     let succeeded = report.executions.iter().any(|e| e.exit_code == 0);
@@ -137,29 +135,29 @@ pub async fn run_server_doctor(state: State<'_, AppState>, id: String) -> AppRes
     let facts = crate::doctor::facts_from_report(&report);
     state.store.set_server_status(&id, status, Some(&facts))?;
 
-    // Every execution is audited locally.
+    // 每次执行都在本地审计。
     let record = crate::audit::record_for_doctor(&id, plan, review, &report);
     state.store.insert_audit_record(&record)?;
 
     Ok(report)
 }
 
-/// Most recent audit records (newest first).
+/// 最近的审计记录（最新在前）。
 #[tauri::command]
 pub fn list_audit_records(state: State<'_, AppState>, limit: Option<u32>) -> AppResult<Vec<AuditRecord>> {
     state.store.list_audit_records(limit.unwrap_or(100))
 }
 
-/// One audit record by id, for replaying a task's detail.
+/// 按 id 取单条审计记录，用于回放某次任务的细节。
 #[tauri::command]
 pub fn get_audit_record(state: State<'_, AppState>, id: String) -> AppResult<AuditRecord> {
     state.store.get_audit_record(&id)
 }
 
-/// Ordered AI provider candidates for planning: enabled, non-custom, with the
-/// policy default first. Empty → fall back to the offline mock engine. This is
-/// also the fallback chain — e.g. a selected Codex provider whose turn loop
-/// isn't available is followed by any configured OpenAI-compatible provider.
+/// 按顺序排好的、用于规划的 AI provider 候选：已启用、非 custom，且把策略里的
+/// 默认 provider 排在最前。返回空 → 回退到离线 mock 引擎。这也是回退链——
+/// 例如所选 Codex provider 的 turn 回路不可用时，会接着尝试任何已配置的
+/// OpenAI 兼容 provider。
 fn candidate_providers(state: &AppState) -> AppResult<Vec<ProviderConfig>> {
     let mut list: Vec<ProviderConfig> = state
         .store
@@ -168,14 +166,13 @@ fn candidate_providers(state: &AppState) -> AppResult<Vec<ProviderConfig>> {
         .filter(|p| p.enabled && !matches!(p.kind, ProviderKind::Custom))
         .collect();
     if let Some(id) = state.store.get_policy()?.default_provider_id {
-        list.sort_by_key(|p| usize::from(p.id != id)); // default provider first
+        list.sort_by_key(|p| usize::from(p.id != id)); // 默认 provider 排最前
     }
     Ok(list)
 }
 
-/// Turn a natural-language intent into a structured, reviewable plan. Tries each
-/// configured AI provider in turn (default first); if all fail or none is
-/// configured, falls back to the offline mock engine so the app always works.
+/// 把自然语言意图转成结构化、可审查的计划。依次尝试每个已配置的 AI provider
+/// （默认优先）；若全部失败或一个都没配，就回退到离线 mock 引擎，确保 app 始终可用。
 #[tauri::command]
 pub async fn create_plan(
     state: State<'_, AppState>,
@@ -190,9 +187,8 @@ pub async fn create_plan(
         let p = provider.clone();
         let intent2 = intent.clone();
         let sid = server_id.clone();
-        // The provider call is blocking HTTP — run it off the UI thread. A task
-        // panic must not abort the whole command: log and fall through to the next
-        // candidate / mock.
+        // provider 调用是阻塞式 HTTP —— 放到 UI 线程之外跑。任务 panic 不能让
+        // 整个命令崩溃：记录日志后继续尝试下一个候选 / mock。
         let joined = tokio::task::spawn_blocking(move || {
             crate::agent::plan_with_provider(&p, key, &intent2, sid.as_deref())
         })
@@ -206,9 +202,9 @@ pub async fn create_plan(
     state.plan_engine.create_plan(&intent, server_id.as_deref())
 }
 
-/// Execute a plan the user confirmed. The plan is ALWAYS re-reviewed server-side
-/// (never trust the client): blocked steps are rejected, and the required
-/// confirmation level is enforced before anything runs. Every run is audited.
+/// 执行用户已确认的计划。计划**总是**在服务端重新审查（绝不信任客户端）：
+/// 拒绝被 Blocked 的步骤，并在任何命令运行前强制要求达到所需的确认级别。
+/// 每次执行都会审计。
 #[tauri::command]
 pub async fn execute_confirmed_plan(
     state: State<'_, AppState>,
@@ -265,9 +261,8 @@ pub async fn execute_confirmed_plan(
     Ok(record)
 }
 
-/// Run an autonomous, read-only diagnosis turn: the model investigates via the
-/// read-only AiPanel Tools and returns a summary. It cannot change servers —
-/// writes still require the explicit confirm-and-execute flow.
+/// 跑一次自主的、只读的诊断回合：模型通过只读的 AiPanel Tools 自行调查并返回
+/// 总结。它无法修改服务器——写操作仍需走显式的「确认并执行」流程。
 #[tauri::command]
 pub async fn run_agent_turn(
     state: State<'_, AppState>,
@@ -287,9 +282,8 @@ pub async fn run_agent_turn(
     crate::agent::agent_loop::run_turn(&state, &provider, key, &intent, server_id.as_deref()).await
 }
 
-/// Test an agent provider config (validity / reachability) without saving it.
-/// The API key comes from the call (a key being typed in the form) or, failing
-/// that, from the credential store for an already-saved provider.
+/// 测试一份 agent provider 配置（合法性 / 可达性），但不保存。API Key 来自本次
+/// 调用（用户正在表单里输入的 key），若没有则从凭据库取已保存 provider 的密钥。
 #[tauri::command]
 pub async fn test_provider(
     state: State<'_, AppState>,
@@ -302,8 +296,8 @@ pub async fn test_provider(
             .as_ref()
             .and_then(|r| state.credentials.get_secret(r).ok().flatten())
     });
-    // The probe is blocking HTTP — keep it off the UI thread. A join failure is
-    // surfaced as a non-ok result (not a rejected promise) so the UI shows it inline.
+    // 探测是阻塞式 HTTP —— 放到 UI 线程之外。join 失败以「非 ok 结果」呈现
+    // （而非 reject 的 promise），这样 UI 能就地展示。
     Ok(tokio::task::spawn_blocking(move || crate::agent::test_provider(&config, key))
         .await
         .unwrap_or_else(|e| ProviderTestResult {
@@ -313,21 +307,21 @@ pub async fn test_provider(
         }))
 }
 
-/// The AiPanel Tools surface the agent may call (names, permissions, audit policy).
+/// agent 可调用的 AiPanel Tools 清单（名称、权限、审计策略）。
 #[tauri::command]
 pub fn list_tools() -> Vec<crate::tools::ToolSpec> {
     crate::tools::registry()
 }
 
-// ----- providers / model selection ---------------------------------------
+// ----- provider / 模型选择 -----------------------------------------------
 
 #[tauri::command]
 pub fn list_providers(state: State<'_, AppState>) -> AppResult<Vec<ProviderConfig>> {
     state.store.list_providers()
 }
 
-/// Create or update a provider. The API key (if any) goes straight to the
-/// credential store; only a CredentialRef is persisted in SQLite.
+/// 新建或更新一个 provider。API Key（若有）直接进凭据库；SQLite 里只持久化
+/// 一个 CredentialRef。
 #[tauri::command]
 pub fn save_provider(
     state: State<'_, AppState>,

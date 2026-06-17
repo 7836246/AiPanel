@@ -15,14 +15,17 @@ import {
   type ProviderTestResult,
 } from "../lib/api";
 
+// 供应商类型到中文标签的映射。
 const KIND_LABEL: Record<ProviderKind, string> = {
   codex_app_server: "Codex app-server",
   openai_compatible: "OpenAI 兼容",
   custom: "自定义",
 };
 
+// 新增供应商表单的初始空值。
 const EMPTY: ProviderInput = { name: "", kind: "codex_app_server", enabled: true };
 
+// 设置面板：管理模型供应商（增删改、连接测试）与模型选择策略。
 export default function SettingsPanel() {
   const [providers, setProviders] = useState<ProviderConfig[]>([]);
   const [policy, setPolicy] = useState<ModelSelectionPolicy>({ auto: true });
@@ -32,6 +35,7 @@ export default function SettingsPanel() {
   const [testResult, setTestResult] = useState<ProviderTestResult | null>(null);
   const [busy, setBusy] = useState(false);
 
+  // 重新拉取供应商列表、模型选择策略与凭据后端标识。
   async function refresh() {
     setProviders(await listProviders());
     setPolicy(await getModelSelectionPolicy());
@@ -41,6 +45,7 @@ export default function SettingsPanel() {
     refresh().catch(() => {});
   }, []);
 
+  // 编辑某供应商：把其配置回填到表单，并清空 API Key 输入与测试结果。
   function edit(p: ProviderConfig) {
     setForm({
       id: p.id,
@@ -55,6 +60,7 @@ export default function SettingsPanel() {
     setTestResult(null);
   }
 
+  // 保存表单（API Key 留空则不修改），成功后关闭表单并刷新列表。
   async function save() {
     if (!form || !form.name.trim()) return;
     setBusy(true);
@@ -69,6 +75,7 @@ export default function SettingsPanel() {
     }
   }
 
+  // 删除供应商；若它正是默认供应商，则同时清掉默认选择。
   async function remove(id: string) {
     await deleteProvider(id);
     if (policy.defaultProviderId === id) {
@@ -79,6 +86,7 @@ export default function SettingsPanel() {
     await refresh();
   }
 
+  // 更新模型选择策略并立即持久化。
   async function updatePolicy(next: ModelSelectionPolicy) {
     setPolicy(next);
     await saveModelSelectionPolicy(next);
@@ -98,7 +106,7 @@ export default function SettingsPanel() {
           </div>
         )}
 
-        {/* provider list */}
+        {/* 供应商列表 */}
         <div className="flex flex-col gap-2">
           {providers.length === 0 && !form ? (
             <div className="rounded-md border border-border bg-surface-1 px-4 py-6 text-center text-[13px] text-fg-subtle">
@@ -130,7 +138,7 @@ export default function SettingsPanel() {
           )}
         </div>
 
-        {/* add / edit form */}
+        {/* 新增 / 编辑表单 */}
         {form ? (
           <div className="mt-3 rounded-md border border-border bg-surface-1 p-4">
             <div className="mb-3 text-[13px] font-semibold">{form.id ? "编辑供应商" : "新增供应商"}</div>
@@ -212,7 +220,7 @@ export default function SettingsPanel() {
           </Button>
         )}
 
-        {/* model selection policy */}
+        {/* 模型选择策略 */}
         <h2 className="mb-3 mt-8 text-sm font-semibold">模型选择</h2>
         <div className="rounded-md border border-border bg-surface-1 p-4">
           <label className="flex items-center gap-2 text-[13px] text-fg">

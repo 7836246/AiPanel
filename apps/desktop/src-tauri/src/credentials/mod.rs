@@ -1,9 +1,9 @@
-//! Credential store: the single boundary for secrets.
+//! 凭据存储：密钥唯一的边界。
 //!
-//! SSH passwords/keys and provider API keys live ONLY here (system Keychain in
-//! production). The rest of the app holds a [`CredentialRef`] — never the secret
-//! (see docs/SECURITY_MODEL.zh-Hans.md). Nothing in this module logs secret
-//! values, and secrets must never be written to SQLite or audit records.
+//! SSH 密码/密钥与供应商 API Key 只存在这里（生产环境用系统 Keychain）。应用
+//! 其余部分只持有 [`CredentialRef`]——绝不持有密钥本身（见
+//! docs/SECURITY_MODEL.zh-Hans.md）。本模块不记录任何密钥值，密钥也绝不能写入
+//! SQLite 或审计记录。
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -11,21 +11,23 @@ use std::sync::Mutex;
 use crate::core::error::{AppError, AppResult};
 use crate::core::types::CredentialRef;
 
-/// Service name under which AiPanel namespaces its Keychain entries.
+/// AiPanel 在系统 Keychain 中为其条目所用的服务名（命名空间）。
 const SERVICE: &str = "com.aipanel.app";
 
+/// 凭据存储的抽象接口：写入/读取/删除密钥，并报告后端名称。
 pub trait CredentialStore: Send + Sync {
     fn put_secret(&self, reference: &CredentialRef, secret: &str) -> AppResult<()>;
     fn get_secret(&self, reference: &CredentialRef) -> AppResult<Option<String>>;
     fn delete_secret(&self, reference: &CredentialRef) -> AppResult<()>;
-    /// Human-readable backend name, for diagnostics/UI ("keychain" vs "mock").
+    /// 人类可读的后端名，供诊断/界面使用（"keychain" 或 "mock"）。
     fn backend(&self) -> &'static str;
 }
 
-/// System Keychain backend (macOS Keychain / Windows Credential Manager).
+/// 系统 Keychain 后端（macOS Keychain / Windows 凭据管理器）。
 pub struct KeyringCredentialStore;
 
 impl KeyringCredentialStore {
+    /// 为给定引用构造一个 Keychain 条目句柄。
     fn entry(reference: &CredentialRef) -> AppResult<keyring::Entry> {
         keyring::Entry::new(SERVICE, &reference.0)
             .map_err(|e| AppError::Credential(e.to_string()))
@@ -59,10 +61,10 @@ impl CredentialStore for KeyringCredentialStore {
     }
 }
 
-/// In-memory store for development (no Keychain available) and tests.
+/// 供开发（无可用 Keychain 时）与测试使用的内存存储。
 ///
-/// **Insecure — never use in production.** Secrets vanish on restart and live
-/// only in process memory. The UI and docs flag when this backend is active.
+/// **不安全——绝不可用于生产。** 密钥在重启后消失，且只存在于进程内存中。
+/// 当此后端启用时，界面与文档会予以提示。
 #[derive(Default)]
 pub struct LocalMockCredentialStore {
     map: Mutex<HashMap<String, String>>,
@@ -88,8 +90,8 @@ impl CredentialStore for LocalMockCredentialStore {
     }
 }
 
-/// Pick the best available backend: the system Keychain if a round-trip probe
-/// succeeds, otherwise the in-memory mock (development fallback).
+/// 选择当前最合适的后端：若一次写入-读取的探测成功则用系统 Keychain，否则
+/// 退回内存 mock（开发兜底）。
 pub fn default_credential_store() -> Box<dyn CredentialStore> {
     let keyring = KeyringCredentialStore;
     let probe = CredentialRef("__aipanel_probe__".into());
@@ -109,6 +111,7 @@ mod tests {
     use super::*;
 
     #[test]
+    // mock 后端的写入-读取-删除往返
     fn mock_round_trip() {
         let store = LocalMockCredentialStore::default();
         let r = CredentialRef::for_server("s1");
@@ -120,12 +123,14 @@ mod tests {
     }
 
     #[test]
+    // 删除不存在的密钥应当成功（幂等）
     fn delete_missing_is_ok() {
         let store = LocalMockCredentialStore::default();
         store.delete_secret(&CredentialRef("missing".into())).unwrap();
     }
 
     #[test]
+    // mock 后端名应为 "mock"
     fn backend_name() {
         assert_eq!(LocalMockCredentialStore::default().backend(), "mock");
     }

@@ -1,18 +1,17 @@
-//! Agent Provider abstraction and the Codex app-server bridge.
+//! Agent Provider 抽象层，以及 Codex app-server 桥接。
 //!
-//! Codex (or any provider) owns conversation, understanding, planning, model and
-//! context. AiPanel owns servers, SSH, permissions, execution, security and
-//! audit. The hard boundary (CLAUDE.md, docs/SECURITY_MODEL.zh-Hans.md):
+//! Codex（或任意供应商）负责对话、理解、规划、模型与上下文；AiPanel 负责
+//! 服务器、SSH、权限、执行、安全与审计。不可妥协的边界（见 CLAUDE.md、
+//! docs/SECURITY_MODEL.zh-Hans.md）：
 //!
-//! - the provider NEVER holds SSH credentials and NEVER runs a raw shell;
-//! - it reaches server capability only through AiPanel Tools (see `tools`),
-//!   which are vetted, default-read-only, and audited.
+//! - 供应商永远不持有 SSH 凭据，永远不跑裸 shell；
+//! - 它只能通过 AiPanel Tools（见 `tools`）触达服务器能力——这些工具经过
+//!   审核、默认只读、且全部审计。
 //!
-//! This module defines the provider trait and three implementations:
-//! `MockAgentProvider` (offline, always available), `OpenAiCompatibleProvider`
-//! (config + connectivity skeleton), and `CodexAppServerProvider` (the intended
-//! runtime, launched as a JSON-RPC/stdio subprocess — entry point + health
-//! check here; the full tool-call loop is wired with the tools layer).
+//! 本模块定义 provider trait 及三个实现：`MockAgentProvider`（离线、始终可用）、
+//! `OpenAiCompatibleProvider`（配置 + 连通性骨架）、`CodexAppServerProvider`
+//! （目标运行时，以 JSON-RPC/stdio 子进程方式启动——这里只做入口 + 健康检查；
+//! 完整的工具调用回路与 tools 层一起接通）。
 
 use std::time::Duration;
 
@@ -24,7 +23,7 @@ pub mod codex;
 use crate::core::error::{AppError, AppResult};
 use crate::core::types::{Plan, ProviderConfig, ProviderKind, ProviderTestResult};
 
-/// The AiPanel Tools surface advertised to the Codex agent at `initialize`.
+/// 在 `initialize` 时向 Codex agent 声明的 AiPanel Tools 能力清单。
 fn tools_surface() -> serde_json::Value {
     serde_json::to_value(crate::tools::registry()).unwrap_or(serde_json::Value::Null)
 }
@@ -36,7 +35,7 @@ pub struct ChatMessage {
     pub content: String,
 }
 
-/// A streamed agent event (subset; expands as the bridge matures).
+/// 流式的 agent 事件（当前是子集，随桥接成熟逐步扩展）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum AgentEvent {
@@ -46,21 +45,20 @@ pub enum AgentEvent {
     Error { message: String },
 }
 
-/// What every agent runtime must provide. Kept synchronous for the MVP; the
-/// Codex bridge runs its async subprocess work internally.
+/// 每个 agent 运行时都必须提供的能力。MVP 阶段保持同步接口；Codex 桥接
+/// 在内部处理自己的异步子进程工作。
 pub trait AgentProvider: Send + Sync {
     fn name(&self) -> &str;
     fn chat(&self, messages: &[ChatMessage]) -> AppResult<String>;
     fn plan(&self, intent: &str, server_id: Option<&str>) -> AppResult<Plan>;
     fn summarize(&self, context: &str) -> AppResult<String>;
     fn stream_events(&self, intent: &str) -> AppResult<Vec<AgentEvent>>;
-    /// Validate config / reachability without committing to a full session.
+    /// 校验配置 / 连通性，不真正开启完整会话。
     fn test(&self) -> ProviderTestResult;
 }
 
-/// Build a provider from its stored config plus its secret (API key), resolved
-/// from the credential store by the caller. The key lives only in the provider
-/// instance for the duration of the call.
+/// 根据存储的配置 + 调用方从凭据库取出的密钥（API Key）构建一个 provider。
+/// 密钥只在本次调用期间存活于 provider 实例中。
 pub fn build_provider(config: &ProviderConfig, api_key: Option<String>) -> Box<dyn AgentProvider> {
     match config.kind {
         ProviderKind::CodexAppServer => Box::new(CodexAppServerProvider {
@@ -74,7 +72,7 @@ pub fn build_provider(config: &ProviderConfig, api_key: Option<String>) -> Box<d
 }
 
 // ---------------------------------------------------------------------------
-// Mock — offline, deterministic, always available.
+// Mock —— 离线、确定性、始终可用。
 // ---------------------------------------------------------------------------
 
 pub struct MockAgentProvider;
@@ -106,7 +104,7 @@ impl AgentProvider for MockAgentProvider {
 }
 
 // ---------------------------------------------------------------------------
-// OpenAI-compatible — config + connectivity skeleton (no live request yet).
+// OpenAI 兼容 —— 配置 + 连通性骨架（尚未发起真实补全请求）。
 // ---------------------------------------------------------------------------
 
 pub struct OpenAiCompatibleProvider {
@@ -149,7 +147,7 @@ impl OpenAiCompatibleProvider {
             .map_err(|e| AppError::Provider(e.to_string()))
     }
 
-    /// POST /chat/completions and return the assistant message content.
+    /// POST /chat/completions 并返回 assistant 消息正文。
     fn complete(&self, messages: &[ChatMessage], json_mode: bool) -> AppResult<String> {
         let base = self.base()?;
         let url = format!("{base}/chat/completions");
@@ -180,7 +178,7 @@ impl OpenAiCompatibleProvider {
     }
 }
 
-/// Strip ```json … ``` fences if the model wrapped its JSON.
+/// 若模型把 JSON 包在 ```json … ``` 代码围栏里，去掉围栏。
 fn unfence(s: &str) -> &str {
     let t = s.trim();
     if let Some(rest) = t.strip_prefix("```") {
@@ -213,7 +211,7 @@ impl AgentProvider for OpenAiCompatibleProvider {
         if parsed.steps.is_empty() {
             return Err(AppError::Provider("模型未返回任何步骤".into()));
         }
-        // AiPanel assigns risk — never trust the model's own assessment.
+        // 风险等级由 AiPanel 判定——绝不信任模型自己给的评估。
         let steps = parsed
             .steps
             .into_iter()
@@ -240,7 +238,7 @@ impl AgentProvider for OpenAiCompatibleProvider {
     }
 
     fn stream_events(&self, intent: &str) -> AppResult<Vec<AgentEvent>> {
-        // Non-streaming fallback: one shot wrapped as events.
+        // 非流式回退：一次性请求结果包装成事件序列。
         let reply = self.chat(&[ChatMessage { role: "user".into(), content: intent.to_string() }])?;
         Ok(vec![AgentEvent::Token { text: reply }, AgentEvent::Done])
     }
@@ -283,9 +281,8 @@ fn make_step(summary: String, command: String, risk: crate::core::types::RiskLev
 }
 
 // ---------------------------------------------------------------------------
-// Codex app-server — the intended runtime. Launched as a JSON-RPC/stdio
-// subprocess. This is the entry point + health check; the full tool-call loop
-// is wired alongside the AiPanel Tools layer.
+// Codex app-server —— 目标运行时。以 JSON-RPC/stdio 子进程方式启动。这里只是
+// 入口 + 健康检查；完整的工具调用回路与 AiPanel Tools 层一起接通。
 // ---------------------------------------------------------------------------
 
 pub struct CodexAppServerProvider {
@@ -293,7 +290,7 @@ pub struct CodexAppServerProvider {
 }
 
 impl CodexAppServerProvider {
-    /// Run `<codex> --version` to confirm the binary is present and runnable.
+    /// 跑 `<codex> --version` 确认二进制存在且能运行。
     fn version(&self) -> AppResult<String> {
         let output = std::process::Command::new(&self.codex_path)
             .arg("--version")
@@ -309,13 +306,13 @@ impl CodexAppServerProvider {
         }
     }
 
-    /// Bridge plan/chat go through the app-server's JSON-RPC over stdio:
-    ///   1. spawn `<codex> app-server` with piped stdin/stdout;
-    ///   2. send `initialize`, advertising ONLY AiPanel Tools as the tool set;
-    ///   3. `thread/start`, then `turn/start` with the user intent;
-    ///   4. stream events; tool calls are dispatched to `tools` (read-only by
-    ///      default, writes require confirmation) and the results fed back.
-    /// Not yet wired — returns a clear, actionable error meanwhile.
+    /// 桥接的 plan/chat 通过 app-server 的 JSON-RPC over stdio 完成：
+    ///   1. 启动 `<codex> app-server`，stdin/stdout 走管道；
+    ///   2. 发送 `initialize`，只把 AiPanel Tools 声明为可用工具集；
+    ///   3. `thread/start`，再带上用户意图执行 `turn/start`；
+    ///   4. 流式接收事件；工具调用分发给 `tools`（默认只读，写操作需确认），
+    ///      再把结果回灌给模型。
+    /// 尚未接通——期间返回一个明确、可操作的错误。
     fn not_wired<T>(&self) -> AppResult<T> {
         Err(AppError::Provider(
             "Codex app-server 桥接尚未接通（JSON-RPC 工具回路开发中）；当前可用 mock provider 生成只读计划".into(),
@@ -344,8 +341,8 @@ impl AgentProvider for CodexAppServerProvider {
             Ok(v) => v,
             Err(e) => return ProviderTestResult { ok: false, message: e.to_string(), detail: None },
         };
-        // Beyond "binary exists": actually start app-server and complete the
-        // initialize handshake, advertising the AiPanel Tools surface.
+        // 不止确认「二进制存在」：真正启动 app-server 并完成 initialize 握手，
+        // 同时声明 AiPanel Tools 能力清单。
         match codex::CodexClient::start(&self.codex_path)
             .and_then(|mut c| c.initialize(tools_surface()))
         {
@@ -363,13 +360,12 @@ impl AgentProvider for CodexAppServerProvider {
     }
 }
 
-/// Test a provider config (with its API key) without persisting it.
+/// 测试一份 provider 配置（带其 API Key），但不持久化。
 pub fn test_provider(config: &ProviderConfig, api_key: Option<String>) -> ProviderTestResult {
     build_provider(config, api_key).test()
 }
 
-/// Resolve the configured provider for planning: the policy's default if set,
-/// else the first enabled provider. Returns None to signal "fall back to mock".
+/// 用配置好的 provider 生成计划：构建对应 provider 并调用其 plan。
 pub fn plan_with_provider(
     config: &ProviderConfig,
     api_key: Option<String>,
@@ -410,7 +406,7 @@ mod tests {
 
     #[test]
     fn openai_test_rejects_missing_base_url() {
-        // No base_url → fails before any network call.
+        // 缺 base_url → 在任何网络调用之前就失败。
         assert!(!test_provider(&cfg(ProviderKind::OpenAiCompatible, None), None).ok);
     }
 

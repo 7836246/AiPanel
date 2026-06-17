@@ -1,17 +1,15 @@
-//! Audit Log.
+//! 审计日志。
 //!
-//! Every execution is recorded locally: the user's intent, the plan, the risk
-//! review, the confirmation, the actual commands, exit codes, **sanitized**
-//! output, and a summary (docs/SECURITY_MODEL.zh-Hans.md). Secrets are never
-//! recorded — executions already carry sanitized output, and plans/intents must
-//! not contain secrets. This module only builds records; persistence lives in
-//! the store.
+//! 每次执行都在本地记录：用户意图、计划、风险审查、确认、实际命令、退出码、
+//! **脱敏后的**输出，以及总结（docs/SECURITY_MODEL.zh-Hans.md）。绝不记录密钥
+//! ——执行记录携带的已是脱敏输出，而计划/意图本身也不得包含密钥。本模块只负责
+//! 构建记录；持久化在 store 中完成。
 
 use crate::core::types::{
     new_id, now, AuditRecord, DoctorReport, Plan, RiskReview, TaskStatus,
 };
 
-/// Build an audit record for a completed (read-only) doctor run.
+/// 为一次完成的（只读）体检运行构建审计记录。
 pub fn record_for_doctor(
     server_id: &str,
     plan: Plan,
@@ -37,7 +35,7 @@ pub fn record_for_doctor(
     }
 }
 
-/// Build an audit record for a confirmed plan execution.
+/// 为一次已确认的计划执行构建审计记录。
 pub fn record_for_plan(
     server_id: Option<&str>,
     intent: &str,
@@ -64,6 +62,7 @@ pub fn record_for_plan(
     }
 }
 
+/// 根据体检报告生成一行简短总结（操作系统 · 成功项数 · 告警数）。
 fn doctor_summary(report: &DoctorReport) -> String {
     let mut parts = Vec::new();
     if let Some(os) = &report.os {

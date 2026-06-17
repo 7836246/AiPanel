@@ -20,11 +20,12 @@ const badge = cva(
   }
 );
 
+/** 徽标属性：原生 span 属性 + cva 色调变体（tone）。 */
 export interface BadgeProps
   extends React.HTMLAttributes<HTMLSpanElement>,
     VariantProps<typeof badge> {}
 
-/** Small status pill. For server operation risk, prefer the domain `RiskBadge`. */
+/** 小状态标签。服务器操作的风险等级请优先用领域组件 `RiskBadge`。 */
 export function Badge({ className, tone, ...props }: BadgeProps) {
   return <span className={cn(badge({ tone }), className)} {...props} />;
 }

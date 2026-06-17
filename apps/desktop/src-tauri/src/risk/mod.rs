@@ -1,38 +1,40 @@
-//! Risk Reviewer.
+//! 风险审查器（Risk Reviewer）。
 //!
-//! Classifies each command into Low / Medium / High / Blocked and assembles a
-//! [`RiskReview`] for a plan. This is AiPanel's own safety gate — the agent's
-//! plan must pass through here before anything runs (see
-//! docs/SECURITY_MODEL.zh-Hans.md). Patterns and levels mirror that document.
+//! 把每条命令归类为 Low / Medium / High / Blocked，并为一份计划汇总出
+//! [`RiskReview`]。这是 AiPanel 自己的安全闸门——Agent 的计划必须先经过这里，
+//! 任何操作才能执行（见 docs/SECURITY_MODEL.zh-Hans.md）。模式与等级与该文档一致。
 //!
-//! Conservative by design: when in doubt, classify higher. A passing review is
-//! necessary but not sufficient — write/high steps still need user confirmation.
+//! 设计上偏保守：拿不准时往高里判。通过审查是必要条件而非充分条件——
+//! 写/高风险步骤仍需用户确认。
 
 use crate::core::types::{Plan, RiskFinding, RiskLevel, RiskReview};
 
+/// 对单条命令的风险归类结果。
 pub struct Classification {
     pub level: RiskLevel,
     pub category: String,
     pub message: String,
 }
 
-/// Normalize a command for matching: lowercase, collapse whitespace.
+/// 归一化命令以便匹配：转小写、折叠空白。
 fn norm(command: &str) -> String {
     command.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
 }
 
+/// 子串包含判断（薄封装，便于阅读）。
 fn contains(haystack: &str, needle: &str) -> bool {
     haystack.contains(needle)
 }
 
-/// Top-level system paths whose recursive deletion / formatting is catastrophic.
+/// 一旦被递归删除/格式化便会造成灾难性后果的顶层系统路径。
 const SYSTEM_ROOTS: &[&str] = &[
     "/", "/*", "/etc", "/var", "/usr", "/bin", "/boot", "/lib", "/lib64", "/sys", "/proc", "/root",
     "/home", "/opt", "/dev",
 ];
 
+/// 判断命令中是否有裸参数指向某个系统根路径。
 fn rm_targets_system_root(cmd: &str) -> bool {
-    // Any bare token equal to a system root (optionally with /*).
+    // 任一裸 token 等于某个系统根路径（可带 /*）。
     cmd.split_whitespace().any(|t| {
         let t = t.trim_end_matches("/*");
         let t = if t.is_empty() { "/" } else { t };
@@ -40,8 +42,9 @@ fn rm_targets_system_root(cmd: &str) -> bool {
     })
 }
 
+/// 判断是否为只读的防火墙查询命令（不改变防火墙状态）。
 fn is_firewall_readonly(cmd: &str) -> bool {
-    // List/status subcommands don't change firewall state.
+    // 列出/查看状态的子命令不会改变防火墙状态。
     contains(cmd, "iptables -l")
         || contains(cmd, "iptables -s")
         || contains(cmd, "iptables --list")
@@ -51,13 +54,13 @@ fn is_firewall_readonly(cmd: &str) -> bool {
         || contains(cmd, "nft list")
 }
 
+/// 判断命令是否通过重定向/tee/sed -i 向给定路径前缀写入。
 fn writes_to(cmd: &str, path_prefixes: &[&str]) -> bool {
     let redirect = contains(cmd, ">") || contains(cmd, "tee ") || contains(cmd, "sed -i") ;
     redirect && path_prefixes.iter().any(|p| contains(cmd, p))
 }
 
-/// Classify a single command on its own merits. Read-only-mode escalation is
-/// applied by [`review_plan`].
+/// 仅就命令本身对其归类。只读模式下的升级由 [`review_plan`] 负责施加。
 pub fn classify_command(command: &str) -> Classification {
     let c = norm(command);
     let mk = |level, category: &str, message: &str| Classification {
@@ -66,7 +69,7 @@ pub fn classify_command(command: &str) -> Classification {
         message: message.to_string(),
     };
 
-    // ---- Blocked: forbidden by default --------------------------------
+    // ---- Blocked：默认禁止 --------------------------------
     if contains(&c, "rm ") && (contains(&c, "-rf") || contains(&c, "-fr") || (contains(&c, "-r") && contains(&c, "-f")))
         && rm_targets_system_root(&c)
     {
@@ -94,7 +97,7 @@ pub fn classify_command(command: &str) -> Classification {
         return mk(RiskLevel::Blocked, "ssh-lockout", "disabling or stopping the SSH service");
     }
 
-    // ---- High: data loss / outage / security-boundary change ----------
+    // ---- High：数据丢失 / 服务中断 / 安全边界变更 ----------
     if contains(&c, "find ") && contains(&c, "-delete") {
         return mk(RiskLevel::High, "delete", "find -delete removes files");
     }
@@ -128,7 +131,7 @@ pub fn classify_command(command: &str) -> Classification {
         return mk(RiskLevel::High, "system-write", "writes to a system configuration path");
     }
 
-    // ---- Medium: recoverable state change -----------------------------
+    // ---- Medium：可恢复的状态变更 -----------------------------
     let installs = ["apt install", "apt-get install", "yum install", "dnf install", "apk add", "zypper install", "pacman -s"];
     if installs.iter().any(|p| contains(&c, p)) {
         return mk(RiskLevel::Medium, "install", "installs software packages");
@@ -149,12 +152,12 @@ pub fn classify_command(command: &str) -> Classification {
         return mk(RiskLevel::Medium, "privileged", "runs with elevated privileges");
     }
 
-    // ---- Low: read-only / inspection ----------------------------------
+    // ---- Low：只读 / 检查类 ----------------------------------
     mk(RiskLevel::Low, "read-only", "inspection command")
 }
 
-/// Review a whole plan. In `read_only_mode`, any non-Low step is escalated to
-/// Blocked — diagnosis mode only permits inspection.
+/// 审查整份计划。在 `read_only_mode` 下，任何非 Low 步骤都会被升级为
+/// Blocked——诊断模式只允许检查类命令。
 pub fn review_plan(plan: &Plan, read_only_mode: bool) -> RiskReview {
     let mut findings = Vec::new();
     let mut step_levels = Vec::with_capacity(plan.steps.len());
@@ -197,11 +200,13 @@ mod tests {
     use super::*;
     use crate::core::types::{new_id, now, PlanStep};
 
+    /// 测试辅助：取某条命令的归类风险等级。
     fn lvl(cmd: &str) -> RiskLevel {
         classify_command(cmd).level
     }
 
     #[test]
+    // Blocked 等级示例
     fn blocked_examples() {
         assert_eq!(lvl("rm -rf /"), RiskLevel::Blocked);
         assert_eq!(lvl("rm -rf /*"), RiskLevel::Blocked);
@@ -215,6 +220,7 @@ mod tests {
     }
 
     #[test]
+    // High 等级示例
     fn high_examples() {
         assert_eq!(lvl("rm -rf /var/www/old"), RiskLevel::High);
         assert_eq!(lvl("find /tmp -name '*.log' -delete"), RiskLevel::High);
@@ -230,6 +236,7 @@ mod tests {
     }
 
     #[test]
+    // Medium 等级示例
     fn medium_examples() {
         assert_eq!(lvl("apt-get install -y nginx"), RiskLevel::Medium);
         assert_eq!(lvl("docker pull nginx:latest"), RiskLevel::Medium);
@@ -240,6 +247,7 @@ mod tests {
     }
 
     #[test]
+    // Low 等级示例（只读/检查类）
     fn low_examples() {
         assert_eq!(lvl("uname -a"), RiskLevel::Low);
         assert_eq!(lvl("cat /etc/os-release"), RiskLevel::Low);
@@ -254,6 +262,7 @@ mod tests {
         assert_eq!(lvl("ufw status"), RiskLevel::Low);
     }
 
+    /// 测试辅助：用命令列表构造一份计划。
     fn plan(cmds: &[(&str, RiskLevel, bool)]) -> Plan {
         Plan {
             id: new_id(),
@@ -274,6 +283,7 @@ mod tests {
     }
 
     #[test]
+    // 审查应汇总出整体等级与各标志位
     fn review_aggregates_overall_and_flags() {
         let p = plan(&[
             ("systemctl status nginx", RiskLevel::Low, true),
@@ -284,10 +294,11 @@ mod tests {
         assert!(r.requires_confirmation);
         assert!(!r.requires_double_confirmation);
         assert!(!r.blocked);
-        assert_eq!(r.findings.len(), 1); // only the restart
+        assert_eq!(r.findings.len(), 1); // 只有 restart 一条发现
     }
 
     #[test]
+    // High 步骤应触发二次确认标志
     fn review_flags_double_confirmation_on_high() {
         let p = plan(&[("rm -rf /var/www/old", RiskLevel::High, false)]);
         let r = review_plan(&p, false);
@@ -296,6 +307,7 @@ mod tests {
     }
 
     #[test]
+    // 含 Blocked 步骤时整体应被拦截
     fn review_blocks_on_blocked_step() {
         let p = plan(&[("rm -rf /", RiskLevel::Blocked, false)]);
         let r = review_plan(&p, false);
@@ -304,6 +316,7 @@ mod tests {
     }
 
     #[test]
+    // 只读模式下写操作被升级为 Blocked
     fn read_only_mode_blocks_writes() {
         let p = plan(&[("systemctl restart nginx", RiskLevel::Medium, false)]);
         let r = review_plan(&p, true);
@@ -312,6 +325,7 @@ mod tests {
     }
 
     #[test]
+    // 只读模式下仍允许检查类命令
     fn read_only_mode_allows_inspection() {
         let p = plan(&[("df -h", RiskLevel::Low, true)]);
         let r = review_plan(&p, true);

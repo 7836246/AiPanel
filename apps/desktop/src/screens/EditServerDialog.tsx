@@ -8,6 +8,7 @@ import {
   type ServerProfile,
 } from "../lib/api";
 
+// 编辑服务器对话框：修改连接信息、可选更新凭据，或二次确认后删除服务器。
 export default function EditServerDialog({
   open,
   server,
@@ -44,6 +45,7 @@ export default function EditServerDialog({
     setError(null);
   }, [server]);
 
+  // 保存修改：更新服务器信息，并在填了新凭据时单独写入（留空则不动凭据）。
   async function submit() {
     if (!server) return;
     if (!name.trim() || !host.trim() || !username.trim()) {
@@ -66,6 +68,7 @@ export default function EditServerDialog({
     }
   }
 
+  // 删除服务器：首次点击仅切到确认态，再次点击才真正删除。
   async function remove() {
     if (!server) return;
     if (!confirmDelete) {
@@ -149,7 +152,7 @@ export default function EditServerDialog({
             value={authKind}
             onChange={(e) => {
               setAuthKind(e.target.value as AuthKind);
-              setSecret(""); // don't keep a typed credential after switching auth method
+              setSecret(""); // 切换认证方式后不保留已输入的凭据
             }}
             className="h-9 rounded-md border border-border bg-surface-2 px-2 text-sm text-fg outline-none focus-visible:border-brand"
           >

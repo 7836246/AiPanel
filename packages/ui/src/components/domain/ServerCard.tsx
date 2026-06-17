@@ -6,10 +6,10 @@ export type ServerStatus = "online" | "offline" | "unknown";
 
 export interface ServerCardProps extends React.HTMLAttributes<HTMLDivElement> {
   name: string;
-  /** Connection target, e.g. "root@10.0.0.4:22". Mask before logging. */
+  /** 连接目标，例如 "root@10.0.0.4:22"。记录前需脱敏。 */
   host: string;
   status?: ServerStatus;
-  /** Short facts shown as a key/value grid, e.g. { OS: "Ubuntu 22.04", CPU: "12%" }. */
+  /** 以键值网格展示的简要信息，例如 { OS: "Ubuntu 22.04", CPU: "12%" }。 */
   facts?: Record<string, string>;
 }
 
@@ -19,7 +19,7 @@ const STATUS_TONE = {
   unknown: "neutral",
 } as const;
 
-/** A saved server with its connection target, reachability, and quick facts. */
+/** 展示一台已保存服务器：连接目标、可达状态与简要信息。 */
 export function ServerCard({
   name,
   host,

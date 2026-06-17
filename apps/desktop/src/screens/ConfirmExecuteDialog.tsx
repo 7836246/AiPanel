@@ -23,7 +23,7 @@ export default function ConfirmExecuteDialog({
 }) {
   const [acknowledged, setAcknowledged] = useState(false);
 
-  // Never carry a stale acknowledgement into a new confirmation.
+  // 绝不把上一次的「已知晓」勾选带入新的确认。
   useEffect(() => {
     if (!open) setAcknowledged(false);
   }, [open, plan]);
@@ -32,8 +32,8 @@ export default function ConfirmExecuteDialog({
     return <Dialog open={open} onClose={onClose} title="确认执行计划" />;
   }
 
-  const blocked = review.blocked;
-  const needsDouble = review.overall === "high" || review.requiresDoubleConfirmation;
+  const blocked = review.blocked; // 含被阻止步骤：仅展示，禁止执行
+  const needsDouble = review.overall === "high" || review.requiresDoubleConfirmation; // 高风险需勾选二次确认
   const overallMeta = RISK_META[review.overall];
 
   const footer = blocked ? (

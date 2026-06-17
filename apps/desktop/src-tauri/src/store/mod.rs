@@ -1,9 +1,8 @@
-//! SQLite persistence.
+//! SQLite 持久化。
 //!
-//! Stores **non-sensitive** config and the audit index only. Secrets (SSH
-//! passwords/keys, API keys) live in the credential store and are referenced
-//! here by [`CredentialRef`] — never written in plaintext (see
-//! docs/SECURITY_MODEL.zh-Hans.md).
+//! 只存放**非敏感**配置与审计索引。密钥（SSH 密码/密钥、API Key）存放在凭据
+//! 存储中，这里仅以 [`CredentialRef`] 引用——绝不明文写入（见
+//! docs/SECURITY_MODEL.zh-Hans.md）。
 
 use std::sync::Mutex;
 
@@ -13,14 +12,16 @@ use rusqlite::{params, Connection, OptionalExtension, Row};
 use crate::core::error::{AppError, AppResult};
 use crate::core::types::*;
 
+/// 对 SQLite 连接的封装，所有持久化操作的入口。
 pub struct Store {
     conn: Mutex<Connection>,
 }
 
+/// 当前数据库 schema 版本号。
 const SCHEMA_VERSION: i64 = 2;
 
 impl Store {
-    /// Open (and migrate) a database at `path`.
+    /// 打开（并迁移）位于 `path` 的数据库。
     pub fn open(path: &std::path::Path) -> AppResult<Self> {
         let conn = Connection::open(path)?;
         let store = Store { conn: Mutex::new(conn) };
@@ -28,7 +29,7 @@ impl Store {
         Ok(store)
     }
 
-    /// In-memory store for tests.
+    /// 供测试使用的内存数据库。
     pub fn open_in_memory() -> AppResult<Self> {
         let conn = Connection::open_in_memory()?;
         let store = Store { conn: Mutex::new(conn) };
@@ -36,6 +37,7 @@ impl Store {
         Ok(store)
     }
 
+    /// 按版本号增量执行 schema 迁移，并更新 user_version。
     fn migrate(&self) -> AppResult<()> {
         let conn = self.conn.lock().unwrap();
         let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
@@ -90,8 +92,8 @@ impl Store {
             )?;
         }
         if version < 2 {
-            // The user-facing run history: keep the existing queryable columns and
-            // stash the full TaskRecord JSON in `data` (mirrors audit_records).
+            // 面向用户的运行历史：保留现有可查询列，并把完整的 TaskRecord JSON
+            // 存进 `data` 列（与 audit_records 一致）。
             conn.execute_batch(
                 "ALTER TABLE tasks ADD COLUMN data TEXT NOT NULL DEFAULT '{}';",
             )?;
@@ -102,6 +104,7 @@ impl Store {
 
     // ----- servers -------------------------------------------------------
 
+    /// 列出所有服务器（按创建时间升序）。
     pub fn list_servers(&self) -> AppResult<Vec<ServerProfile>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
@@ -114,6 +117,7 @@ impl Store {
         Ok(rows)
     }
 
+    /// 按 id 获取服务器，不存在则返回 NotFound。
     pub fn get_server(&self, id: &str) -> AppResult<ServerProfile> {
         let conn = self.conn.lock().unwrap();
         conn.query_row(
@@ -126,6 +130,7 @@ impl Store {
         .ok_or_else(|| AppError::NotFound(format!("server {id}")))
     }
 
+    /// 校验并创建一台服务器；需要密钥的认证方式会分配一个凭据引用。
     pub fn create_server(&self, input: ServerInput) -> AppResult<ServerProfile> {
         validate_server_input(&input)?;
         let id = new_id();
@@ -169,6 +174,7 @@ impl Store {
         Ok(profile)
     }
 
+    /// 校验并更新一台服务器；按新的认证方式保留或新建凭据引用。
     pub fn update_server(&self, id: &str, input: ServerInput) -> AppResult<ServerProfile> {
         validate_server_input(&input)?;
         let mut profile = self.get_server(id)?;
@@ -177,7 +183,7 @@ impl Store {
         profile.port = input.port;
         profile.username = input.username;
         profile.auth_kind = input.auth_kind;
-        // Keep an existing secret pointer, or mint one if the new auth needs it.
+        // 保留已有的密钥引用；若新的认证方式需要而又没有，则新建一个。
         profile.credential_ref = match input.auth_kind {
             AuthKind::Password | AuthKind::Key => {
                 Some(profile.credential_ref.unwrap_or_else(|| CredentialRef::for_server(id)))
@@ -203,6 +209,7 @@ impl Store {
         Ok(profile)
     }
 
+    /// 删除一台服务器，不存在则返回 NotFound。
     pub fn delete_server(&self, id: &str) -> AppResult<()> {
         let conn = self.conn.lock().unwrap();
         let n = conn.execute("DELETE FROM server_profiles WHERE id = ?1", params![id])?;
@@ -214,6 +221,7 @@ impl Store {
 
     // ----- providers / model policy --------------------------------------
 
+    /// 列出所有模型供应商配置（按创建时间升序）。
     pub fn list_providers(&self) -> AppResult<Vec<ProviderConfig>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
@@ -224,6 +232,7 @@ impl Store {
         Ok(rows)
     }
 
+    /// 按 id 获取供应商配置，不存在则返回 NotFound。
     pub fn get_provider(&self, id: &str) -> AppResult<ProviderConfig> {
         let conn = self.conn.lock().unwrap();
         conn.query_row(
@@ -236,6 +245,7 @@ impl Store {
         .ok_or_else(|| AppError::NotFound(format!("provider {id}")))
     }
 
+    /// 插入或按 id 替换一条供应商配置。
     pub fn upsert_provider(&self, p: &ProviderConfig) -> AppResult<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
@@ -257,6 +267,7 @@ impl Store {
         Ok(())
     }
 
+    /// 删除一条供应商配置，不存在则返回 NotFound。
     pub fn delete_provider(&self, id: &str) -> AppResult<()> {
         let conn = self.conn.lock().unwrap();
         let n = conn.execute("DELETE FROM provider_configs WHERE id = ?1", params![id])?;
@@ -266,6 +277,7 @@ impl Store {
         Ok(())
     }
 
+    /// 读取模型选择策略，未设置时返回默认值。
     pub fn get_policy(&self) -> AppResult<ModelSelectionPolicy> {
         let conn = self.conn.lock().unwrap();
         let data: Option<String> = conn
@@ -277,6 +289,7 @@ impl Store {
         }
     }
 
+    /// 写入（覆盖）模型选择策略。
     pub fn set_policy(&self, p: &ModelSelectionPolicy) -> AppResult<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
@@ -288,6 +301,7 @@ impl Store {
 
     // ----- audit ---------------------------------------------------------
 
+    /// 插入或按 id 替换一条审计记录（完整 JSON 存入 `data` 列）。
     pub fn insert_audit_record(&self, rec: &AuditRecord) -> AppResult<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
@@ -304,6 +318,7 @@ impl Store {
         Ok(())
     }
 
+    /// 列出最近的审计记录（按创建时间倒序，最多 `limit` 条）。
     pub fn list_audit_records(&self, limit: u32) -> AppResult<Vec<AuditRecord>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
@@ -319,6 +334,7 @@ impl Store {
         Ok(out)
     }
 
+    /// 按 id 获取一条审计记录，不存在则返回 NotFound。
     pub fn get_audit_record(&self, id: &str) -> AppResult<AuditRecord> {
         let conn = self.conn.lock().unwrap();
         let data: Option<String> = conn
@@ -332,6 +348,7 @@ impl Store {
 
     // ----- tasks (run history) -------------------------------------------
 
+    /// 插入或按 id 替换一条运行历史记录（完整 JSON 存入 `data` 列）。
     pub fn upsert_task(&self, rec: &TaskRecord) -> AppResult<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
@@ -350,6 +367,7 @@ impl Store {
         Ok(())
     }
 
+    /// 列出运行历史，可按服务器过滤（按创建时间倒序，最多 `limit` 条）。
     pub fn list_tasks(&self, server_id: Option<&str>, limit: u32) -> AppResult<Vec<TaskRecord>> {
         let conn = self.conn.lock().unwrap();
         let rows: Vec<String> = match server_id {
@@ -373,8 +391,8 @@ impl Store {
         };
         let mut out = Vec::with_capacity(rows.len());
         for data in rows {
-            // Skip an unreadable row rather than failing the whole history (e.g. a
-            // legacy/empty row, or future schema drift).
+            // 跳过无法解析的行，而不是让整个历史查询失败（例如遗留/空行，
+            // 或未来的 schema 漂移）。
             match serde_json::from_str(&data) {
                 Ok(t) => out.push(t),
                 Err(e) => eprintln!("[store] skipping unreadable task row: {e}"),
@@ -383,6 +401,7 @@ impl Store {
         Ok(out)
     }
 
+    /// 按 id 获取一条运行历史，不存在则返回 NotFound。
     pub fn get_task(&self, id: &str) -> AppResult<TaskRecord> {
         let conn = self.conn.lock().unwrap();
         let data: Option<String> = conn
@@ -394,6 +413,7 @@ impl Store {
         }
     }
 
+    /// 删除一条运行历史，不存在则返回 NotFound。
     pub fn delete_task(&self, id: &str) -> AppResult<()> {
         let conn = self.conn.lock().unwrap();
         let n = conn.execute("DELETE FROM tasks WHERE id = ?1", params![id])?;
@@ -403,7 +423,7 @@ impl Store {
         Ok(())
     }
 
-    /// Update the cached status + facts after a doctor/connectivity run.
+    /// 在一次体检/连通性检测后更新缓存的状态与快速信息（facts）。
     pub fn set_server_status(
         &self,
         id: &str,
@@ -425,8 +445,9 @@ impl Store {
     }
 }
 
-// --- row mapping / enum (de)serialization ---------------------------------
+// --- 行映射 / 枚举（反）序列化 ---------------------------------
 
+/// 把一行 server_profiles 映射为 ServerProfile。
 fn row_to_server(row: &Row) -> rusqlite::Result<ServerProfile> {
     let facts_json: String = row.get(8)?;
     let facts = serde_json::from_str(&facts_json).unwrap_or_default();
@@ -445,6 +466,7 @@ fn row_to_server(row: &Row) -> rusqlite::Result<ServerProfile> {
     })
 }
 
+/// 把一行 provider_configs 映射为 ProviderConfig。
 fn row_to_provider(row: &Row) -> rusqlite::Result<ProviderConfig> {
     Ok(ProviderConfig {
         id: row.get(0)?,
@@ -460,6 +482,7 @@ fn row_to_provider(row: &Row) -> rusqlite::Result<ProviderConfig> {
     })
 }
 
+/// ProviderKind 与其存储字符串之间的转换。
 fn provider_kind_str(k: ProviderKind) -> &'static str {
     match k {
         ProviderKind::CodexAppServer => "codex_app_server",
@@ -475,12 +498,14 @@ fn parse_provider_kind(s: &str) -> ProviderKind {
     }
 }
 
+/// 解析 RFC3339 时间戳，失败时回退为当前时间。
 fn parse_ts(s: &str) -> DateTime<Utc> {
     DateTime::parse_from_rfc3339(s)
         .map(|d| d.with_timezone(&Utc))
         .unwrap_or_else(|_| Utc::now())
 }
 
+/// AuthKind 与其存储字符串之间的转换。
 fn auth_kind_str(k: AuthKind) -> &'static str {
     match k {
         AuthKind::Password => "password",
@@ -495,8 +520,8 @@ fn parse_auth_kind(s: &str) -> AuthKind {
         _ => AuthKind::Agent,
     }
 }
-/// Stored in the `tasks.status` column (queryable mirror of the JSON `status`).
-/// Matches `TaskStatus`'s snake_case serde representation.
+/// 存入 `tasks.status` 列（JSON 中 `status` 的可查询镜像）。
+/// 与 `TaskStatus` 的 snake_case serde 表示保持一致。
 fn task_status_str(s: TaskStatus) -> &'static str {
     match s {
         TaskStatus::Pending => "pending",
@@ -509,6 +534,7 @@ fn task_status_str(s: TaskStatus) -> &'static str {
     }
 }
 
+/// ServerStatus 与其存储字符串之间的转换。
 fn status_str(s: ServerStatus) -> &'static str {
     match s {
         ServerStatus::Online => "online",
@@ -524,6 +550,7 @@ fn parse_status(s: &str) -> ServerStatus {
     }
 }
 
+/// 校验创建/更新服务器的输入，缺少必填字段则返回 Validation 错误。
 fn validate_server_input(input: &ServerInput) -> AppResult<()> {
     if input.name.trim().is_empty() {
         return Err(AppError::Validation("server name is required".into()));
@@ -638,7 +665,7 @@ mod tests {
             updated_at: now(),
         };
         s.upsert_task(&rec).unwrap();
-        // upsert is idempotent on id
+        // upsert 对同一 id 是幂等的
         s.upsert_task(&rec).unwrap();
 
         let all = s.list_tasks(None, 10).unwrap();
@@ -661,7 +688,7 @@ mod tests {
     fn providers_and_policy_persist() {
         let s = Store::open_in_memory().unwrap();
         assert_eq!(s.list_providers().unwrap().len(), 0);
-        // default policy when unset
+        // 未设置时返回默认策略
         assert!(s.get_policy().unwrap().auto);
 
         let p = ProviderConfig {

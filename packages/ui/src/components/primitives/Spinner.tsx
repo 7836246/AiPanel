@@ -4,7 +4,7 @@ export interface SpinnerProps extends React.HTMLAttributes<HTMLSpanElement> {
   size?: "sm" | "md";
 }
 
-/** Indeterminate loading indicator — e.g. while a command streams. */
+/** 不确定进度的加载指示器——例如命令流式输出时。 */
 export function Spinner({ size = "md", className, ...props }: SpinnerProps) {
   return (
     <span

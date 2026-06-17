@@ -36,21 +36,25 @@ import {
 } from "../lib/api";
 import "./codex-console.css";
 
+// 从后端错误或任意异常中提取可展示的错误文本。
 const errMsg = (e: unknown): string =>
   e && typeof e === "object" && "message" in e ? (e as AppError).message : String(e);
 
 const nowIso = () => new Date().toISOString();
+// 生成本地任务 ID，优先用 crypto.randomUUID，缺失时回退到时间戳+随机串。
 const newId = () =>
   typeof crypto !== "undefined" && "randomUUID" in crypto
     ? crypto.randomUUID()
     : `t-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
+// 服务器状态对应的小圆点颜色类。
 const statusDot = (s: ServerStatus): string =>
   s === "online" ? "bg-risk-low" : s === "offline" ? "bg-risk-blocked" : "bg-fg-subtle";
 
+// 单个计划步骤在 UI 中的执行状态。
 type StepStatus = "pending" | "running" | "done" | "failed";
 
-/* ---------------- icons ---------------- */
+/* ---------------- 图标 ---------------- */
 type IconProps = { size?: number };
 const stroke = {
   fill: "none",
@@ -135,7 +139,8 @@ const Cross = ({ size = 14 }: IconProps) => (
   </svg>
 );
 
-/* ---------------- theme ---------------- */
+/* ---------------- 主题 ---------------- */
+// 主题钩子：持久化到 localStorage，并切换 <html> 的 dark 类；返回 [当前主题, 切换函数]。
 function useTheme(): [("light" | "dark"), () => void] {
   const [theme, setTheme] = useState<"light" | "dark">(
     () => (localStorage.getItem("aipanel-theme") as "light" | "dark") ?? "light"
@@ -147,7 +152,8 @@ function useTheme(): [("light" | "dark"), () => void] {
   return [theme, () => setTheme((t) => (t === "light" ? "dark" : "light"))];
 }
 
-/* ---------------- sub-components ---------------- */
+/* ---------------- 子组件 ---------------- */
+// 侧栏导航项：图标 + 文案，可选快捷键提示与选中态。
 function NavItem({ icon, label, kbd, active, onClick }: {
   icon: ReactNode; label: string; kbd?: string; active?: boolean; onClick?: () => void;
 }) {
@@ -165,11 +171,13 @@ function NavItem({ icon, label, kbd, active, onClick }: {
   );
 }
 
+// 任务状态到中文标签的映射。
 const STATUS_LABEL: Record<string, string> = {
   completed: "完成", failed: "失败", blocked: "已阻止", running: "进行中",
   awaiting_confirmation: "待确认", planning: "规划中", pending: "待处理",
 };
 
+// 计划中的一行步骤：状态图标、摘要、风险标签，以及可复制的命令。
 function StepRow({ summary, command, risk, status }: {
   summary: string; command: string; risk: RiskLevel; status: StepStatus;
 }) {
@@ -211,6 +219,7 @@ function StepRow({ summary, command, risk, status }: {
   );
 }
 
+// 审计面板：列出审计记录，点击可展开查看每条命令的输出与退出码。
 function AuditPanel({ records }: { records: AuditRecord[] }) {
   const [openId, setOpenId] = useState<string | null>(null);
   return (
@@ -270,7 +279,8 @@ function AuditPanel({ records }: { records: AuditRecord[] }) {
   );
 }
 
-/* ---------------- screen ---------------- */
+/* ---------------- 主屏 ---------------- */
+// 主控制台：左侧服务器/历史导航，右侧计划生成、执行、体检、诊断与终端输出。
 export default function CodexConsole() {
   const [theme, toggleTheme] = useTheme();
   const [view, setView] = useState<"console" | "audit" | "settings">("console");
@@ -291,9 +301,11 @@ export default function CodexConsole() {
   const [editing, setEditing] = useState<ServerProfile | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [confirmReview, setConfirmReview] = useState<RiskReview | null>(null);
+  // 单调递增的运行标识：每次发起新操作就自增，用于丢弃切换上下文后过期的异步回调。
   const runIdRef = useRef(0);
 
   const selected = servers.find((s) => s.id === selectedServerId) ?? null;
+  // 当前可用于 AI 诊断的供应商（启用且非 custom）。
   const aiProvider = providers.find((p) => p.enabled && p.kind !== "custom") ?? null;
   const filteredServers = servers.filter(
     (s) => !serverQuery || s.name.toLowerCase().includes(serverQuery.toLowerCase()) || s.host.includes(serverQuery)
@@ -304,9 +316,9 @@ export default function CodexConsole() {
     listProviders().then(setProviders).catch(() => {});
   }, []);
 
-  // Load run history for the selected server; reset the open run.
+  // 选中服务器变化时：加载其运行历史，并重置当前打开的运行。
   useEffect(() => {
-    runIdRef.current += 1; // invalidate any in-flight run before switching context
+    runIdRef.current += 1; // 切换上下文前先作废任何进行中的运行
     setRunning(false);
     setCurrent(null);
     setStepStatus([]);
@@ -315,7 +327,7 @@ export default function CodexConsole() {
     listTasks(selectedServerId).then(setTasks).catch(() => setTasks([]));
   }, [selectedServerId]);
 
-  // Re-fetch providers when returning from Settings so the banner/selector refresh.
+  // 从设置返回时重新拉取供应商，刷新顶部横幅与模型选择器。
   useEffect(() => {
     if (view !== "settings") listProviders().then(setProviders).catch(() => {});
   }, [view]);
@@ -324,6 +336,7 @@ export default function CodexConsole() {
     if (selectedServerId) setTasks(await listTasks(selectedServerId).catch(() => []));
   }
 
+  // 打开一条历史任务：回填步骤状态与终端输出，并切回控制台视图。
   function openTask(t: TaskRecord) {
     setCurrent(t);
     setStepStatus((t.plan?.steps ?? []).map((_, i) => (t.executions[i] ? (t.executions[i].exitCode === 0 ? "done" : "failed") : "pending")));
@@ -331,6 +344,7 @@ export default function CodexConsole() {
     setView("console");
   }
 
+  // 把命令执行结果转成终端行：命令以 prompt 着色，输出按退出码区分正常/错误，末尾追加总结。
   function execLines(executions: CommandExecution[], summary?: string): TerminalLine[] {
     const lines: TerminalLine[] = [];
     for (const ex of executions) {
@@ -341,7 +355,8 @@ export default function CodexConsole() {
     return lines;
   }
 
-  // ----- actions -----
+  // ----- 操作 -----
+  // 根据输入意图生成计划，保存为待确认任务（不会自动执行）。
   async function generatePlan() {
     const intent = intentValue.trim();
     if (!intent || !selectedServerId) return;
@@ -351,7 +366,7 @@ export default function CodexConsole() {
     setTermLines([{ text: aiProvider ? "AI 规划中…" : "生成计划中(本地规则)…", tone: "muted" }]);
     try {
       const plan = await createPlan(intent, serverId);
-      if (runIdRef.current !== myId) return;
+      if (runIdRef.current !== myId) return; // 期间已切换上下文则丢弃结果
       const task: TaskRecord = {
         id: newId(), serverId, title: plan.goal, intent, kind: "plan",
         plan, executions: [], status: "awaiting_confirmation", createdAt: nowIso(), updatedAt: nowIso(),
@@ -372,10 +387,11 @@ export default function CodexConsole() {
     }
   }
 
+  // AI 诊断：让模型通过只读工具自主调查并给出总结（需先配置 AI 供应商）。
   async function diagnose() {
     const intent = intentValue.trim();
     if (!intent || !selectedServerId) return;
-    if (!aiProvider) { setView("settings"); return; }
+    if (!aiProvider) { setView("settings"); return; } // 未配置供应商则跳转设置
     const myId = ++runIdRef.current;
     const serverId = selectedServerId;
     setRunning(true);
@@ -406,6 +422,7 @@ export default function CodexConsole() {
     }
   }
 
+  // 只读体检：流式运行 doctor 计划，全程为只读检查命令。
   async function runDoctor() {
     if (!selectedServerId) return;
     const myId = ++runIdRef.current;
@@ -418,7 +435,7 @@ export default function CodexConsole() {
     };
     setCurrent(task);
     setStepStatus((plan?.steps ?? []).map(() => "pending"));
-    await saveTask(task); // persist the running run so an interrupted one still shows in history
+    await saveTask(task); // 先把「运行中」状态持久化，即使中断也能在历史里看到
     await refreshTasks();
     const lines: TerminalLine[] = [{ text: `正在体检 ${selected?.name ?? ""} …`, tone: "muted" }];
     setTermLines([...lines]);
@@ -458,11 +475,12 @@ export default function CodexConsole() {
     }
   }
 
-  // Review a generated plan, then confirm (or execute directly if purely read-only).
+  // 先对生成的计划做风险审查，再决定确认（或纯只读时直接执行）。
   async function startExecute() {
     if (!current?.plan) return;
     try {
       const review = await reviewPlan(current.plan, readOnlyMode);
+      // 既未被阻止又无需确认（纯低风险）则直接执行，否则弹出确认对话框。
       if (!review.blocked && !review.requiresConfirmation) { await execute(true, false, review); return; }
       setConfirmReview(review);
       setConfirmOpen(true);
@@ -472,6 +490,7 @@ export default function CodexConsole() {
     }
   }
 
+  // 流式执行已确认的计划，逐步更新步骤状态与终端输出，并把结果落库。
   async function execute(confirmed: boolean, doubleConfirmed: boolean, review?: RiskReview) {
     setConfirmOpen(false);
     if (!current?.plan || !confirmed) return;
@@ -511,12 +530,14 @@ export default function CodexConsole() {
     }
   }
 
+  // 停止当前运行：作废进行中的回调，并把仍在运行的步骤回退为待执行。
   function stop() {
     runIdRef.current += 1;
     setRunning(false);
     setStepStatus((prev) => prev.map((s) => (s === "running" ? "pending" : s)));
   }
 
+  // 切到审计视图并加载审计记录。
   function openAudit() {
     setView("audit");
     listAuditRecords().then(setAudits).catch(() => setAudits([]));
@@ -527,7 +548,7 @@ export default function CodexConsole() {
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-bg text-fg" style={{ fontFamily: "var(--font-sans)" }}>
-      {/* sidebar */}
+      {/* 侧栏 */}
       <aside className="flex w-64 flex-none flex-col border-r border-border bg-surface-2">
         <div className="flex items-center gap-2.5 px-3.5 py-3">
           <span className="flex h-7 w-7 items-center justify-center rounded-md bg-brand font-mono text-sm text-brand-fg">›_</span>
@@ -604,7 +625,7 @@ export default function CodexConsole() {
         </div>
       </aside>
 
-      {/* main */}
+      {/* 主区 */}
       <main className="flex min-w-0 flex-1 flex-col bg-bg">
         <div className="flex h-10 flex-none items-center justify-between border-b border-border px-3.5">
           <div className="flex min-w-0 items-center gap-2">
@@ -679,7 +700,7 @@ export default function CodexConsole() {
               </div>
             </section>
 
-            {/* composer */}
+            {/* 输入区 */}
             <div className="flex-none bg-bg px-6 pb-3.5 pt-1.5">
               <div className="mx-auto max-w-[680px] rounded-lg border border-border-strong bg-surface-1 px-3 pb-2.5 pl-4 pt-3 shadow-sm">
                 <input
@@ -740,7 +761,8 @@ export default function CodexConsole() {
   );
 }
 
-/* ---------------- empty / home states ---------------- */
+/* ---------------- 空态 / 首页 ---------------- */
+// 首次使用引导：尚未添加任何服务器时的空状态。
 function FirstRun({ onAdd }: { onAdd: () => void }) {
   return (
     <div className="flex min-h-0 flex-1 items-center justify-center p-8">
@@ -756,6 +778,7 @@ function FirstRun({ onAdd }: { onAdd: () => void }) {
   );
 }
 
+// 已选服务器但尚无打开任务时的主页：展示服务器概况与「只读体检」入口。
 function ServerHome({ server, running, onDoctor }: { server: ServerProfile | null; running: boolean; onDoctor: () => void }) {
   if (!server) {
     return <div className="rounded-md border border-border bg-surface-1 px-4 py-8 text-center text-[13px] text-fg-subtle">从左侧选择一台服务器开始。</div>;
