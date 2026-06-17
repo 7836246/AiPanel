@@ -164,6 +164,61 @@ export async function runReadonlyCommand(id: string, command: string): Promise<C
   return invoke<CommandExecution>("run_readonly_command", { id, command });
 }
 
+export interface DoctorReport {
+  serverId: string;
+  os?: string;
+  kernel?: string;
+  arch?: string;
+  uptime?: string;
+  load?: string;
+  memory?: string;
+  disk?: string;
+  ports: string[];
+  services: string[];
+  docker?: string;
+  warnings: string[];
+  executions: CommandExecution[];
+  createdAt: string;
+}
+
+export async function serverDoctorPlan(id: string): Promise<Plan> {
+  if (!isTauri())
+    return {
+      id: "mock-plan",
+      serverId: id,
+      goal: "只读服务器体检",
+      steps: [],
+      createdAt: new Date().toISOString(),
+    };
+  return invoke<Plan>("server_doctor_plan", { id });
+}
+
+export async function runServerDoctor(id: string): Promise<DoctorReport> {
+  if (!isTauri())
+    return {
+      serverId: id,
+      os: "Ubuntu 22.04.3 LTS (mock)",
+      kernel: "Linux 5.15",
+      arch: "x86_64",
+      uptime: "up 2 hours",
+      ports: ["LISTEN 0 128 0.0.0.0:22", "LISTEN 0 511 0.0.0.0:443"],
+      services: ["nginx.service", "ssh.service"],
+      warnings: [],
+      executions: [
+        {
+          command: "cat /etc/os-release",
+          exitCode: 0,
+          stdout: 'PRETTY_NAME="Ubuntu 22.04.3 LTS"',
+          stderr: "",
+          durationMs: 120,
+          startedAt: new Date().toISOString(),
+        },
+      ],
+      createdAt: new Date().toISOString(),
+    };
+  return invoke<DoctorReport>("run_server_doctor", { id });
+}
+
 export async function reviewPlan(plan: Plan, readOnlyMode = false): Promise<RiskReview> {
   if (!isTauri()) return mockReview(plan, readOnlyMode);
   return invoke<RiskReview>("review_plan", { plan, readOnlyMode });

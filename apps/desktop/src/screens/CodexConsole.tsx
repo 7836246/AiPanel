@@ -8,12 +8,31 @@ import {
 } from "@aipanel/ui";
 import {
   listServers,
+  runServerDoctor,
   RISK_META,
+  type AppError,
+  type DoctorReport,
   type RiskLevel,
   type ServerProfile,
   type ServerStatus,
 } from "../lib/api";
 import "./codex-console.css";
+
+const errMsg = (e: unknown): string =>
+  e && typeof e === "object" && "message" in e ? (e as AppError).message : String(e);
+
+function reportToLines(r: DoctorReport): TerminalLine[] {
+  const lines: TerminalLine[] = [];
+  for (const ex of r.executions) {
+    lines.push({ text: `$ ${ex.command}`, tone: "prompt" });
+    for (const l of (ex.stdout || ex.stderr).split("\n").slice(0, 6)) {
+      if (l.trim()) lines.push({ text: l, tone: ex.exitCode === 0 ? "default" : "danger" });
+    }
+  }
+  for (const w of r.warnings) lines.push({ text: `⚠ ${w}`, tone: "danger" });
+  if (lines.length === 0) lines.push({ text: "(无输出)", tone: "muted" });
+  return lines;
+}
 
 const statusDot = (s: ServerStatus): string =>
   s === "online" ? "bg-risk-low" : s === "offline" ? "bg-risk-blocked" : "bg-fg-subtle";
@@ -283,7 +302,25 @@ export default function CodexConsole() {
   const [terminalOpen, setTerminalOpen] = useState(true);
   const [servers, setServers] = useState<ServerProfile[]>([]);
   const [selectedServerId, setSelectedServerId] = useState<string | null>(null);
+  const [doctorLines, setDoctorLines] = useState<TerminalLine[] | null>(null);
   const steps = buildSteps(running);
+  const selected = servers.find((s) => s.id === selectedServerId);
+
+  async function runDoctor() {
+    if (!selectedServerId) return;
+    setRunning(true);
+    setTerminalOpen(true);
+    setDoctorLines([{ text: `正在体检 ${selected?.name ?? ""} …`, tone: "muted" }]);
+    try {
+      const report = await runServerDoctor(selectedServerId);
+      setDoctorLines(reportToLines(report));
+      setServers(await listServers());
+    } catch (e) {
+      setDoctorLines([{ text: `体检失败: ${errMsg(e)}`, tone: "danger" }]);
+    } finally {
+      setRunning(false);
+    }
+  }
 
   useEffect(() => {
     listServers()
@@ -403,7 +440,12 @@ export default function CodexConsole() {
                     停止
                   </Button>
                 ) : (
-                  <Button variant="primary" size="sm" onClick={() => { setRunning(true); setTerminalOpen(true); }}>
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    onClick={runDoctor}
+                    disabled={!selectedServerId}
+                  >
                     <Play /> 确认执行
                   </Button>
                 )}
@@ -453,9 +495,9 @@ export default function CodexConsole() {
         {/* terminal dock */}
         {terminalOpen && (
           <Terminal
-            host="prod-ai-01"
+            host={selected?.name ?? "—"}
             live={running}
-            lines={running ? TERM_RUNNING : TERM_IDLE}
+            lines={doctorLines ?? (running ? TERM_RUNNING : TERM_IDLE)}
             cursor
           />
         )}

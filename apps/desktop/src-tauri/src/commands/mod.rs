@@ -7,7 +7,7 @@ use tauri::State;
 
 use crate::core::error::AppResult;
 use crate::core::types::{
-    CommandExecution, Plan, RiskReview, ServerInput, ServerProfile, ServerStatus,
+    CommandExecution, DoctorReport, Plan, RiskReview, ServerInput, ServerProfile, ServerStatus,
 };
 use crate::AppState;
 
@@ -110,4 +110,23 @@ pub async fn run_readonly_command(
 ) -> AppResult<CommandExecution> {
     let (server, secret) = load_server_and_secret(&state, &id)?;
     crate::ssh::run_readonly(&server, secret.as_deref(), &command, crate::ssh::DEFAULT_TIMEOUT).await
+}
+
+/// The read-only plan the doctor would run, for previewing before execution.
+#[tauri::command]
+pub fn server_doctor_plan(state: State<'_, AppState>, id: String) -> AppResult<Plan> {
+    state.store.get_server(&id)?; // ensure it exists
+    Ok(crate::doctor::doctor_plan(&id))
+}
+
+/// Run the read-only server doctor, caching status + quick facts on the server.
+#[tauri::command]
+pub async fn run_server_doctor(state: State<'_, AppState>, id: String) -> AppResult<DoctorReport> {
+    let (server, secret) = load_server_and_secret(&state, &id)?;
+    let report = crate::doctor::run_doctor(&server, secret.as_deref()).await?;
+    let succeeded = report.executions.iter().any(|e| e.exit_code == 0);
+    let status = if succeeded { ServerStatus::Online } else { ServerStatus::Offline };
+    let facts = crate::doctor::facts_from_report(&report);
+    state.store.set_server_status(&id, status, Some(&facts))?;
+    Ok(report)
 }

@@ -58,6 +58,8 @@ pub fn run() {
             commands::review_plan,
             commands::check_ssh_connection,
             commands::run_readonly_command,
+            commands::server_doctor_plan,
+            commands::run_server_doctor,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
