@@ -181,6 +181,38 @@ export interface DoctorReport {
   createdAt: string;
 }
 
+export type TaskStatus =
+  | "pending"
+  | "planning"
+  | "awaiting_confirmation"
+  | "running"
+  | "completed"
+  | "failed"
+  | "blocked";
+
+export interface AuditRecord {
+  id: string;
+  serverId?: string;
+  intent: string;
+  plan?: Plan;
+  riskReview?: RiskReview;
+  confirmedAt?: string;
+  executions: CommandExecution[];
+  summary?: string;
+  status: TaskStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export async function listAuditRecords(limit = 100): Promise<AuditRecord[]> {
+  if (!isTauri()) return [];
+  return invoke<AuditRecord[]>("list_audit_records", { limit });
+}
+
+export async function getAuditRecord(id: string): Promise<AuditRecord> {
+  return invoke<AuditRecord>("get_audit_record", { id });
+}
+
 export async function serverDoctorPlan(id: string): Promise<Plan> {
   if (!isTauri())
     return {

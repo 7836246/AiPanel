@@ -60,6 +60,8 @@ pub fn run() {
             commands::run_readonly_command,
             commands::server_doctor_plan,
             commands::run_server_doctor,
+            commands::list_audit_records,
+            commands::get_audit_record,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

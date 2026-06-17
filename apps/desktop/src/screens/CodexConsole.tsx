@@ -7,10 +7,12 @@ import {
   type TerminalLine,
 } from "@aipanel/ui";
 import {
+  listAuditRecords,
   listServers,
   runServerDoctor,
   RISK_META,
   type AppError,
+  type AuditRecord,
   type DoctorReport,
   type RiskLevel,
   type ServerProfile,
@@ -222,17 +224,106 @@ const TERM_RUNNING: TerminalLine[] = [
 ];
 
 /* ---------------- sub-components ---------------- */
-function NavItem({ icon, label, kbd, active }: { icon: ReactNode; label: string; kbd?: string; active?: boolean }) {
+function NavItem({
+  icon,
+  label,
+  kbd,
+  active,
+  onClick,
+}: {
+  icon: ReactNode;
+  label: string;
+  kbd?: string;
+  active?: boolean;
+  onClick?: () => void;
+}) {
   return (
     <div
-      className={`flex cursor-pointer items-center gap-2.5 rounded-md px-2.5 py-1.5 text-[13.5px] transition-colors hover:bg-hover ${
-        active ? "text-fg" : "text-fg-muted"
+      onClick={onClick}
+      className={`flex cursor-pointer items-center gap-2.5 rounded-md px-2.5 py-1.5 text-[13.5px] transition-colors ${
+        active ? "bg-selected text-fg" : "text-fg-muted hover:bg-hover"
       }`}
     >
       {icon}
       <span className="flex-1">{label}</span>
       {kbd ? <span className="text-[11.5px] text-fg-subtle">{kbd}</span> : null}
     </div>
+  );
+}
+
+const STATUS_LABEL: Record<string, string> = {
+  completed: "完成",
+  failed: "失败",
+  blocked: "已阻止",
+  running: "进行中",
+  awaiting_confirmation: "待确认",
+  planning: "规划中",
+  pending: "待处理",
+};
+
+function AuditPanel({ records }: { records: AuditRecord[] }) {
+  const [openId, setOpenId] = useState<string | null>(null);
+  return (
+    <section className="cx-scroll min-h-0 flex-1 overflow-y-auto">
+      <div className="mx-auto max-w-[680px] px-6 pb-6 pt-5">
+        <h2 className="mb-3 text-sm font-semibold">审计记录</h2>
+        {records.length === 0 ? (
+          <div className="rounded-md border border-border bg-surface-1 px-4 py-6 text-center text-[13px] text-fg-subtle">
+            还没有审计记录。执行一次只读体检后会出现在这里。
+          </div>
+        ) : (
+          <div className="flex flex-col gap-2">
+            {records.map((r) => {
+              const open = r.id === openId;
+              const ok = r.status === "completed";
+              return (
+                <div key={r.id} className="overflow-hidden rounded-md border border-border bg-surface-1">
+                  <div
+                    onClick={() => setOpenId(open ? null : r.id)}
+                    className="flex cursor-pointer items-center gap-3 px-4 py-3 transition-colors hover:bg-hover"
+                  >
+                    <span className={`h-1.5 w-1.5 rounded-full ${ok ? "bg-risk-low" : "bg-risk-blocked"}`} />
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-[13.5px] font-medium">{r.intent}</div>
+                      {r.summary ? <div className="truncate text-[12px] text-fg-muted">{r.summary}</div> : null}
+                    </div>
+                    <span className="flex-none text-[11.5px] text-fg-subtle">{STATUS_LABEL[r.status] ?? r.status}</span>
+                    <time className="flex-none font-mono text-[11px] text-fg-subtle">
+                      {new Date(r.createdAt).toLocaleString()}
+                    </time>
+                  </div>
+                  {open && (
+                    <div className="border-t border-border px-4 py-3">
+                      {r.executions.length === 0 ? (
+                        <div className="text-[12px] text-fg-subtle">无命令执行记录</div>
+                      ) : (
+                        <div className="flex flex-col gap-2">
+                          {r.executions.map((ex, i) => (
+                            <div key={i} className="rounded-md bg-bg">
+                              <div className="flex items-center gap-2 border-b border-border px-3 py-1.5 font-mono text-[11.5px] text-fg-subtle">
+                                <span>$ {ex.command}</span>
+                                <span className={`ml-auto ${ex.exitCode === 0 ? "text-risk-low" : "text-risk-blocked"}`}>
+                                  exit {ex.exitCode}
+                                </span>
+                              </div>
+                              {ex.stdout || ex.stderr ? (
+                                <pre className="overflow-x-auto px-3 py-2 font-mono text-[11.5px] leading-relaxed text-fg">
+                                  {(ex.stdout || ex.stderr).split("\n").slice(0, 12).join("\n")}
+                                </pre>
+                              ) : null}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </section>
   );
 }
 
@@ -303,8 +394,15 @@ export default function CodexConsole() {
   const [servers, setServers] = useState<ServerProfile[]>([]);
   const [selectedServerId, setSelectedServerId] = useState<string | null>(null);
   const [doctorLines, setDoctorLines] = useState<TerminalLine[] | null>(null);
+  const [view, setView] = useState<"console" | "audit">("console");
+  const [audits, setAudits] = useState<AuditRecord[]>([]);
   const steps = buildSteps(running);
   const selected = servers.find((s) => s.id === selectedServerId);
+
+  function openAudit() {
+    setView("audit");
+    listAuditRecords().then(setAudits).catch(() => setAudits([]));
+  }
 
   async function runDoctor() {
     if (!selectedServerId) return;
@@ -340,9 +438,9 @@ export default function CodexConsole() {
           <span className="text-[13.5px] font-semibold">AiPanel</span>
         </div>
         <div className="flex flex-col gap-px px-2 pb-1">
-          <NavItem icon={<Pencil />} label="提问" kbd="⌘N" active />
+          <NavItem icon={<Pencil />} label="提问" kbd="⌘N" active={view === "console"} onClick={() => setView("console")} />
           <NavItem icon={<Search />} label="搜索" />
-          <NavItem icon={<ListIcon />} label="审计" />
+          <NavItem icon={<ListIcon />} label="审计" active={view === "audit"} onClick={openAudit} />
           <NavItem icon={<Clock />} label="自动化" />
         </div>
 
@@ -409,6 +507,10 @@ export default function CodexConsole() {
           </div>
         </div>
 
+        {view === "audit" ? (
+          <AuditPanel records={audits} />
+        ) : (
+        <>
         {/* run scroll */}
         <section className="cx-scroll min-h-0 flex-1 overflow-y-auto">
           <div className="mx-auto max-w-[680px] px-6 pb-3 pt-5">
@@ -500,6 +602,8 @@ export default function CodexConsole() {
             lines={doctorLines ?? (running ? TERM_RUNNING : TERM_IDLE)}
             cursor
           />
+        )}
+        </>
         )}
       </main>
     </div>

@@ -205,6 +205,50 @@ impl Store {
         Ok(())
     }
 
+    // ----- audit ---------------------------------------------------------
+
+    pub fn insert_audit_record(&self, rec: &AuditRecord) -> AppResult<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT OR REPLACE INTO audit_records (id, server_id, created_at, updated_at, data) \
+             VALUES (?1,?2,?3,?4,?5)",
+            params![
+                rec.id,
+                rec.server_id,
+                rec.created_at.to_rfc3339(),
+                rec.updated_at.to_rfc3339(),
+                serde_json::to_string(rec)?,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn list_audit_records(&self, limit: u32) -> AppResult<Vec<AuditRecord>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT data FROM audit_records ORDER BY created_at DESC LIMIT ?1",
+        )?;
+        let rows = stmt
+            .query_map(params![limit], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut out = Vec::with_capacity(rows.len());
+        for data in rows {
+            out.push(serde_json::from_str(&data)?);
+        }
+        Ok(out)
+    }
+
+    pub fn get_audit_record(&self, id: &str) -> AppResult<AuditRecord> {
+        let conn = self.conn.lock().unwrap();
+        let data: Option<String> = conn
+            .query_row("SELECT data FROM audit_records WHERE id = ?1", params![id], |r| r.get(0))
+            .optional()?;
+        match data {
+            Some(d) => Ok(serde_json::from_str(&d)?),
+            None => Err(AppError::NotFound(format!("audit record {id}"))),
+        }
+    }
+
     /// Update the cached status + facts after a doctor/connectivity run.
     pub fn set_server_status(
         &self,
@@ -349,6 +393,31 @@ mod tests {
         let mut i = input("x");
         i.name = "  ".into();
         assert_eq!(s.create_server(i).unwrap_err().code(), "validation");
+    }
+
+    #[test]
+    fn audit_records_round_trip() {
+        let s = Store::open_in_memory().unwrap();
+        let rec = AuditRecord {
+            id: new_id(),
+            server_id: Some("srv".into()),
+            intent: "只读体检".into(),
+            plan: None,
+            risk_review: None,
+            confirmed_at: Some(now()),
+            executions: vec![],
+            summary: Some("ok".into()),
+            status: TaskStatus::Completed,
+            created_at: now(),
+            updated_at: now(),
+        };
+        s.insert_audit_record(&rec).unwrap();
+        let listed = s.list_audit_records(10).unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].intent, "只读体检");
+        let got = s.get_audit_record(&rec.id).unwrap();
+        assert_eq!(got.summary.as_deref(), Some("ok"));
+        assert_eq!(s.get_audit_record("missing").unwrap_err().code(), "not_found");
     }
 
     #[test]

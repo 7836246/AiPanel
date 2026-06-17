@@ -7,7 +7,8 @@ use tauri::State;
 
 use crate::core::error::AppResult;
 use crate::core::types::{
-    CommandExecution, DoctorReport, Plan, RiskReview, ServerInput, ServerProfile, ServerStatus,
+    AuditRecord, CommandExecution, DoctorReport, Plan, RiskReview, ServerInput, ServerProfile,
+    ServerStatus,
 };
 use crate::AppState;
 
@@ -123,10 +124,30 @@ pub fn server_doctor_plan(state: State<'_, AppState>, id: String) -> AppResult<P
 #[tauri::command]
 pub async fn run_server_doctor(state: State<'_, AppState>, id: String) -> AppResult<DoctorReport> {
     let (server, secret) = load_server_and_secret(&state, &id)?;
+    let plan = crate::doctor::doctor_plan(&id);
+    let review = crate::risk::review_plan(&plan, true); // doctor runs in read-only mode
     let report = crate::doctor::run_doctor(&server, secret.as_deref()).await?;
+
     let succeeded = report.executions.iter().any(|e| e.exit_code == 0);
     let status = if succeeded { ServerStatus::Online } else { ServerStatus::Offline };
     let facts = crate::doctor::facts_from_report(&report);
     state.store.set_server_status(&id, status, Some(&facts))?;
+
+    // Every execution is audited locally.
+    let record = crate::audit::record_for_doctor(&id, plan, review, &report);
+    state.store.insert_audit_record(&record)?;
+
     Ok(report)
+}
+
+/// Most recent audit records (newest first).
+#[tauri::command]
+pub fn list_audit_records(state: State<'_, AppState>, limit: Option<u32>) -> AppResult<Vec<AuditRecord>> {
+    state.store.list_audit_records(limit.unwrap_or(100))
+}
+
+/// One audit record by id, for replaying a task's detail.
+#[tauri::command]
+pub fn get_audit_record(state: State<'_, AppState>, id: String) -> AppResult<AuditRecord> {
+    state.store.get_audit_record(&id)
 }
