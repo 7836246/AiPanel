@@ -6,8 +6,23 @@
 use tauri::State;
 
 use crate::core::error::AppResult;
-use crate::core::types::{Plan, RiskReview, ServerInput, ServerProfile};
+use crate::core::types::{
+    CommandExecution, Plan, RiskReview, ServerInput, ServerProfile, ServerStatus,
+};
 use crate::AppState;
+
+/// Resolve a server and its SSH secret (if its auth method stores one).
+fn load_server_and_secret(
+    state: &AppState,
+    id: &str,
+) -> AppResult<(ServerProfile, Option<String>)> {
+    let server = state.store.get_server(id)?;
+    let secret = match &server.credential_ref {
+        Some(reference) => state.credentials.get_secret(reference)?,
+        None => None,
+    };
+    Ok((server, secret))
+}
 
 #[tauri::command]
 pub fn list_servers(state: State<'_, AppState>) -> AppResult<Vec<ServerProfile>> {
@@ -70,4 +85,29 @@ pub fn credential_backend(state: State<'_, AppState>) -> String {
 #[tauri::command]
 pub fn review_plan(plan: Plan, read_only_mode: bool) -> RiskReview {
     crate::risk::review_plan(&plan, read_only_mode)
+}
+
+/// Test SSH connectivity + auth, caching the result as the server's status.
+#[tauri::command]
+pub async fn check_ssh_connection(state: State<'_, AppState>, id: String) -> AppResult<bool> {
+    let (server, secret) = load_server_and_secret(&state, &id)?;
+    let ok = matches!(
+        crate::ssh::check_connection(&server, secret.as_deref()).await,
+        Ok(true)
+    );
+    let status = if ok { ServerStatus::Online } else { ServerStatus::Offline };
+    state.store.set_server_status(&id, status, None)?;
+    Ok(ok)
+}
+
+/// Run a single read-only command (gated by the Risk Reviewer). Developer/diagnostic
+/// entry point; the user-facing flow goes through the Server Doctor and plans.
+#[tauri::command]
+pub async fn run_readonly_command(
+    state: State<'_, AppState>,
+    id: String,
+    command: String,
+) -> AppResult<CommandExecution> {
+    let (server, secret) = load_server_and_secret(&state, &id)?;
+    crate::ssh::run_readonly(&server, secret.as_deref(), &command, crate::ssh::DEFAULT_TIMEOUT).await
 }

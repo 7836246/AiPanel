@@ -137,6 +137,33 @@ export async function deleteServer(id: string): Promise<void> {
   return invoke<void>("delete_server", { id });
 }
 
+export interface CommandExecution {
+  command: string;
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+  durationMs: number;
+  startedAt: string;
+}
+
+export async function checkSshConnection(id: string): Promise<boolean> {
+  if (!isTauri()) return Math.random() > 0.3; // demo only
+  return invoke<boolean>("check_ssh_connection", { id });
+}
+
+export async function runReadonlyCommand(id: string, command: string): Promise<CommandExecution> {
+  if (!isTauri())
+    return {
+      command,
+      exitCode: 0,
+      stdout: "(browser mock — no SSH)",
+      stderr: "",
+      durationMs: 0,
+      startedAt: new Date().toISOString(),
+    };
+  return invoke<CommandExecution>("run_readonly_command", { id, command });
+}
+
 export async function reviewPlan(plan: Plan, readOnlyMode = false): Promise<RiskReview> {
   if (!isTauri()) return mockReview(plan, readOnlyMode);
   return invoke<RiskReview>("review_plan", { plan, readOnlyMode });

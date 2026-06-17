@@ -28,4 +28,5 @@ thiserror = "2"
 rusqlite = { version = "0.32", features = ["bundled"] }
 tokio = { version = "1", features = ["process", "time", "io-util", "rt", "macros", "sync"] }
 keyring = { version = "3", features = ["apple-native", "windows-native"] }
+regex = "1"
 

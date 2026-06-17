@@ -4,6 +4,7 @@
 //! risk review, and audit are AiPanel's own — never delegated to the agent.
 
 pub mod error;
+pub mod sanitize;
 pub mod types;
 
 pub use error::{AppError, AppResult};
