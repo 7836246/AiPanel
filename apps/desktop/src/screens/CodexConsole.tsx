@@ -4,6 +4,8 @@ import {
   IconButton,
   Spinner,
   Terminal,
+  ToastViewport,
+  useToasts,
   type TerminalLine,
 } from "@aipanel/ui";
 import AddServerDialog from "./AddServerDialog";
@@ -11,6 +13,7 @@ import ConfirmExecuteDialog from "./ConfirmExecuteDialog";
 import EditServerDialog from "./EditServerDialog";
 import SettingsPanel from "./SettingsPanel";
 import {
+  checkSshConnection,
   createPlan,
   reviewPlan,
   runAgentTurn,
@@ -303,6 +306,8 @@ export default function CodexConsole() {
   const [confirmReview, setConfirmReview] = useState<RiskReview | null>(null);
   // 单调递增的运行标识：每次发起新操作就自增，用于丢弃切换上下文后过期的异步回调。
   const runIdRef = useRef(0);
+  // 轻量通知（错误/成功提示），替代仅在终端里报错。
+  const { toasts, push, dismiss } = useToasts();
 
   const selected = servers.find((s) => s.id === selectedServerId) ?? null;
   // 当前可用于 AI 诊断的供应商（启用且非 custom）。
@@ -331,6 +336,17 @@ export default function CodexConsole() {
   useEffect(() => {
     if (view !== "settings") listProviders().then(setProviders).catch(() => {});
   }, [view]);
+
+  // 选中服务器后静默做一次 SSH 连通性检查，更新在线状态点（仅 Tauri 下为真实探测）。
+  useEffect(() => {
+    if (!selectedServerId) return;
+    const id = selectedServerId;
+    checkSshConnection(id)
+      .then((ok) =>
+        setServers((prev) => prev.map((s) => (s.id === id ? { ...s, status: ok ? "online" : "offline" } : s)))
+      )
+      .catch(() => {});
+  }, [selectedServerId]);
 
   async function refreshTasks() {
     if (selectedServerId) setTasks(await listTasks(selectedServerId).catch(() => []));
@@ -382,6 +398,7 @@ export default function CodexConsole() {
       if (runIdRef.current !== myId) return;
       setTermLines([{ text: `生成计划失败: ${errMsg(e)}`, tone: "danger" }]);
       setTerminalOpen(true);
+      push("danger", `生成计划失败: ${errMsg(e)}`);
     } finally {
       if (runIdRef.current === myId) setRunning(false);
     }
@@ -417,6 +434,7 @@ export default function CodexConsole() {
     } catch (e) {
       if (runIdRef.current !== myId) return;
       setTermLines([{ text: `诊断失败: ${errMsg(e)}`, tone: "danger" }]);
+      push("danger", `诊断失败: ${errMsg(e)}`);
     } finally {
       if (runIdRef.current === myId) setRunning(false);
     }
@@ -464,12 +482,14 @@ export default function CodexConsole() {
       setCurrent(done);
       setServers(await listServers());
       await refreshTasks();
+      push(ok ? "success" : "danger", `体检${ok ? "完成" : "未全部通过"}：${summary}`);
     } catch (e) {
       if (runIdRef.current !== myId) return;
       lines.push({ text: `体检失败: ${errMsg(e)}`, tone: "danger" });
       setTermLines([...lines]);
       await saveTask({ ...task, status: "failed", summary: errMsg(e), updatedAt: nowIso() });
       await refreshTasks();
+      push("danger", `体检失败: ${errMsg(e)}`);
     } finally {
       if (runIdRef.current === myId) setRunning(false);
     }
@@ -487,6 +507,7 @@ export default function CodexConsole() {
     } catch (e) {
       setTermLines([{ text: `风险审查失败: ${errMsg(e)}`, tone: "danger" }]);
       setTerminalOpen(true);
+      push("danger", `风险审查失败: ${errMsg(e)}`);
     }
   }
 
@@ -521,10 +542,12 @@ export default function CodexConsole() {
       setTermLines(execLines(rec.executions, rec.summary));
       setServers(await listServers());
       await refreshTasks();
+      push(rec.status === "completed" ? "success" : "danger", rec.status === "completed" ? "计划执行完成" : "计划执行未全部成功");
     } catch (e) {
       if (runIdRef.current !== myId) return;
       lines.push({ text: `执行失败: ${errMsg(e)}`, tone: "danger" });
       setTermLines([...lines]);
+      push("danger", `执行失败: ${errMsg(e)}`);
     } finally {
       if (runIdRef.current === myId) setRunning(false);
     }
@@ -748,15 +771,18 @@ export default function CodexConsole() {
         )}
       </main>
 
-      <AddServerDialog open={addOpen} onClose={() => setAddOpen(false)} onCreated={(s) => { setServers((prev) => [...prev, s]); setSelectedServerId(s.id); }} />
+      <AddServerDialog open={addOpen} onClose={() => setAddOpen(false)} onCreated={(s) => { setServers((prev) => [...prev, s]); setSelectedServerId(s.id); push("success", `服务器「${s.name}」已添加`); }} />
       <EditServerDialog
         open={editing !== null}
         server={editing}
         onClose={() => setEditing(null)}
-        onSaved={(u) => setServers((prev) => prev.map((s) => (s.id === u.id ? u : s)))}
-        onDeleted={(id) => { setServers((prev) => prev.filter((s) => s.id !== id)); setSelectedServerId((cur) => (cur === id ? null : cur)); }}
+        onSaved={(u) => { setServers((prev) => prev.map((s) => (s.id === u.id ? u : s))); push("success", "服务器已保存"); }}
+        onDeleted={(id) => { setServers((prev) => prev.filter((s) => s.id !== id)); setSelectedServerId((cur) => (cur === id ? null : cur)); push("success", "服务器已删除"); }}
       />
       <ConfirmExecuteDialog open={confirmOpen} plan={current?.plan ?? null} review={confirmReview} onClose={() => setConfirmOpen(false)} onConfirm={(c, d) => execute(c, d, confirmReview ?? undefined)} />
+
+      {/* 全局通知层（错误/成功提示），固定在右下角 */}
+      <ToastViewport toasts={toasts} onDismiss={dismiss} />
     </div>
   );
 }

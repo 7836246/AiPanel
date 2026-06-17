@@ -24,6 +24,11 @@ export {
   type TerminalLineTone,
 } from "./components/primitives/Terminal";
 export { Dialog, type DialogProps } from "./components/primitives/Dialog";
+export {
+  useToasts,
+  ToastViewport,
+  type Toast,
+} from "./components/primitives/Toast";
 
 // 领域组件（domain）
 export { RiskBadge, type RiskBadgeProps } from "./components/domain/RiskBadge";
