@@ -110,8 +110,8 @@ function useTheme(): [("light" | "dark"), () => void] {
 
 /* ---------------- 子组件 ---------------- */
 // 侧栏导航项：图标 + 文案，可选快捷键提示与选中态。
-function NavItem({ icon, label, kbd, active, onClick }: {
-  icon: ReactNode; label: string; kbd?: string; active?: boolean; onClick?: () => void;
+function NavItem({ icon, label, kbd, active, onClick, badge }: {
+  icon: ReactNode; label: string; kbd?: string; active?: boolean; onClick?: () => void; badge?: number;
 }) {
   return (
     <div
@@ -122,9 +122,24 @@ function NavItem({ icon, label, kbd, active, onClick }: {
     >
       {icon}
       <span className="flex-1">{label}</span>
-      {kbd ? <span className="text-[11.5px] text-fg-subtle">{kbd}</span> : null}
+      {badge && badge > 0 ? (
+        <span className="flex-none rounded-full bg-risk-blocked px-1.5 text-[10px] font-semibold leading-[1.4] text-white" title={`${badge} 台需关注`}>
+          {badge}
+        </span>
+      ) : kbd ? <span className="text-[11.5px] text-fg-subtle">{kbd}</span> : null}
     </div>
   );
+}
+
+// 服务器是否处于告警:离线,或上次体检的磁盘/内存使用率 >90%。
+function serverAlert(s: ServerProfile): "offline" | "resource" | null {
+  if (s.status === "offline") return "offline";
+  for (const k of ["Disk", "Memory"]) {
+    const v = s.facts?.[k];
+    const m = v?.match(/(\d+(?:\.\d+)?)\s*%/);
+    if (m && Number(m[1]) > 90) return "resource";
+  }
+  return null;
 }
 
 // 任务类型对应的侧栏小图标,便于一眼区分计划/诊断/体检。
@@ -343,6 +358,18 @@ export default function CodexConsole() {
       getModelSelectionPolicy().then(setPolicy).catch(() => {});
     }
   }, [view]);
+
+  // 前台健康轮询:应用可见且有服务器时,每 60s 刷新一次连通状态(后台/无服务器时不跑),
+  // 让概览/导航的告警计数保持实时。refreshAllServers 内有请求序号守卫,并发调用安全。
+  useEffect(() => {
+    if (!isTauri()) return;
+    const tick = () => {
+      if (document.visibilityState === "visible" && servers.length > 0) refreshAll();
+    };
+    const iv = setInterval(tick, 60000);
+    return () => clearInterval(iv);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [servers.length]);
 
   // 进入「概览」时自动刷新一次所有服务器连通状态，保证在线/离线计数实时。
   useEffect(() => {
@@ -746,6 +773,8 @@ export default function CodexConsole() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  // 需关注(离线/资源紧张)的服务器数,用于概览导航角标。
+  const alertCount = servers.filter((s) => serverAlert(s) !== null).length;
   const planExecuted = !!current && current.kind === "plan" && current.executions.length > 0;
   const topTitle = current ? current.title : selected ? selected.name : "AiPanel";
   // 计划编辑态派生值。
@@ -771,7 +800,7 @@ export default function CodexConsole() {
         </div>
         <div className="flex flex-col gap-px px-2 pb-1">
           <NavItem icon={<PencilIcon size={16} />} label="提问" active={view === "console"} onClick={() => setView("console")} />
-          <NavItem icon={<LayoutGrid size={16} />} label="概览" active={view === "dashboard"} onClick={() => setView("dashboard")} />
+          <NavItem icon={<LayoutGrid size={16} />} label="概览" active={view === "dashboard"} onClick={() => setView("dashboard")} badge={alertCount} />
           <NavItem icon={<TerminalIconLucide size={16} />} label="终端" active={view === "terminal"} onClick={() => setView("terminal")} />
           <NavItem icon={<FolderTree size={16} />} label="文件" active={view === "files"} onClick={() => setView("files")} />
           <NavItem icon={<ScrollText size={16} />} label="审计" active={view === "audit"} onClick={openAudit} />

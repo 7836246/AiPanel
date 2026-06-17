@@ -18,6 +18,15 @@ const statusChip = (s: ServerStatus): string =>
 // 关注的关键指标键名（按此顺序在卡内展示），仅取 facts 中存在的项。
 const METRIC_KEYS = ["Load", "Memory", "Disk", "Services", "Containers", "Ports"] as const;
 
+// 资源告警:上次体检的磁盘/内存使用率 >90% 视为紧张。
+function hasResourceAlert(s: ServerProfile): boolean {
+  return ["Disk", "Memory"].some((k) => {
+    const v = s.facts?.[k];
+    const p = v ? parsePercent(v) : null;
+    return p !== null && p > 90;
+  });
+}
+
 // 从形如 "73%"、"使用率 85 %"、"42.5%" 的字符串中解析出百分比数值；
 // 解析不到合法百分比时返回 null（该项不渲染进度条）。
 function parsePercent(value: string): number | null {
@@ -99,6 +108,10 @@ function ServerTile({
               <span className={`flex-none rounded px-1.5 py-0.5 text-[10px] font-medium ${statusChip(server.status)}`}>
                 {statusText(server.status)}
               </span>
+            )}
+            {/* 资源告警徽标:磁盘/内存紧张时提示 */}
+            {!refreshing && hasResourceAlert(server) && (
+              <span className="flex-none rounded bg-risk-blocked-soft px-1.5 py-0.5 text-[10px] font-medium text-risk-blocked">资源紧张</span>
             )}
           </div>
           <div className="mt-0.5 truncate font-mono text-[11px] text-fg-subtle">
