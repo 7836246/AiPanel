@@ -26,6 +26,18 @@ fn contains(haystack: &str, needle: &str) -> bool {
     haystack.contains(needle)
 }
 
+/// 取命令的首个 token（跳过 `sudo` 前缀）作为「实际执行的命令名」。
+/// 用于按命令名匹配危险命令，避免误伤把关键字出现在参数 / grep 模式 / 管道里的只读命令。
+fn head_command(cmd: &str) -> &str {
+    let tokens: Vec<&str> = cmd.split_whitespace().collect();
+    let first = tokens.first().copied().unwrap_or("");
+    if first == "sudo" {
+        tokens.get(1).copied().unwrap_or("")
+    } else {
+        first
+    }
+}
+
 /// 一旦被递归删除/格式化便会造成灾难性后果的顶层系统路径。
 const SYSTEM_ROOTS: &[&str] = &[
     "/", "/*", "/etc", "/var", "/usr", "/bin", "/boot", "/lib", "/lib64", "/sys", "/proc", "/root",
@@ -52,6 +64,9 @@ fn is_firewall_readonly(cmd: &str) -> bool {
         || contains(cmd, "firewall-cmd --list")
         || contains(cmd, "firewall-cmd --state")
         || contains(cmd, "nft list")
+        // 转储规则属于只读（注意 iptables-restore 是写入，不在此列）。
+        || contains(cmd, "iptables-save")
+        || contains(cmd, "ip6tables-save")
 }
 
 /// 判断命令是否通过重定向/tee/sed -i 向给定路径前缀写入。
@@ -106,7 +121,9 @@ pub fn classify_command(command: &str) -> Classification {
         // 跳过 sudo 前缀后的真实命令名。
         let head = if first == "sudo" { second } else { first };
         let halt_cmds = ["shutdown", "reboot", "halt", "poweroff"];
-        if halt_cmds.contains(&head) {
+        // `shutdown -c` 取消已计划的关机，是无害操作，不拦截（交由后续归类，通常 Low）。
+        let is_cancel = head == "shutdown" && tokens.iter().any(|t| *t == "-c");
+        if halt_cmds.contains(&head) && !is_cancel {
             return mk(RiskLevel::Blocked, "shutdown", "system shutdown/reboot/halt");
         }
         // `init 0`（关机）/ `init 6`（重启）。
@@ -148,12 +165,12 @@ pub fn classify_command(command: &str) -> Classification {
     if contains(&c, "mkfs") || contains(&c, "fdisk") || contains(&c, "parted") {
         return mk(RiskLevel::High, "disk", "disk partitioning/formatting tool");
     }
-    if (contains(&c, "iptables") || contains(&c, "ufw") || contains(&c, "firewall-cmd") || contains(&c, "nft "))
+    if (contains(&c, "iptables") || contains(&c, "ufw") || contains(&c, "firewall-cmd") || head_command(&c) == "nft")
         && !is_firewall_readonly(&c)
     {
         return mk(RiskLevel::High, "firewall", "modifies firewall rules");
     }
-    if contains(&c, "sshd_config") && (contains(&c, ">") || contains(&c, "tee ") || contains(&c, "sed -i") || contains(&c, "vi ") || contains(&c, "nano ")) {
+    if contains(&c, "sshd_config") && (contains(&c, ">") || contains(&c, "tee ") || contains(&c, "sed -i") || contains(&c, "vi ") || contains(&c, "vim ") || contains(&c, "emacs ") || contains(&c, "nano ")) {
         return mk(RiskLevel::High, "ssh-config", "edits the SSH server config");
     }
     if writes_to(&c, &["/etc/nginx", "/etc/caddy", "/etc/apache2"]) {
@@ -208,16 +225,22 @@ pub fn classify_command(command: &str) -> Classification {
         return mk(RiskLevel::High, "truncate", "truncating a file to zero length");
     }
     // chattr 可设置不可变/只追加等属性，可能锁死文件或绕过常规保护。
-    if contains(&c, "chattr") {
+    // 仅当 chattr 是实际执行的命令时拦截，避免误伤把它当作 grep 模式/参数的只读命令。
+    if head_command(&c) == "chattr" {
         return mk(RiskLevel::High, "attributes", "changes file attributes (chattr)");
     }
-    // sysctl -w 会在运行时改写内核参数（影响网络、内存、安全策略）。
-    // 不带 -w 的 sysctl 为读取，保持 Low。
-    if contains(&c, "sysctl") && (contains(&c, "-w") || contains(&c, "--write") || contains(&c, "-p")) {
-        return mk(RiskLevel::High, "kernel-param", "writes a kernel parameter (sysctl -w)");
+    // sysctl -w/-p 会在运行时改写/加载内核参数（影响网络、内存、安全策略）。
+    // 仅当 sysctl 是实际执行的命令、且写/加载标志作为独立 token 出现时才拦截，
+    // 避免 `-p` 子串误伤只读长选项（如 `--pattern`），读取类 sysctl 保持 Low。
+    if head_command(&c) == "sysctl" {
+        let toks: Vec<&str> = c.split_whitespace().collect();
+        if toks.iter().any(|t| matches!(*t, "-w" | "--write" | "-p" | "--load")) {
+            return mk(RiskLevel::High, "kernel-param", "writes/loads a kernel parameter (sysctl -w/-p)");
+        }
     }
     // mkswap 会在分区/文件上写入交换签名，破坏原有内容。
-    if contains(&c, "mkswap") {
+    // 仅当 mkswap 是实际执行的命令时拦截，避免误伤 `ps aux | grep mkswap` 这类只读命令。
+    if head_command(&c) == "mkswap" {
         return mk(RiskLevel::High, "disk", "mkswap writes a swap signature");
     }
     if writes_to(&c, &["/etc", "/usr", "/boot"]) {
@@ -445,6 +468,28 @@ mod tests {
         assert_eq!(lvl("cat /etc/passwd"), RiskLevel::Low);
         assert_eq!(lvl("cat /etc/shadow"), RiskLevel::Low);
         assert_eq!(lvl("kill -9 12345"), RiskLevel::Low);
+        // 关键字仅出现在 grep 模式 / 参数 / 管道里的只读命令必须保持 Low，
+        // 不应因为命令文本里「提到」危险关键字而被错误升级。
+        assert_eq!(lvl("ps aux | grep mkswap"), RiskLevel::Low);
+        assert_eq!(lvl("docker ps | grep chattr"), RiskLevel::Low);
+        assert_eq!(lvl("grep nft /etc/hosts"), RiskLevel::Low);
+        assert_eq!(lvl("echo 'do not chattr'"), RiskLevel::Low);
+    }
+
+    #[test]
+    fn review_round_carve_outs() {
+        // sysctl 只读/过滤保持 Low（`--pattern` 不应因含 `-p` 子串被误判）；写/加载仍为 High。
+        assert_eq!(lvl("sysctl --pattern net"), RiskLevel::Low);
+        assert_eq!(lvl("sysctl -w net.ipv4.ip_forward=1"), RiskLevel::High);
+        assert_eq!(lvl("sysctl -p"), RiskLevel::High);
+        // iptables-save 是只读转储；iptables -F 仍为 High。
+        assert_eq!(lvl("iptables-save"), RiskLevel::Low);
+        assert_eq!(lvl("iptables -F"), RiskLevel::High);
+        // shutdown -c 取消计划无害；真正关机仍 Blocked。
+        assert_eq!(lvl("shutdown -c"), RiskLevel::Low);
+        assert_eq!(lvl("shutdown -h now"), RiskLevel::Blocked);
+        // 用 vim/emacs 编辑 sshd_config 仍判为 High。
+        assert_eq!(lvl("vim /etc/ssh/sshd_config"), RiskLevel::High);
     }
 
     /// 测试辅助：用命令列表构造一份计划。

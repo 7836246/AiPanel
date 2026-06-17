@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { cn } from "../../lib/cn";
 
 /** 轻量通知：用于把错误/成功等瞬时反馈浮层展示，而不是只写进终端。 */
@@ -57,6 +57,15 @@ export function useToasts(): {
     },
     [dismiss]
   );
+
+  // 组件卸载时清理所有未触发的定时器，避免泄漏与对已卸载组件的 setState。
+  useEffect(() => {
+    const timers = timersRef.current;
+    return () => {
+      timers.forEach((t) => clearTimeout(t));
+      timers.clear();
+    };
+  }, []);
 
   return { toasts, push, dismiss };
 }

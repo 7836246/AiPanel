@@ -13,6 +13,7 @@ import ConfirmExecuteDialog from "./ConfirmExecuteDialog";
 import EditServerDialog from "./EditServerDialog";
 import SettingsPanel from "./SettingsPanel";
 import {
+  isTauri,
   checkSshConnection,
   createPlan,
   reviewPlan,
@@ -337,9 +338,10 @@ export default function CodexConsole() {
     if (view !== "settings") listProviders().then(setProviders).catch(() => {});
   }, [view]);
 
-  // 选中服务器后静默做一次 SSH 连通性检查，更新在线状态点（仅 Tauri 下为真实探测）。
+  // 选中服务器后静默做一次 SSH 连通性检查，更新在线状态点。
+  // 仅在 Tauri 下为真实探测；浏览器 mock 会返回随机值，故跳过以免误导状态点。
   useEffect(() => {
-    if (!selectedServerId) return;
+    if (!selectedServerId || !isTauri()) return;
     const id = selectedServerId;
     checkSshConnection(id)
       .then((ok) =>

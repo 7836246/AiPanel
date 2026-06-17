@@ -8,6 +8,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- Toast notifications (success/error) surfaced across the app instead of only the
+  terminal; SSH connectivity auto-checked when a server is selected (live status).
+- Broader Risk Reviewer coverage (shutdown/reboot, disk wipe, PID 1 kill,
+  /etc/passwd|shadow writes, firewall flush, package removal, account changes,
+  crontab -r, file truncation, chattr, sysctl -w, authorized_keys removal, …),
+  with read-only carve-outs preserved.
+- Simplified-Chinese comments across the whole codebase.
 - Real task/run model: every plan / AI diagnosis / doctor run is persisted per
   server and listed in the sidebar (restore or delete a run); the main screen is
   driven entirely by real data — no mock plans, terminal transcripts, titles, or
