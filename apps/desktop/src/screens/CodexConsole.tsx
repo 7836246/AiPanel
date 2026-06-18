@@ -259,6 +259,14 @@ function ModelPicker({
   );
 }
 
+// 首页快捷运维意图:一键填入 composer,降低「不知道输入什么」的门槛(均为只读向描述)。
+const QUICK_INTENTS = [
+  "检查磁盘和内存使用情况",
+  "列出正在运行的服务和容器",
+  "看看最近的系统日志有没有报错",
+  "检查网站为什么打不开",
+];
+
 // 服务器是否处于告警:离线,或上次体检的磁盘/内存使用率 >90%。
 function serverAlert(s: ServerProfile): "offline" | "resource" | null {
   if (s.status === "offline") return "offline";
@@ -1256,6 +1264,19 @@ export default function CodexConsole() {
                   </div>
                 </div>
               </div>
+              {selectedServerId && !running && !intentValue.trim() && (
+                <div className="mx-auto mt-2 flex max-w-[680px] flex-wrap gap-1.5">
+                  {QUICK_INTENTS.map((q) => (
+                    <button
+                      key={q}
+                      onClick={() => { setIntentValue(q); inputRef.current?.focus(); }}
+                      className="rounded-full border border-border bg-surface-1 px-2.5 py-1 text-[12px] text-fg-muted transition-colors hover:border-border-strong hover:bg-hover hover:text-fg"
+                    >
+                      {q}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
 
             {terminalOpen && (
