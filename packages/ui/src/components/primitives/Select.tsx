@@ -71,7 +71,7 @@ export function Select({
         aria-expanded={open}
         aria-label={rest["aria-label"]}
         onClick={() => setOpen((o) => !o)}
-        className="flex w-full items-center gap-2 rounded-md border border-border bg-surface-2 px-2.5 py-1.5 text-[13px] text-fg transition-colors hover:border-border-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/50 disabled:cursor-not-allowed disabled:opacity-50"
+        className="flex w-full items-center gap-2 rounded-lg border border-border bg-surface-2 px-2.5 py-1.5 text-[13px] text-fg transition-colors hover:border-border-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40 disabled:cursor-not-allowed disabled:opacity-50"
       >
         {current?.icon && <span className="flex-none text-fg-muted">{current.icon}</span>}
         <span className={cn("min-w-0 flex-1 truncate text-left", !current && "text-fg-subtle")}>{current?.label ?? placeholder}</span>
