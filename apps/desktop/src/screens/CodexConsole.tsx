@@ -1151,6 +1151,7 @@ export default function CodexConsole() {
     { id: "theme", label: "切换浅色/深色", group: "界面", run: () => toggleTheme() },
     { id: "terminal", label: "切换终端", group: "界面", run: () => setTerminalOpen((o) => !o) },
     { id: "readonly", label: readOnlyMode ? "关闭只读优先" : "开启只读优先", group: "界面", run: () => setReadOnly((v) => !v) },
+    { id: "shortcuts", label: "快捷键说明", hint: "⌘K / Esc / ↵", group: "界面", run: () => push("info", "⌘K / Ctrl-K 打开命令面板 · Esc 关闭浮层与对话框 · 回车提交表单") },
     ...servers.map((s) => ({ id: `srv-${s.id}`, label: `切换到 ${s.name}`, hint: s.host, group: "服务器", run: () => setSelectedServerId(s.id) })),
   ];
 
