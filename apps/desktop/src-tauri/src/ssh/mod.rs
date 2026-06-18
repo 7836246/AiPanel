@@ -36,27 +36,46 @@ pub const CONNECT_TIMEOUT_SECS: u64 = 10;
 /// `-tt` 强制分配的 tty——中断远端命令（远端收到 SIGHUP）。
 ///
 /// 只依赖标准库 + 已有的 tokio，不引入新依赖。
-static CANCEL_REGISTRY: OnceLock<Mutex<HashMap<String, Arc<Notify>>>> = OnceLock::new();
+#[derive(Clone)]
+struct CancelEntry {
+    server_id: Option<String>,
+    notify: Arc<Notify>,
+}
+
+static CANCEL_REGISTRY: OnceLock<Mutex<HashMap<String, CancelEntry>>> = OnceLock::new();
 
 /// 取回（必要时初始化）全局取消注册表。
-fn registry() -> &'static Mutex<HashMap<String, Arc<Notify>>> {
+fn registry() -> &'static Mutex<HashMap<String, CancelEntry>> {
     CANCEL_REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn registry_lock() -> Option<std::sync::MutexGuard<'static, HashMap<String, CancelEntry>>> {
+    registry().lock().ok()
 }
 
 /// 为一次运行登记取消句柄并返回它。流式命令在开始执行前调用，把返回的
 /// [`Notify`] 传给可取消的流式执行器；运行结束后必须调用 [`unregister`]。
-pub fn register(run_id: &str) -> Arc<Notify> {
+pub fn register(run_id: &str, server_id: Option<&str>) -> Arc<Notify> {
     let notify = Arc::new(Notify::new());
-    registry()
-        .lock()
-        .unwrap()
-        .insert(run_id.to_string(), notify.clone());
+    if let Some(mut guard) = registry_lock() {
+        guard.insert(
+            run_id.to_string(),
+            CancelEntry {
+                server_id: server_id.map(str::to_string),
+                notify: notify.clone(),
+            },
+        );
+    } else {
+        eprintln!("[ssh] cancel registry lock poisoned; run cancellation disabled for {run_id}");
+    }
     notify
 }
 
 /// 注销一次运行的取消句柄。无论成功、失败还是被取消都应调用，避免句柄泄漏。
 pub fn unregister(run_id: &str) {
-    registry().lock().unwrap().remove(run_id);
+    if let Some(mut guard) = registry_lock() {
+        guard.remove(run_id);
+    }
 }
 
 /// 请求取消指定运行。若该 `run_id` 仍在注册表中，唤醒其 [`Notify`]。
@@ -66,9 +85,50 @@ pub fn unregister(run_id: &str) {
 /// 这样即便取消请求恰好落在流式循环两次迭代之间（此刻没有 `.notified()` 在等待），
 /// 下一次 `.notified()` 也会立刻返回，不会漏掉取消。
 pub fn cancel(run_id: &str) {
-    if let Some(notify) = registry().lock().unwrap().get(run_id) {
+    if let Some(notify) = registry_lock()
+        .and_then(|guard| guard.get(run_id).map(|entry| entry.notify.clone()))
+    {
         notify.notify_one();
     }
+}
+
+fn run_ids_for_server(
+    entries: &HashMap<String, CancelEntry>,
+    server_id: &str,
+) -> Vec<String> {
+    matching_run_ids(
+        entries
+            .iter()
+            .map(|(run_id, entry)| (run_id.as_str(), entry.server_id.as_deref())),
+        server_id,
+    )
+}
+
+fn matching_run_ids<'a>(
+    entries: impl IntoIterator<Item = (&'a str, Option<&'a str>)>,
+    server_id: &str,
+) -> Vec<String> {
+    entries
+        .into_iter()
+        .filter(|(_, entry_server_id)| *entry_server_id == Some(server_id))
+        .map(|(run_id, _)| run_id.to_string())
+        .collect()
+}
+
+/// 请求取消某台服务器下当前登记的所有流式运行。删除服务器时调用，避免服务器
+/// 档案已删除但旧 SSH 流式命令仍继续运行。
+pub fn cancel_for_server(server_id: &str) -> usize {
+    let entries = match registry_lock() {
+        Some(guard) => guard,
+        None => return 0,
+    };
+    let run_ids = run_ids_for_server(&entries, server_id);
+    for run_id in &run_ids {
+        if let Some(entry) = entries.get(run_id) {
+            entry.notify.notify_one();
+        }
+    }
+    run_ids.len()
 }
 
 /// 对流式输出的单行做脱敏。私钥块只有在 `sanitize` 对整个缓冲区匹配时才能命中，
@@ -783,5 +843,21 @@ mod tests {
             assert!(path.exists());
         }
         assert!(!path.exists());
+    }
+
+    #[test]
+    fn matching_run_ids_returns_only_target_server_runs() {
+        let entries = [
+            ("run-1", Some("server-a")),
+            ("run-2", Some("server-b")),
+            ("run-3", None),
+            ("run-4", Some("server-a")),
+        ];
+
+        assert_eq!(
+            matching_run_ids(entries, "server-a"),
+            vec!["run-1".to_string(), "run-4".to_string()]
+        );
+        assert!(matching_run_ids(entries, "missing").is_empty());
     }
 }

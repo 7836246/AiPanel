@@ -109,6 +109,9 @@ export default function FileBrowser({ serverId, serverName }: { serverId: string
   const [error, setError] = useState<string | null>(null);
   // 上传/下载等动作的错误走独立通道，不写入会顶替整个目录列表的 error。
   const [actionError, setActionError] = useState<string | null>(null);
+  const [actionStatus, setActionStatus] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [downloadingPath, setDownloadingPath] = useState<string | null>(null);
   const [query, setQuery] = useState("");
 
   // 右侧编辑器状态。
@@ -231,23 +234,38 @@ export default function FileBrowser({ serverId, serverName }: { serverId: string
 
   // 上传:选本地文件 → scp 到当前目录 → 刷新列表。
   async function handleUpload() {
+    if (uploading) return;
     setActionError(null);
+    setActionStatus(null);
+    setUploading(true);
     try {
       const name = await fsUpload(serverId, path);
-      if (name) loadDir(path);
+      if (name) {
+        setActionStatus(`已上传: ${name}`);
+        loadDir(path);
+      }
     } catch (e) {
       // 用独立的 actionError 提示，避免顶替目录列表导致文件看起来全没了。
       setActionError(`上传失败: ${errMsg(e)}`);
+    } finally {
+      setUploading(false);
     }
   }
 
   // 下载:把某个远端文件 scp 到本地(弹保存对话框)。
   async function handleDownload(entry: FileEntry) {
+    const fullPath = joinPath(path, entry.name);
+    if (downloadingPath) return;
     setActionError(null);
+    setActionStatus(null);
+    setDownloadingPath(fullPath);
     try {
-      await fsDownload(serverId, joinPath(path, entry.name));
+      const saved = await fsDownload(serverId, fullPath);
+      if (saved) setActionStatus(`已下载: ${entry.name}`);
     } catch (e) {
       setActionError(`下载失败: ${errMsg(e)}`);
+    } finally {
+      setDownloadingPath(null);
     }
   }
 
@@ -325,11 +343,11 @@ export default function FileBrowser({ serverId, serverName }: { serverId: string
         <Button
           variant="secondary"
           size="sm"
-          disabled={loading}
+          disabled={loading || uploading}
           onClick={handleUpload}
-          title={loading ? "目录加载中…" : "上传本地文件到当前目录"}
+          title={loading ? "目录加载中…" : uploading ? "上传中…" : "上传本地文件到当前目录"}
         >
-          <Upload size={13} /> 上传
+          {uploading ? <Spinner size="sm" /> : <Upload size={13} />} 上传
         </Button>
       </div>
 
@@ -359,6 +377,20 @@ export default function FileBrowser({ serverId, serverName }: { serverId: string
                 aria-label="关闭"
                 title="关闭"
                 onClick={() => setActionError(null)}
+                className="flex-none rounded px-1 leading-none hover:opacity-70"
+              >
+                ✕
+              </button>
+            </div>
+          )}
+          {actionStatus && (
+            <div className="m-1.5 flex items-center justify-between gap-2 rounded-md border border-risk-low/40 bg-risk-low/10 px-3 py-2 text-[12.5px] text-risk-low">
+              <span className="min-w-0 flex-1 break-words">{actionStatus}</span>
+              <button
+                type="button"
+                aria-label="关闭"
+                title="关闭"
+                onClick={() => setActionStatus(null)}
                 className="flex-none rounded px-1 leading-none hover:opacity-70"
               >
                 ✕
@@ -422,11 +454,12 @@ export default function FileBrowser({ serverId, serverName }: { serverId: string
                       <IconButton
                         aria-label="下载"
                         size="sm"
+                        disabled={downloadingPath !== null}
                         className="flex-none opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
                         onClick={(e) => { e.stopPropagation(); void handleDownload(entry); }}
-                        title="下载到本地"
+                        title={downloadingPath === joinPath(path, entry.name) ? "下载中…" : "下载到本地"}
                       >
-                        <Download size={13} />
+                        {downloadingPath === joinPath(path, entry.name) ? <Spinner size="sm" /> : <Download size={13} />}
                       </IconButton>
                     )}
                   </div>

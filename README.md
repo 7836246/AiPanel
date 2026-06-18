@@ -3,7 +3,7 @@
 <p align="center"><b>本地运行、通过 SSH 管理服务器的 AI 运维客户端</b></p>
 
 <p align="center">
-  <a href="#"><img src="https://img.shields.io/badge/status-planning-0F766E" alt="Project Status"></a>
+  <a href="#"><img src="https://img.shields.io/badge/status-desktop%20mvp-0F766E" alt="Project Status"></a>
   <a href="#"><img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-0284C7" alt="Platform"></a>
   <a href="#"><img src="https://img.shields.io/badge/agent-SSH%20first-16A34A" alt="SSH First"></a>
   <a href="./LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-64748B" alt="License: AGPL-3.0"></a>
@@ -49,6 +49,33 @@ In the app you can add a server, test SSH connectivity, run a read-only health
 check, turn a request into a reviewable plan, approve and execute it, and review
 the local audit trail.
 
+## Quality Gates
+
+For normal development and CI, run the non-secret gate:
+
+```sh
+pnpm ci:check
+```
+
+This typechecks the workspace, runs the Rust test suite, runs the bundled Codex
+app-server integration check, runs Rust Clippy with warnings denied, and builds
+the frontend packages. Run `scripts/fetch-codex.sh` first if the bundled sidecar
+has not been fetched for your platform.
+
+Before shipping a macOS build, run the full release gate:
+
+```sh
+pnpm release:check
+```
+
+This checks the bundled Codex app-server sidecar, starts it through the real
+integration test, typechecks the workspace, runs the Rust test suite, runs Rust
+Clippy with warnings denied, builds the frontend, builds the Tauri app, verifies
+the app executable and sidecar match the target architecture, then verifies the
+macOS app bundle and DMG are signed with a Developer ID Application identity and
+have valid notarization tickets. Development-signed or unstapled builds fail
+this gate.
+
 ## Roadmap
 
 - [x] Project positioning
@@ -69,8 +96,8 @@ the local audit trail.
 - [x] Multi-server dashboard with favorites and foreground health monitoring
 - [x] Codex app-server tool-call loop (turns) — `thread/start` → `turn/start` →
       event stream → tool dispatch/relay; preferred runtime with OpenAI fallback;
-      covered by simulated JSON-RPC event-stream tests (pending end-to-end validation
-      against an installed `codex` binary)
+      covered by simulated event-stream tests and real bundled sidecar initialize /
+      thread-start / turn-start protocol validation
 - [x] Docker app deployment workflows — detect/install, Compose deploy, Caddy/Nginx
       reverse proxy + HTTPS, post-deploy health checks; Uptime Kuma / n8n / WordPress /
       PostgreSQL / Redis templates, each a risk-reviewed Plan

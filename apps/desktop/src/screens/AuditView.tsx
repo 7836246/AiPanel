@@ -31,7 +31,32 @@ const FILTERS: { key: StatusFilter; label: string }[] = [
 const errMsg = (e: unknown): string =>
   e && typeof e === "object" && "message" in e ? String((e as { message: unknown }).message) : String(e);
 
-// 独立审计视图：自加载审计记录,支持搜索、状态筛选与导出 JSON 到剪贴板。
+function firstOutputLine(text: string): string | null {
+  return text
+    .split("\n")
+    .map((line) => line.trim())
+    .find((line) => line.length > 0) ?? null;
+}
+
+function executionStatusLabel(ex: AuditRecord["executions"][number]): string {
+  if (ex.exitCode !== -1) return `exit ${ex.exitCode}`;
+  const reason = firstOutputLine(ex.stderr) ?? firstOutputLine(ex.stdout);
+  if (!reason) return "未获得退出码";
+  return `未获得退出码 · ${reason.slice(0, 48)}${reason.length > 48 ? "…" : ""}`;
+}
+
+function executionOutput(ex: AuditRecord["executions"][number]): { text: string; stderr: boolean }[] {
+  const lines: { text: string; stderr: boolean }[] = [];
+  for (const line of ex.stdout.split("\n")) {
+    if (line.trim()) lines.push({ text: line, stderr: false });
+  }
+  for (const line of ex.stderr.split("\n")) {
+    if (line.trim()) lines.push({ text: line, stderr: true });
+  }
+  return lines;
+}
+
+// 独立审计视图：自加载审计记录,支持搜索、状态筛选与导出 JSON 文件。
 export default function AuditView({
   onNotify,
 }: {
@@ -82,17 +107,12 @@ export default function AuditView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [debouncedQuery, filter]);
 
-  // 导出全部审计为 JSON 字符串并写入剪贴板（剪贴板不可用时给出明确提示）。
+  // 导出全部审计为 JSON 文件；取消保存对话框时不报错。
   async function handleExport() {
-    if (!navigator.clipboard?.writeText) {
-      onNotify?.("danger", "当前环境不支持剪贴板,请改用其他方式导出");
-      return;
-    }
     setExporting(true);
     try {
-      const json = await exportAuditJson();
-      await navigator.clipboard.writeText(json);
-      onNotify?.("success", "审计已复制为 JSON");
+      const exported = await exportAuditJson();
+      if (exported) onNotify?.("success", "审计 JSON 已导出");
     } catch (e) {
       onNotify?.("danger", `导出失败: ${errMsg(e)}`);
     } finally {
@@ -214,17 +234,24 @@ export default function AuditView({
                                   <span
                                     className={`ml-auto ${ex.exitCode === 0 ? "text-risk-low" : "text-risk-blocked"}`}
                                   >
-                                    exit {ex.exitCode}
+                                    {executionStatusLabel(ex)}
                                   </span>
                                 </div>
                                 {ex.stdout || ex.stderr ? (
                                   (() => {
-                                    const all = (ex.stdout || ex.stderr).split("\n");
+                                    const all = executionOutput(ex);
                                     return (
-                                      <pre className="overflow-x-auto px-3 py-2 font-mono text-[11.5px] leading-relaxed text-fg">
-                                        {all.slice(0, 12).join("\n")}
-                                        {all.length > 12 ? `\n…（已截断，共 ${all.length} 行）` : ""}
-                                      </pre>
+                                      <div className="overflow-x-auto px-3 py-2 font-mono text-[11.5px] leading-relaxed">
+                                        {all.slice(0, 12).map((line, idx) => (
+                                          <div key={idx} className={line.stderr ? "text-risk-blocked" : "text-fg"}>
+                                            {line.stderr ? "stderr: " : ""}
+                                            {line.text}
+                                          </div>
+                                        ))}
+                                        {all.length > 12 ? (
+                                          <div className="text-fg-subtle">…（已截断，共 {all.length} 行）</div>
+                                        ) : null}
+                                      </div>
                                     );
                                   })()
                                 ) : null}

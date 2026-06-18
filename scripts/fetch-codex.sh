@@ -14,24 +14,16 @@ VERSION="rust-v0.141.0"
 REPO="openai/codex"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DEST="$ROOT/apps/desktop/src-tauri/binaries"
+source "$ROOT/scripts/release-lib.sh"
 
 TRIPLE="${1:-}"
 if [ -z "$TRIPLE" ]; then
-  os="$(uname -s)"; arch="$(uname -m)"
-  case "$os/$arch" in
-    Darwin/arm64)   TRIPLE="aarch64-apple-darwin" ;;
-    Darwin/x86_64)  TRIPLE="x86_64-apple-darwin" ;;
-    Linux/aarch64)  TRIPLE="aarch64-unknown-linux-musl" ;;
-    Linux/x86_64)   TRIPLE="x86_64-unknown-linux-musl" ;;
-    *) echo "无法识别平台 $os/$arch;请显式传入 target triple(如 x86_64-apple-darwin)" >&2; exit 1 ;;
-  esac
+  TRIPLE="$(aipanel_target_triple)"
 fi
 
 # Windows 资产是 .exe(.tar.gz 包装);Unix 是裸二进制的 .tar.gz。
-case "$TRIPLE" in
-  *windows*) ASSET="codex-app-server-${TRIPLE}.exe.tar.gz"; BINNAME="codex-app-server-${TRIPLE}.exe" ;;
-  *)         ASSET="codex-app-server-${TRIPLE}.tar.gz";     BINNAME="codex-app-server-${TRIPLE}" ;;
-esac
+BINNAME="$(aipanel_sidecar_name "$TRIPLE")"
+ASSET="${BINNAME}.tar.gz"
 
 URL="https://github.com/${REPO}/releases/download/${VERSION}/${ASSET}"
 mkdir -p "$DEST"

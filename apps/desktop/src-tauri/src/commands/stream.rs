@@ -39,12 +39,12 @@ pub async fn run_server_doctor_stream(
     run_id: String,
     on_event: Channel<crate::doctor::DoctorStreamEvent>,
 ) -> AppResult<DoctorReport> {
-    // 登记取消句柄；无论成功/失败/取消都要注销，这里用一个 drop guard 兜底。
-    let cancel = crate::ssh::register(&run_id);
-    let _guard = RunGuard(run_id.clone());
-
     // 取出服务器及其 SSH 密钥（若其认证方式存有密钥）。
     let server = state.store.get_server(&id)?;
+    // 登记取消句柄；无论成功/失败/取消都要注销，这里用一个 drop guard 兜底。
+    let cancel = crate::ssh::register(&run_id, Some(&server.id));
+    let _guard = RunGuard(run_id.clone());
+
     let secret = match &server.credential_ref {
         Some(reference) => state.credentials.get_secret(reference)?,
         None => None,
@@ -97,6 +97,10 @@ pub enum PlanExecEvent {
     Done { status: String, exit_code: i32 },
 }
 
+fn record_cancelled_command(command: &str) -> crate::core::types::CommandExecution {
+    crate::audit::record_failed_command(command, "command cancelled by user")
+}
+
 /// 执行用户已确认的计划，并在每一步运行时按步 / 按行把事件流式推给前端。
 /// 安全边界与 [`super::execute_confirmed_plan`] **完全一致**：计划总是在服务端
 /// 重新审查（绝不信任客户端），拒绝被 Blocked 的步骤，并在任何命令运行前
@@ -111,16 +115,16 @@ pub async fn run_confirmed_plan_stream(
     run_id: String,
     on_event: Channel<PlanExecEvent>,
 ) -> AppResult<AuditRecord> {
-    // 登记取消句柄；RunGuard 在任意退出路径上注销它。
-    let cancel = crate::ssh::register(&run_id);
-    let _guard = RunGuard(run_id.clone());
-
     let server_id = plan
         .server_id
         .clone()
         .ok_or_else(|| AppError::Validation("plan has no target server".into()))?;
     // 取出服务器及其 SSH 密钥（若其认证方式存有密钥）。
     let server = state.store.get_server(&server_id)?;
+    // 登记取消句柄；RunGuard 在任意退出路径上注销它。
+    let cancel = crate::ssh::register(&run_id, Some(&server.id));
+    let _guard = RunGuard(run_id.clone());
+
     let secret = match &server.credential_ref {
         Some(reference) => state.credentials.get_secret(reference)?,
         None => None,
@@ -213,10 +217,11 @@ pub async fn run_confirmed_plan_stream(
                         status: "failed".to_string(),
                     })
                     .ok();
+                executions.push(record_cancelled_command(&step.command));
                 cancelled = true;
                 break;
             }
-            Err(_) => {
+            Err(e) => {
                 on_event
                     .send(PlanExecEvent::Step {
                         index,
@@ -225,6 +230,7 @@ pub async fn run_confirmed_plan_stream(
                         status: "failed".to_string(),
                     })
                     .ok();
+                executions.push(crate::audit::record_failed_command(&step.command, &e.to_string()));
                 failed = true;
                 break;
             }
@@ -247,4 +253,18 @@ pub async fn run_confirmed_plan_stream(
         crate::audit::record_for_plan(Some(&server_id), &intent, plan, review, executions, status);
     state.store.insert_audit_record(&record)?;
     Ok(record)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::record_cancelled_command;
+
+    #[test]
+    fn cancelled_command_is_recorded_as_failed_execution() {
+        let exec = record_cancelled_command("sleep 60");
+        assert_eq!(exec.command, "sleep 60");
+        assert_eq!(exec.exit_code, -1);
+        assert!(exec.stderr.contains("cancelled"));
+        assert!(exec.stdout.is_empty());
+    }
 }

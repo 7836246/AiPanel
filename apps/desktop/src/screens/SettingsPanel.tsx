@@ -27,6 +27,7 @@ import {
   type ProviderKind,
   type ProviderTestResult,
 } from "../lib/api";
+import { READONLY_DEFAULT_KEY } from "./settingsKeys";
 
 // 从后端错误或任意异常中提取可展示的错误文本。
 const errMsg = (e: unknown): string =>
@@ -41,14 +42,6 @@ const KIND_LABEL: Record<ProviderKind, string> = {
 
 // 新增供应商表单的初始空值。默认类型为 OpenAI 兼容（贴近 Codex：只需配 Base URL + Key，模型自动探测）。
 const EMPTY: ProviderInput = { name: "", kind: "openai_compatible", enabled: true };
-
-/**
- * 「默认只读优先」开关的 localStorage 键名。
- * 主界面（CodexConsole）初始化 readOnlyMode 时读取此键作为默认值：
- *   localStorage.getItem(READONLY_DEFAULT_KEY) !== "false"  →  默认只读
- * 即未设置或为 "true" 时默认开启只读，仅显式存为 "false" 时默认关闭。
- */
-export const READONLY_DEFAULT_KEY = "aipanel-readonly-default";
 
 /** 读取「默认只读优先」的当前值（缺省为 true，最安全的默认）。 */
 function readReadonlyDefault(): boolean {
@@ -75,6 +68,7 @@ export default function SettingsPanel() {
   const [backend, setBackend] = useState<string>("");
   const [form, setForm] = useState<ProviderInput | null>(null);
   const [apiKey, setApiKey] = useState("");
+  const [clearApiKey, setClearApiKey] = useState(false);
   const [testResult, setTestResult] = useState<ProviderTestResult | null>(null);
   const [testing, setTesting] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -86,8 +80,17 @@ export default function SettingsPanel() {
   const [readonlyDefault, setReadonlyDefault] = useState<boolean>(true);
   const { toasts, push, dismiss } = useToasts();
 
-  // 已启用的供应商——默认供应商下拉只在其中选择。
-  const enabledProviders = providers.filter((p) => p.enabled);
+  // 与后端 candidate_providers 一致：默认供应商只允许选择已启用且可用于规划的 provider；
+  // custom 类型不参与规划，不能作为固定默认项。
+  const selectableProviders = providers.filter((p) => p.enabled && p.kind !== "custom");
+
+  // 编辑已保存供应商且未重新输入 Key 时，补回确定性的 credentialRef，让后端能从
+  // Keychain 取回旧密钥进行探测/测试；清除 Key 时必须避免复用旧凭据。
+  function providerProbeConfig(): ProviderInput | ProviderConfig | null {
+    if (!form) return null;
+    if (clearApiKey || apiKey || !form.id) return form;
+    return { ...form, credentialRef: `provider:${form.id}` } as ProviderConfig;
+  }
 
   // 重新拉取供应商列表、模型选择策略与凭据后端标识。
   async function refresh() {
@@ -113,6 +116,7 @@ export default function SettingsPanel() {
       enabled: p.enabled,
     });
     setApiKey("");
+    setClearApiKey(false);
     setTestResult(null);
     // 回填已保存模型，作为下拉初始候选；探测状态清空。
     setModels(p.model ? [p.model] : []);
@@ -126,12 +130,7 @@ export default function SettingsPanel() {
     setDetecting(true);
     setDetectError(null);
     try {
-      // 编辑已保存供应商且未重新输入 Key 时,补回确定性的 credentialRef,让后端能从
-      // Keychain 取回密钥探测(否则会因无 Key 而被供应商 401 拒绝)。
-      const probe =
-        apiKey || !form.id
-          ? form
-          : ({ ...form, credentialRef: `provider:${form.id}` } as ProviderConfig);
+      const probe = providerProbeConfig() ?? form;
       const raw = await listModels(probe, apiKey || undefined);
       // 兼容返回 string[] 或 { id?/name? }[] 两种形态，归一化为字符串数组。
       const ids = (raw as unknown[])
@@ -159,14 +158,15 @@ export default function SettingsPanel() {
     }
   }
 
-  // 保存表单（API Key 留空则不修改），成功后关闭表单并刷新列表。
+  // 保存表单：API Key 留空默认保留旧凭据；显式勾选时清除已保存 Keychain 凭据。
   async function save() {
     if (!form || !form.name.trim()) return;
     setBusy(true);
     try {
-      await saveProvider(form, apiKey || undefined);
+      await saveProvider(form, apiKey || undefined, clearApiKey);
       setForm(null);
       setApiKey("");
+      setClearApiKey(false);
       setTestResult(null);
       setModels([]);
       setDetecting(false);
@@ -184,15 +184,11 @@ export default function SettingsPanel() {
   async function remove(id: string) {
     try {
       await deleteProvider(id);
-      if (policy.defaultProviderId === id) {
-        const next = { ...policy, defaultProviderId: undefined };
-        setPolicy(next);
-        await saveModelSelectionPolicy(next);
-      }
       await refresh();
       push("success", "供应商已删除");
-    } catch {
-      push("danger", "删除失败");
+    } catch (e) {
+      await refresh().catch(() => undefined);
+      push("danger", `删除失败: ${errMsg(e)}`);
     }
   }
 
@@ -201,8 +197,9 @@ export default function SettingsPanel() {
     setPolicy(next);
     try {
       await saveModelSelectionPolicy(next);
-    } catch {
-      push("danger", "保存模型选择策略失败");
+    } catch (e) {
+      await refresh().catch(() => undefined);
+      push("danger", `保存模型选择策略失败: ${errMsg(e)}`);
     }
   }
 
@@ -212,7 +209,7 @@ export default function SettingsPanel() {
     setTesting(true);
     setTestResult(null);
     try {
-      setTestResult(await testProvider(form, apiKey || undefined));
+      setTestResult(await testProvider(providerProbeConfig() ?? form, apiKey || undefined));
     } catch (e) {
       setTestResult({ ok: false, message: "测试请求失败", detail: errMsg(e) });
     } finally {
@@ -324,7 +321,29 @@ export default function SettingsPanel() {
             </div>
             <div className={field}>
               <label className={labelCls}>API Key（仅存本地 Keychain，不进数据库）</label>
-              <Input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="sk-…" />
+              <Input
+                type="password"
+                value={apiKey}
+                onChange={(e) => {
+                  setApiKey(e.target.value);
+                  if (e.target.value) setClearApiKey(false);
+                }}
+                placeholder={form.id ? "留空则保留已保存密钥" : "sk-…"}
+                disabled={clearApiKey}
+              />
+              {form.id ? (
+                <label className="mt-1 flex items-center gap-2 text-[12px] text-fg-muted">
+                  <input
+                    type="checkbox"
+                    checked={clearApiKey}
+                    onChange={(e) => {
+                      setClearApiKey(e.target.checked);
+                      if (e.target.checked) setApiKey("");
+                    }}
+                  />
+                  清除已保存 API Key
+                </label>
+              ) : null}
             </div>
             {/* 探测 + 下拉选择模型（贴近 Codex 体验），并保留手填兜底。 */}
             <div className={field}>
@@ -418,6 +437,7 @@ export default function SettingsPanel() {
                 size="sm"
                 onClick={() => {
                   setForm(null);
+                  setClearApiKey(false);
                   setTestResult(null);
                   setTesting(false);
                   setModels([]);
@@ -430,7 +450,7 @@ export default function SettingsPanel() {
             </div>
           </div>
         ) : (
-          <Button variant="secondary" size="sm" className="mt-3 gap-1.5" onClick={() => { setForm({ ...EMPTY }); setApiKey(""); setTestResult(null); setModels([]); setDetecting(false); setDetectError(null); }}>
+          <Button variant="secondary" size="sm" className="mt-3 gap-1.5" onClick={() => { setForm({ ...EMPTY }); setApiKey(""); setClearApiKey(false); setTestResult(null); setModels([]); setDetecting(false); setDetectError(null); }}>
             <Plus size={14} />
             添加供应商
           </Button>
@@ -462,23 +482,23 @@ export default function SettingsPanel() {
                 className="h-9 rounded-md border border-border bg-surface-2 px-2 text-sm text-fg outline-none focus-visible:border-brand"
               >
                 <option value="">（未选择）</option>
-                {/* 默认指向一个已禁用/不存在的供应商时，额外渲染一个禁用 option
+                {/* 默认指向一个已禁用/不存在/不可规划的供应商时，额外渲染一个禁用 option
                     保留该陈旧选择的可见性，避免下拉静默空白。 */}
                 {policy.defaultProviderId &&
-                !enabledProviders.some((p) => p.id === policy.defaultProviderId) ? (
+                !selectableProviders.some((p) => p.id === policy.defaultProviderId) ? (
                   <option value={policy.defaultProviderId} disabled>
                     {(providers.find((p) => p.id === policy.defaultProviderId)?.name ??
-                      policy.defaultProviderId) + "（已停用/不存在）"}
+                      policy.defaultProviderId) + "（已停用/不存在/不可用于规划）"}
                   </option>
                 ) : null}
-                {enabledProviders.map((p) => (
+                {selectableProviders.map((p) => (
                   <option key={p.id} value={p.id}>
                     {p.name}
                   </option>
                 ))}
               </select>
-              {enabledProviders.length === 0 ? (
-                <span className="text-[12px] text-fg-subtle">暂无已启用的供应商，请先在上方添加并启用。</span>
+              {selectableProviders.length === 0 ? (
+                <span className="text-[12px] text-fg-subtle">暂无可用于规划的已启用供应商，请先添加并启用 OpenAI 兼容供应商。</span>
               ) : null}
             </div>
           )}

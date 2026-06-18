@@ -18,8 +18,8 @@ const TEMPLATES: { id: AppTemplate; name: string; desc: string; web: boolean }[]
   { id: "uptimeKuma", name: "Uptime Kuma", desc: "服务状态监控 · 3001", web: true },
   { id: "n8n", name: "n8n", desc: "工作流自动化 · 5678", web: true },
   { id: "wordPress", name: "WordPress", desc: "建站(含 MySQL)· 8080", web: true },
-  { id: "postgres", name: "PostgreSQL", desc: "关系型数据库 · 5432", web: false },
-  { id: "redis", name: "Redis", desc: "缓存 / 键值库 · 6379", web: false },
+  { id: "postgres", name: "PostgreSQL", desc: "关系型数据库 · 127.0.0.1:5432", web: false },
+  { id: "redis", name: "Redis", desc: "缓存 / 键值库 · 127.0.0.1:6379", web: false },
 ];
 
 const PROXIES: { id: ReverseProxy; name: string }[] = [
@@ -46,6 +46,14 @@ export default function DockerDeployPanel({
   const [error, setError] = useState<string | null>(null);
 
   const current = TEMPLATES.find((t) => t.id === app);
+  const selectApp = (nextApp: AppTemplate) => {
+    setApp(nextApp);
+    const next = TEMPLATES.find((t) => t.id === nextApp);
+    if (!next?.web) {
+      setProxy("none");
+      setDomain("");
+    }
+  };
 
   const run = async (kind: "detect" | "install" | "deploy") => {
     // 反代选了 Caddy/Nginx 却没填域名:无法签发 HTTPS / 配置 vhost,提前拦下避免生成不可用计划。
@@ -106,7 +114,7 @@ export default function DockerDeployPanel({
             {TEMPLATES.map((t) => (
               <button
                 key={t.id}
-                onClick={() => setApp(t.id)}
+                onClick={() => selectApp(t.id)}
                 className={`rounded-md border px-3.5 py-3 text-left transition-colors ${
                   app === t.id
                     ? "border-brand bg-selected"

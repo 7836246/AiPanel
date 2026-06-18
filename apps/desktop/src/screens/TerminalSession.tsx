@@ -15,6 +15,7 @@ import {
 type BannerPhase =
   | { phase: "connecting" }
   | { phase: "error"; reason: string }
+  | { phase: "disconnected"; reason: string }
   | { phase: "done" };
 
 /**
@@ -64,6 +65,16 @@ export default function TerminalSession({
     };
     // 会话 id：terminalOpen 成功后写入；用本地 let 闭包变量防止竞态
     let sessionId: string | null = null;
+    let disconnectReported = false;
+    const reportDisconnected = (err: unknown): void => {
+      if (disposed || disconnectReported) return;
+      disconnectReported = true;
+      const reason = String(err);
+      sessionId = null;
+      if (hideTimer) clearTimeout(hideTimer);
+      setBanner({ phase: "disconnected", reason });
+      term.write(`\r\n\x1b[31m终端会话已断开: ${reason}\x1b[0m\r\n`);
+    };
 
     // 依据当前主题（读取 CSS 变量）生成 xterm 配色，读不到则回退到中性深色
     const rootStyle = getComputedStyle(document.documentElement);
@@ -128,12 +139,16 @@ export default function TerminalSession({
 
     // 用户输入 → 发送到远端
     const onDataDisposable = term.onData((d) => {
-      if (sessionId) void terminalWrite(sessionId, d);
+      const id = sessionId;
+      if (!id || disconnectReported) return;
+      void terminalWrite(id, d).catch(reportDisconnected);
     });
 
     // 终端尺寸变化 → 同步远端窗口大小
     const onResizeDisposable = term.onResize(({ cols, rows }) => {
-      if (sessionId) void terminalResize(sessionId, cols, rows);
+      const id = sessionId;
+      if (!id || disconnectReported) return;
+      void terminalResize(id, cols, rows).catch(reportDisconnected);
     });
 
     // 容器尺寸变化时重新 fit（fit 会触发 onResize，从而同步远端）
@@ -184,7 +199,7 @@ export default function TerminalSession({
       {banner.phase !== "done" && (
         <div
           className={`flex items-center gap-1.5 border-b border-border px-3 py-1.5 text-[12px] ${
-            banner.phase === "error"
+            banner.phase === "error" || banner.phase === "disconnected"
               ? "bg-risk-blocked-soft text-risk-blocked"
               : "bg-hover text-fg-muted"
           }`}
@@ -193,6 +208,11 @@ export default function TerminalSession({
             <>
               <Loader2 size={13} className="flex-none animate-spin" />
               正在连接 {connLabel ?? serverName}…
+            </>
+          ) : banner.phase === "disconnected" ? (
+            <>
+              <XCircle size={13} className="flex-none" />
+              会话已断开：{banner.reason}
             </>
           ) : (
             <>

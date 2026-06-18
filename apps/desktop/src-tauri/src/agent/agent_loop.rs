@@ -9,7 +9,7 @@
 //! 使用异步 reqwest 客户端（回路需 await 异步的工具分发），与 provider 那套
 //! 阻塞式的一次性调用相互独立。
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::core::error::{AppError, AppResult};
@@ -23,7 +23,7 @@ const MAX_ITERS: usize = 6;
 ///
 /// 额外携带脱敏后的入参摘要 / 错误 / 结果预览，方便前端展示更丰富的调用细节。
 /// 所有文本均经 `crate::core::sanitize::sanitize` 脱敏后才放入，绝不泄露密钥。
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolTrace {
     pub name: String,
@@ -67,11 +67,21 @@ pub fn read_only_tool_specs() -> Vec<Value> {
 
 fn params_schema(name: &str) -> Value {
     match name {
-        "server.info" => json!({"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}),
-        "server.doctor.readonly" => json!({"type":"object","properties":{"serverId":{"type":"string"}},"required":["serverId"]}),
-        "ssh.run_readonly" => json!({"type":"object","properties":{"serverId":{"type":"string"},"command":{"type":"string"}},"required":["serverId","command"]}),
-        "task.plan" => json!({"type":"object","properties":{"intent":{"type":"string"},"serverId":{"type":"string"}},"required":["intent"]}),
-        "task.review" => json!({"type":"object","properties":{"plan":{"type":"object"},"readOnlyMode":{"type":"boolean"}},"required":["plan"]}),
+        "server.info" => {
+            json!({"type":"object","properties":{"id":{"type":"string"}},"required":["id"]})
+        }
+        "server.doctor.readonly" => {
+            json!({"type":"object","properties":{"serverId":{"type":"string"}},"required":["serverId"]})
+        }
+        "ssh.run_readonly" => {
+            json!({"type":"object","properties":{"serverId":{"type":"string"},"command":{"type":"string"}},"required":["serverId","command"]})
+        }
+        "task.plan" => {
+            json!({"type":"object","properties":{"intent":{"type":"string"},"serverId":{"type":"string"}},"required":["intent"]})
+        }
+        "task.review" => {
+            json!({"type":"object","properties":{"plan":{"type":"object"},"readOnlyMode":{"type":"boolean"}},"required":["plan"]})
+        }
         // server.list（无参数）
         _ => json!({"type":"object","properties":{}}),
     }
@@ -80,7 +90,7 @@ fn params_schema(name: &str) -> Value {
 fn base_url(provider: &ProviderConfig) -> AppResult<String> {
     match &provider.base_url {
         // 与规划/探测共用同一套智能 /v1 规整,保证地址一致。
-        Some(u) if u.starts_with("http") => Ok(super::normalize_openai_base(u)),
+        Some(u) => super::normalize_openai_base(u),
         _ => Err(AppError::Provider("base_url 缺失或不是 http(s) URL".into())),
     }
 }
@@ -95,11 +105,20 @@ async fn chat(
     if let Some(k) = api_key {
         req = req.bearer_auth(k);
     }
-    let resp = req.send().await.map_err(|e| AppError::Provider(format!("请求失败: {e}")))?;
+    let resp = req
+        .send()
+        .await
+        .map_err(|e| AppError::Provider(format!("请求失败: {e}")))?;
     let status = resp.status();
-    let text = resp.text().await.map_err(|e| AppError::Provider(e.to_string()))?;
+    let text = resp
+        .text()
+        .await
+        .map_err(|e| AppError::Provider(e.to_string()))?;
     if !status.is_success() {
-        return Err(AppError::Provider(format!("HTTP {status}: {}", crate::core::sanitize::sanitize(&text))));
+        return Err(AppError::Provider(format!(
+            "HTTP {status}: {}",
+            crate::core::sanitize::sanitize(&text)
+        )));
     }
     serde_json::from_str(&text).map_err(|e| AppError::Provider(format!("响应解析失败: {e}")))
 }
@@ -113,7 +132,10 @@ pub async fn run_turn(
     server_id: Option<&str>,
 ) -> AppResult<AgentTurnResult> {
     let base = base_url(provider)?;
-    let model = provider.model.clone().unwrap_or_else(|| "gpt-4o-mini".to_string());
+    let model = provider
+        .model
+        .clone()
+        .unwrap_or_else(|| "gpt-4o-mini".to_string());
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(60))
         .build()
@@ -151,7 +173,10 @@ pub async fn run_turn(
                 messages.push(msg.clone());
                 for call in calls {
                     let id = call["id"].as_str().unwrap_or_default().to_string();
-                    let name = call["function"]["name"].as_str().unwrap_or_default().to_string();
+                    let name = call["function"]["name"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_string();
                     let args: Value = call["function"]["arguments"]
                         .as_str()
                         .and_then(|s| serde_json::from_str(s).ok())
@@ -203,11 +228,16 @@ pub async fn run_turn(
                 if summary.trim().is_empty() {
                     return Err(AppError::Provider("诊断未返回任何结论".into()));
                 }
-                return Ok(AgentTurnResult { summary, tool_calls: trace });
+                return Ok(AgentTurnResult {
+                    summary,
+                    tool_calls: trace,
+                });
             }
         }
     }
-    Err(AppError::Provider("达到最大工具调用轮数仍未得出结论".into()))
+    Err(AppError::Provider(
+        "达到最大工具调用轮数仍未得出结论".into(),
+    ))
 }
 
 fn truncate(s: &str, max: usize) -> String {

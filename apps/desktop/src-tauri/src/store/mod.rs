@@ -4,7 +4,7 @@
 //! 存储中，这里仅以 [`CredentialRef`] 引用——绝不明文写入（见
 //! docs/SECURITY_MODEL.zh-Hans.md）。
 
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard};
 
 use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection, OptionalExtension, Row};
@@ -21,6 +21,12 @@ pub struct Store {
 const SCHEMA_VERSION: i64 = 3;
 
 impl Store {
+    fn conn(&self) -> AppResult<MutexGuard<'_, Connection>> {
+        self.conn
+            .lock()
+            .map_err(|_| AppError::Storage("sqlite connection lock poisoned".into()))
+    }
+
     /// 打开（并迁移）位于 `path` 的数据库。
     ///
     /// 启用 **WAL + busy_timeout**:GUI 进程与 `aipanel mcp-server` 子进程会**并发**访问
@@ -46,7 +52,7 @@ impl Store {
 
     /// 按版本号增量执行 schema 迁移，并更新 user_version。
     fn migrate(&self) -> AppResult<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn()?;
         let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
         if version < 1 {
             conn.execute_batch(
@@ -119,7 +125,7 @@ impl Store {
 
     /// 列出所有服务器（按创建时间升序）。
     pub fn list_servers(&self) -> AppResult<Vec<ServerProfile>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn()?;
         let mut stmt = conn.prepare(
             "SELECT id, name, host, port, username, auth_kind, credential_ref, status, facts, \
              created_at, updated_at, favorite FROM server_profiles \
@@ -133,7 +139,7 @@ impl Store {
 
     /// 按 id 获取服务器，不存在则返回 NotFound。
     pub fn get_server(&self, id: &str) -> AppResult<ServerProfile> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn()?;
         conn.query_row(
             "SELECT id, name, host, port, username, auth_kind, credential_ref, status, facts, \
              created_at, updated_at, favorite FROM server_profiles WHERE id = ?1",
@@ -146,7 +152,7 @@ impl Store {
 
     /// 校验并创建一台服务器；需要密钥的认证方式会分配一个凭据引用。
     pub fn create_server(&self, input: ServerInput) -> AppResult<ServerProfile> {
-        validate_server_input(&input)?;
+        let input = validate_server_input(input)?;
         let id = new_id();
         let credential_ref = match input.auth_kind {
             AuthKind::Password | AuthKind::Key => Some(CredentialRef::for_server(&id)),
@@ -167,7 +173,7 @@ impl Store {
             created_at: ts,
             updated_at: ts,
         };
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn()?;
         conn.execute(
             "INSERT INTO server_profiles (id, name, host, port, username, auth_kind, \
              credential_ref, status, facts, created_at, updated_at, favorite) \
@@ -192,7 +198,7 @@ impl Store {
 
     /// 校验并更新一台服务器；按新的认证方式保留或新建凭据引用。
     pub fn update_server(&self, id: &str, input: ServerInput) -> AppResult<ServerProfile> {
-        validate_server_input(&input)?;
+        let input = validate_server_input(input)?;
         let mut profile = self.get_server(id)?;
         profile.name = input.name;
         profile.host = input.host;
@@ -207,7 +213,7 @@ impl Store {
             AuthKind::Agent => None,
         };
         profile.updated_at = now();
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn()?;
         conn.execute(
             "UPDATE server_profiles SET name=?2, host=?3, port=?4, username=?5, auth_kind=?6, \
              credential_ref=?7, updated_at=?8 WHERE id=?1",
@@ -227,7 +233,7 @@ impl Store {
 
     /// 删除一台服务器，不存在则返回 NotFound。
     pub fn delete_server(&self, id: &str) -> AppResult<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn()?;
         let n = conn.execute("DELETE FROM server_profiles WHERE id = ?1", params![id])?;
         if n == 0 {
             return Err(AppError::NotFound(format!("server {id}")));
@@ -239,7 +245,7 @@ impl Store {
 
     /// 列出所有模型供应商配置（按创建时间升序）。
     pub fn list_providers(&self) -> AppResult<Vec<ProviderConfig>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn()?;
         let mut stmt = conn.prepare(
             "SELECT id, name, kind, base_url, model, codex_path, credential_ref, enabled, \
              created_at, updated_at FROM provider_configs ORDER BY created_at ASC",
@@ -250,7 +256,7 @@ impl Store {
 
     /// 按 id 获取供应商配置，不存在则返回 NotFound。
     pub fn get_provider(&self, id: &str) -> AppResult<ProviderConfig> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn()?;
         conn.query_row(
             "SELECT id, name, kind, base_url, model, codex_path, credential_ref, enabled, \
              created_at, updated_at FROM provider_configs WHERE id = ?1",
@@ -263,7 +269,7 @@ impl Store {
 
     /// 插入或按 id 替换一条供应商配置。
     pub fn upsert_provider(&self, p: &ProviderConfig) -> AppResult<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn()?;
         conn.execute(
             "INSERT OR REPLACE INTO provider_configs (id, name, kind, base_url, model, codex_path, \
              credential_ref, enabled, created_at, updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
@@ -288,7 +294,7 @@ impl Store {
     /// 返回更新后的 ProviderConfig；供应商不存在则返回 NotFound。
     pub fn set_provider_model(&self, id: &str, model: Option<&str>) -> AppResult<ProviderConfig> {
         {
-            let conn = self.conn.lock().unwrap();
+            let conn = self.conn()?;
             let n = conn.execute(
                 "UPDATE provider_configs SET model=?2, updated_at=?3 WHERE id=?1",
                 params![id, model, now().to_rfc3339()],
@@ -302,7 +308,7 @@ impl Store {
 
     /// 删除一条供应商配置，不存在则返回 NotFound。
     pub fn delete_provider(&self, id: &str) -> AppResult<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn()?;
         let n = conn.execute("DELETE FROM provider_configs WHERE id = ?1", params![id])?;
         if n == 0 {
             return Err(AppError::NotFound(format!("provider {id}")));
@@ -312,7 +318,7 @@ impl Store {
 
     /// 读取模型选择策略，未设置时返回默认值。
     pub fn get_policy(&self) -> AppResult<ModelSelectionPolicy> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn()?;
         let data: Option<String> = conn
             .query_row("SELECT data FROM model_selection_policy WHERE id = 1", [], |r| r.get(0))
             .optional()?;
@@ -324,7 +330,7 @@ impl Store {
 
     /// 写入（覆盖）模型选择策略。
     pub fn set_policy(&self, p: &ModelSelectionPolicy) -> AppResult<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn()?;
         conn.execute(
             "INSERT OR REPLACE INTO model_selection_policy (id, data) VALUES (1, ?1)",
             params![serde_json::to_string(p)?],
@@ -336,7 +342,7 @@ impl Store {
 
     /// 插入或按 id 替换一条审计记录（完整 JSON 存入 `data` 列）。
     pub fn insert_audit_record(&self, rec: &AuditRecord) -> AppResult<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn()?;
         conn.execute(
             "INSERT OR REPLACE INTO audit_records (id, server_id, created_at, updated_at, data) \
              VALUES (?1,?2,?3,?4,?5)",
@@ -353,7 +359,7 @@ impl Store {
 
     /// 列出最近的审计记录（按创建时间倒序，最多 `limit` 条）。
     pub fn list_audit_records(&self, limit: u32) -> AppResult<Vec<AuditRecord>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn()?;
         let mut stmt = conn.prepare(
             "SELECT data FROM audit_records ORDER BY created_at DESC LIMIT ?1",
         )?;
@@ -377,7 +383,7 @@ impl Store {
         if q.is_empty() {
             return self.list_audit_records(limit);
         }
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn()?;
         // SQLite 的 LIKE 对 ASCII 默认不区分大小写；为兼顾非 ASCII，
         // 统一对 data 列与模式做 lower() 处理。
         let pattern = format!("%{}%", escape_like(&q.to_lowercase()));
@@ -401,7 +407,7 @@ impl Store {
 
     /// 按 id 获取一条审计记录，不存在则返回 NotFound。
     pub fn get_audit_record(&self, id: &str) -> AppResult<AuditRecord> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn()?;
         let data: Option<String> = conn
             .query_row("SELECT data FROM audit_records WHERE id = ?1", params![id], |r| r.get(0))
             .optional()?;
@@ -415,7 +421,7 @@ impl Store {
 
     /// 插入或按 id 替换一条运行历史记录（完整 JSON 存入 `data` 列）。
     pub fn upsert_task(&self, rec: &TaskRecord) -> AppResult<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn()?;
         conn.execute(
             "INSERT OR REPLACE INTO tasks (id, server_id, intent, status, created_at, updated_at, data) \
              VALUES (?1,?2,?3,?4,?5,?6,?7)",
@@ -434,7 +440,7 @@ impl Store {
 
     /// 列出运行历史，可按服务器过滤（按创建时间倒序，最多 `limit` 条）。
     pub fn list_tasks(&self, server_id: Option<&str>, limit: u32) -> AppResult<Vec<TaskRecord>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn()?;
         let rows: Vec<String> = match server_id {
             Some(sid) => {
                 let mut stmt = conn.prepare(
@@ -480,7 +486,7 @@ impl Store {
         if q.is_empty() {
             return self.list_tasks(server_id, limit);
         }
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn()?;
         let pattern = format!("%{}%", escape_like(&q.to_lowercase()));
         let rows: Vec<String> = match server_id {
             Some(sid) => {
@@ -520,7 +526,7 @@ impl Store {
     ///
     /// 记录中的执行输出已脱敏、不含密钥，可安全交给前端写盘/分享。
     pub fn export_audit_records_json(&self) -> AppResult<String> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn()?;
         let mut stmt =
             conn.prepare("SELECT data FROM audit_records ORDER BY created_at DESC")?;
         let rows = stmt
@@ -538,7 +544,7 @@ impl Store {
 
     /// 按 id 获取一条运行历史，不存在则返回 NotFound。
     pub fn get_task(&self, id: &str) -> AppResult<TaskRecord> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn()?;
         let data: Option<String> = conn
             .query_row("SELECT data FROM tasks WHERE id = ?1", params![id], |r| r.get(0))
             .optional()?;
@@ -550,7 +556,7 @@ impl Store {
 
     /// 删除一条运行历史，不存在则返回 NotFound。
     pub fn delete_task(&self, id: &str) -> AppResult<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn()?;
         let n = conn.execute("DELETE FROM tasks WHERE id = ?1", params![id])?;
         if n == 0 {
             return Err(AppError::NotFound(format!("task {id}")));
@@ -565,8 +571,8 @@ impl Store {
         status: ServerStatus,
         facts: Option<&std::collections::BTreeMap<String, String>>,
     ) -> AppResult<()> {
-        let conn = self.conn.lock().unwrap();
-        match facts {
+        let conn = self.conn()?;
+        let n = match facts {
             Some(f) => conn.execute(
                 "UPDATE server_profiles SET status=?2, facts=?3, updated_at=?4 WHERE id=?1",
                 params![id, status_str(status), serde_json::to_string(f)?, now().to_rfc3339()],
@@ -578,13 +584,16 @@ impl Store {
                 params![id, status_str(status)],
             )?,
         };
+        if n == 0 {
+            return Err(AppError::NotFound(format!("server {id}")));
+        }
         Ok(())
     }
 
     /// 设置某台服务器的收藏状态，返回更新后的 ServerProfile。
     pub fn set_server_favorite(&self, id: &str, favorite: bool) -> AppResult<ServerProfile> {
         {
-            let conn = self.conn.lock().unwrap();
+            let conn = self.conn()?;
             let n = conn.execute(
                 "UPDATE server_profiles SET favorite=?2, updated_at=?3 WHERE id=?1",
                 params![id, favorite as i64, now().to_rfc3339()],
@@ -719,21 +728,38 @@ fn parse_status(s: &str) -> ServerStatus {
     }
 }
 
-/// 校验创建/更新服务器的输入，缺少必填字段则返回 Validation 错误。
-fn validate_server_input(input: &ServerInput) -> AppResult<()> {
-    if input.name.trim().is_empty() {
+/// 校验并规范化创建/更新服务器的输入，缺少必填字段或连接字段不可执行则返回 Validation 错误。
+fn validate_server_input(input: ServerInput) -> AppResult<ServerInput> {
+    let name = input.name.trim().to_string();
+    let host = input.host.trim().to_string();
+    let username = input.username.trim().to_string();
+
+    if name.is_empty() {
         return Err(AppError::Validation("server name is required".into()));
     }
-    if input.host.trim().is_empty() {
+    if host.is_empty() {
         return Err(AppError::Validation("host is required".into()));
     }
-    if input.username.trim().is_empty() {
+    if username.is_empty() {
         return Err(AppError::Validation("username is required".into()));
     }
     if input.port == 0 {
-        return Err(AppError::Validation("port must be non-zero".into()));
+        return Err(AppError::Validation("port must be between 1 and 65535".into()));
     }
-    Ok(())
+    for (field, value) in [("server name", &name), ("host", &host), ("username", &username)] {
+        if value.chars().any(char::is_control) {
+            return Err(AppError::Validation(format!(
+                "{field} must not contain control characters"
+            )));
+        }
+    }
+    Ok(ServerInput {
+        name,
+        host,
+        port: input.port,
+        username,
+        auth_kind: input.auth_kind,
+    })
 }
 
 #[cfg(test)]
@@ -782,11 +808,54 @@ mod tests {
     }
 
     #[test]
+    fn poisoned_connection_lock_returns_storage_error() {
+        let s = Store::open_in_memory().unwrap();
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = s.conn.lock().unwrap();
+            panic!("poison sqlite connection");
+        }));
+
+        let err = s.list_servers().unwrap_err();
+        assert_eq!(err.code(), "storage");
+        assert!(err.to_string().contains("lock poisoned"));
+    }
+
+    #[test]
     fn validation_rejects_blank_name() {
         let s = Store::open_in_memory().unwrap();
         let mut i = input("x");
         i.name = "  ".into();
         assert_eq!(s.create_server(i).unwrap_err().code(), "validation");
+    }
+
+    #[test]
+    fn validation_trims_connection_fields_before_persisting() {
+        let s = Store::open_in_memory().unwrap();
+        let mut i = input("  web-prod  ");
+        i.host = "  10.0.0.4  ".into();
+        i.username = "  root  ".into();
+
+        let created = s.create_server(i).unwrap();
+        assert_eq!(created.name, "web-prod");
+        assert_eq!(created.host, "10.0.0.4");
+        assert_eq!(created.username, "root");
+    }
+
+    #[test]
+    fn validation_rejects_invalid_connection_fields() {
+        let s = Store::open_in_memory().unwrap();
+
+        let mut bad_host = input("x");
+        bad_host.host = "10.0.0.4\nssh bad".into();
+        assert_eq!(s.create_server(bad_host).unwrap_err().code(), "validation");
+
+        let mut bad_user = input("x");
+        bad_user.username = "root\0".into();
+        assert_eq!(s.create_server(bad_user).unwrap_err().code(), "validation");
+
+        let mut bad_port = input("x");
+        bad_port.port = 0;
+        assert_eq!(s.create_server(bad_port).unwrap_err().code(), "validation");
     }
 
     #[test]
@@ -924,5 +993,24 @@ mod tests {
         let got = s.get_server(&c.id).unwrap();
         assert_eq!(got.status, ServerStatus::Online);
         assert_eq!(got.facts.get("OS").unwrap(), "Ubuntu 22.04");
+    }
+
+    #[test]
+    fn set_server_status_missing_is_not_found() {
+        let s = Store::open_in_memory().unwrap();
+        assert_eq!(
+            s.set_server_status("missing", ServerStatus::Offline, None)
+                .unwrap_err()
+                .code(),
+            "not_found"
+        );
+
+        let facts = std::collections::BTreeMap::from([("OS".to_string(), "Ubuntu".to_string())]);
+        assert_eq!(
+            s.set_server_status("missing", ServerStatus::Online, Some(&facts))
+                .unwrap_err()
+                .code(),
+            "not_found"
+        );
     }
 }

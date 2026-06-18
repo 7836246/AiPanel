@@ -1,48 +1,64 @@
 //! Codex app-server 桥接的传输层 + turn / 工具回路。
 //!
-//! 把 `codex app-server` 作为子进程启动，并在其 stdio 上以**换行分隔的
-//! JSON-RPC 2.0** 通信（与 Codex 桌面 app 同一引擎:`codex-cli`）。AiPanel 通过它
+//! 把 `codex app-server` 作为子进程启动，并在其 stdio 上以**换行分隔 JSON**
+//! 通信（与 Codex 桌面 app 同一引擎:`codex-cli`）。AiPanel 通过它
 //! 驱动 agent；agent 只能经由 AiPanel 审核过的工具触达服务器,绝不走裸 SSH/shell
 //! （见 docs/SECURITY_MODEL.zh-Hans.md）。
 //!
 //! 协议字段对齐**真实** app-server（由 `codex app-server generate-json-schema` 导出):
 //! - 握手:`initialize` 请求 + `initialized` 通知;
 //! - `thread/start`(带 `sandbox`/`approvalPolicy`)→ 响应 `.thread.id`;
-//! - `turn/start`(`input:[{type:"text",text}]`)→ 响应 `.turn.id`;
+//! - `turn/start`(`input:[{type:"text",text,text_elements:[]}]`)→ 响应 `.turn.id`;
 //! - 事件流(通知):`item/agentMessage/delta` 累计文本、`turn/completed` 收尾、`error`;
-//! - **服务端请求**(需回 JSON-RPC response):`item/tool/call`(客户端工具,经 `on_tool`
+//! - **服务端请求**(需回同 id 响应):`item/tool/call`(客户端工具,经 `on_tool`
 //!   分发并回 `DynamicToolCallResponse`)、各 `*Approval`(codex 原生本地 shell/文件
 //!   操作的审批——**一律拒绝**,服务器只能经 AiPanel 工具触达)。
 
 use std::io::{BufRead, BufReader, Write};
+use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
-use std::time::Duration;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value};
 
 use crate::core::error::{AppError, AppResult};
 
-/// 构造单行 JSON-RPC 请求（以换行符结尾）。
+/// 构造单行 app-server 请求（以换行符结尾）。
+///
+/// codex app-server 的 stdio transport 使用 newline-delimited JSON。生成的
+/// protocol schema 把消息命名为 JSON-RPC，但真实 `ClientRequest` 不接受
+/// `jsonrpc: "2.0"` 字段；带上该字段会让 0.141.0 sidecar 忽略请求。
 pub fn build_request(id: u64, method: &str, params: Value) -> String {
-    let mut line = json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params }).to_string();
+    let mut line = json!({ "id": id, "method": method, "params": params }).to_string();
     line.push('\n');
     line
 }
 
-/// 给定一个 JSON-RPC 响应值，提取 `result`，或把 `error` 转成 AppError。
+fn text_input(text: &str) -> Value {
+    json!({ "type": "text", "text": text, "text_elements": [] })
+}
+
+/// 给定一个 app-server 响应值，提取 `result`，或把 `error` 转成 AppError。
 pub fn parse_response(value: &Value, id: u64) -> Option<AppResult<Value>> {
     if value.get("id").and_then(|v| v.as_u64()) != Some(id) {
         return None; // 不是我们要的响应（通知，或别的 id）
     }
     if let Some(err) = value.get("error") {
-        let msg = err.get("message").and_then(|v| v.as_str()).unwrap_or("unknown error");
-        return Some(Err(AppError::Provider(format!("codex JSON-RPC error: {msg}"))));
+        let msg = err
+            .get("message")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown error");
+        return Some(Err(AppError::Provider(format!(
+            "codex app-server 错误: {}",
+            user_facing_provider_error(msg)
+        ))));
     }
     Some(Ok(value.get("result").cloned().unwrap_or(Value::Null)))
 }
 
-/// 把一个 JSON-RPC 值序列化为单行(带换行)写入子进程 stdin。
+/// 把一个消息值序列化为单行(带换行)写入子进程 stdin。
 fn write_line(stdin: &mut ChildStdin, v: &Value) -> AppResult<()> {
     let mut s = v.to_string();
     s.push('\n');
@@ -65,11 +81,15 @@ const APPROVAL_METHODS: &[&str] = &[
 ];
 
 /// 从 app-server 收到的一条消息,归一化为本回路关心的语义。请求(带 `id`)必须回
-/// JSON-RPC response;通知(无 `id`)只观察。
+/// 同 id response;通知(无 `id`)只观察。
 #[derive(Debug, PartialEq)]
 pub enum Msg {
     /// 服务端请求:agent 调用客户端工具(`item/tool/call` / `DynamicToolCallParams`)。
-    ToolCall { id: Value, tool: String, args: Value },
+    ToolCall {
+        id: Value,
+        tool: String,
+        args: Value,
+    },
     /// 服务端请求:原生 shell/文件/提权审批 → 一律拒绝。
     Approval { id: Value },
     /// 其它未支持的服务端请求 → 回错误,避免 codex 卡住等待。
@@ -93,38 +113,155 @@ pub fn classify(v: &Value) -> Msg {
         // ---- 服务端请求(带 id,需回应)----
         (Some("item/tool/call"), Some(id)) => Msg::ToolCall {
             id: id.clone(),
-            tool: params.get("tool").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+            tool: params
+                .get("tool")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string(),
             args: params
                 .get("arguments")
                 .cloned()
                 .unwrap_or_else(|| params.get("args").cloned().unwrap_or(Value::Null)),
         },
         (Some(m), Some(id)) if APPROVAL_METHODS.contains(&m) => Msg::Approval { id: id.clone() },
-        (Some(m), Some(id)) => Msg::UnknownRequest { id: id.clone(), method: m.to_string() },
+        (Some(m), Some(id)) => Msg::UnknownRequest {
+            id: id.clone(),
+            method: m.to_string(),
+        },
         // ---- 通知(无 id,只观察)----
         (Some("item/agentMessage/delta"), None) => Msg::Text(
-            params.get("delta").and_then(|x| x.as_str()).unwrap_or("").to_string(),
-        ),
-        (Some("turn/completed"), None) => Msg::Complete(
             params
-                .get("turn")
-                .and_then(|t| t.get("items"))
-                .and_then(|items| items.as_array())
-                .and_then(|items| items.iter().rev().find_map(extract_item_text))
-                .or_else(|| params.get("text").and_then(|x| x.as_str()).map(|s| s.to_string())),
+                .get("delta")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string(),
         ),
-        (Some("error"), None) => Msg::Error(
-            params.get("message").and_then(|x| x.as_str()).unwrap_or("unknown").to_string(),
-        ),
+        (Some("rawResponseItem/completed"), None) => params
+            .get("item")
+            .and_then(extract_item_text)
+            .map(Msg::Text)
+            .unwrap_or(Msg::Other),
+        (Some("turn/completed"), None) => {
+            if let Some(m) = completed_error(&params) {
+                Msg::Error(format!("codex turn 失败: {m}"))
+            } else {
+                Msg::Complete(completed_text(&params))
+            }
+        }
+        (Some("error"), None) => {
+            if params.get("willRetry").and_then(|x| x.as_bool()) == Some(true) {
+                Msg::Other
+            } else {
+                Msg::Error(error_message(&params))
+            }
+        }
         _ => Msg::Other,
     }
 }
 
+fn error_message(params: &Value) -> String {
+    let message = params
+        .get("message")
+        .and_then(|x| x.as_str())
+        .or_else(|| {
+            params
+                .get("error")
+                .and_then(|e| e.get("message"))
+                .and_then(|x| x.as_str())
+        })
+        .unwrap_or("unknown");
+    let detail = params
+        .get("additionalDetails")
+        .and_then(|x| x.as_str())
+        .or_else(|| {
+            params
+                .get("error")
+                .and_then(|e| e.get("additionalDetails"))
+                .and_then(|x| x.as_str())
+        });
+    let raw = match detail {
+        Some(d) if !d.is_empty() => format!("{message}: {d}"),
+        _ => message.to_string(),
+    };
+    user_facing_provider_error(&raw)
+}
+
+fn user_facing_provider_error(message: &str) -> String {
+    let lower = message.to_ascii_lowercase();
+    if lower.contains("401") || lower.contains("unauthorized") || lower.contains("invalid api key")
+    {
+        return "模型供应商认证失败：请在设置里检查该供应商的 API Key、Base URL 与模型是否匹配。"
+            .to_string();
+    }
+    if lower.contains("api key")
+        || lower.contains("apikey")
+        || lower.contains("missing key")
+        || lower.contains("no auth")
+    {
+        return "模型供应商缺少 API Key：请在设置里为当前供应商保存有效密钥后重试。".to_string();
+    }
+    crate::core::sanitize::sanitize(message)
+}
+
+fn completed_error(params: &Value) -> Option<String> {
+    let turn = params.get("turn")?;
+    let status_type = turn
+        .get("status")
+        .and_then(|s| s.get("type"))
+        .and_then(|s| s.as_str());
+    if status_type != Some("failed") {
+        return None;
+    }
+    turn.get("error")
+        .and_then(|e| e.get("message"))
+        .and_then(|m| m.as_str())
+        .map(|s| s.to_string())
+        .or_else(|| Some("unknown failure".to_string()))
+}
+
+fn completed_text(params: &Value) -> Option<String> {
+    params
+        .get("turn")
+        .and_then(|t| t.get("items"))
+        .and_then(|items| items.as_array())
+        .and_then(|items| items.iter().rev().find_map(extract_item_text))
+        .or_else(|| params.get("item").and_then(extract_item_text))
+        .or_else(|| {
+            params
+                .get("text")
+                .and_then(|x| x.as_str())
+                .map(|s| s.to_string())
+        })
+}
+
 /// 从一个 turn item 里尽力抽取可读文本(用于 `turn/completed` 没有走增量时兜底)。
 fn extract_item_text(item: &Value) -> Option<String> {
+    if item.get("type").and_then(|t| t.as_str()) == Some("agentMessage") {
+        return item
+            .get("text")
+            .and_then(|x| x.as_str())
+            .map(|s| s.to_string());
+    }
+    if item.get("type").and_then(|t| t.as_str()) == Some("message") {
+        return item
+            .get("content")
+            .and_then(|c| c.as_array())
+            .map(|items| {
+                items
+                    .iter()
+                    .filter(|c| c.get("type").and_then(|t| t.as_str()) == Some("output_text"))
+                    .filter_map(|c| c.get("text").and_then(|t| t.as_str()))
+                    .collect::<String>()
+            })
+            .filter(|s| !s.is_empty());
+    }
     item.get("text")
         .and_then(|x| x.as_str())
-        .or_else(|| item.get("message").and_then(|m| m.get("text")).and_then(|x| x.as_str()))
+        .or_else(|| {
+            item.get("message")
+                .and_then(|m| m.get("text"))
+                .and_then(|x| x.as_str())
+        })
         .map(|s| s.to_string())
 }
 
@@ -158,7 +295,9 @@ pub fn drive_turn(
         }
         match recv(remaining) {
             Incoming::Closed => {
-                return Err(AppError::Provider("codex app-server 已退出（turn 未完成）".into()))
+                return Err(AppError::Provider(
+                    "codex app-server 已退出（turn 未完成）".into(),
+                ))
             }
             Incoming::Timeout => return Err(AppError::Provider("codex turn 响应超时".into())),
             Incoming::Line(v) => match classify(&v) {
@@ -168,7 +307,7 @@ pub fn drive_turn(
                         Err(e) => (false, e.to_string()),
                     };
                     send(json!({
-                        "jsonrpc": "2.0", "id": id,
+                        "id": id,
                         "result": {
                             "contentItems": [{ "type": "inputText", "text": text }],
                             "success": success,
@@ -177,11 +316,11 @@ pub fn drive_turn(
                 }
                 Msg::Approval { id } => {
                     // codex 原生 shell/文件/提权审批:一律拒绝。
-                    send(json!({ "jsonrpc": "2.0", "id": id, "result": { "decision": "denied" } }))?;
+                    send(json!({ "id": id, "result": { "decision": "denied" } }))?;
                 }
                 Msg::UnknownRequest { id, method } => {
                     send(json!({
-                        "jsonrpc": "2.0", "id": id,
+                        "id": id,
                         "error": { "code": -32601, "message": format!("AiPanel 不支持该请求: {method}") },
                     }))?;
                 }
@@ -205,19 +344,68 @@ pub struct CodexClient {
     stdin: ChildStdin,
     rx: Receiver<String>,
     next_id: u64,
+    codex_home: PathBuf,
+    stdout_tail: Arc<Mutex<Vec<String>>>,
+    stderr_tail: Arc<Mutex<Vec<String>>>,
 }
 
-/// codex 的私有 `CODEX_HOME`——把 codex 的会话/配置隔离到 AiPanel 专属目录,
+/// codex 的私有 `CODEX_HOME`——每个子进程使用独立临时目录，把 codex 的会话/配置
+/// 隔离到 AiPanel 专属空间，并避免不同测试/会话复用旧 session、插件缓存而互相污染。
 /// **绝不读取用户的 `~/.codex`**(否则会加载用户个人的 MCP 服务器等,既污染又有
 /// 安全风险;已对真实二进制验证:设了它就不会启动用户的 MCP)。
 fn isolated_codex_home() -> std::path::PathBuf {
-    let home = std::env::temp_dir().join("aipanel-codex-home");
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or_default();
+    let home = std::env::temp_dir().join(format!(
+        "aipanel-codex-home-{}-{nonce}",
+        std::process::id()
+    ));
     let _ = std::fs::create_dir_all(&home);
     home
 }
 
 /// codex 读取 API Key 的环境变量名(配进 model_providers.env_key,密钥经 env 传入、不进 argv)。
 const KEY_ENV: &str = "AIPANEL_OAI_KEY";
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
+
+fn toml_string(value: &str) -> String {
+    serde_json::to_string(value).unwrap_or_else(|_| "\"\"".to_string())
+}
+
+fn push_stderr_tail(buf: &Arc<Mutex<Vec<String>>>, line: String) {
+    push_tail(buf, line);
+}
+
+fn push_stdout_tail(buf: &Arc<Mutex<Vec<String>>>, line: String) {
+    push_tail(buf, line);
+}
+
+fn push_tail(buf: &Arc<Mutex<Vec<String>>>, line: String) {
+    if let Ok(mut guard) = buf.lock() {
+        guard.push(line);
+        if guard.len() > 20 {
+            guard.remove(0);
+        }
+    }
+}
+
+fn stderr_tail(buf: &Arc<Mutex<Vec<String>>>) -> Option<String> {
+    tail(buf)
+}
+
+fn stdout_tail(buf: &Arc<Mutex<Vec<String>>>) -> Option<String> {
+    tail(buf)
+}
+
+fn tail(buf: &Arc<Mutex<Vec<String>>>) -> Option<String> {
+    let guard = buf.lock().ok()?;
+    if guard.is_empty() {
+        return None;
+    }
+    Some(crate::core::sanitize::sanitize(&guard.join("\n")))
+}
 
 /// 把 AiPanel 自己作为 MCP 服务器注入 codex,让 codex 经 MCP 调用 AiPanel 的只读
 /// server-ops 工具。codex 会按此拉起 `<aipanel_exe> mcp-server`(带 `AIPANEL_DATA_DIR`
@@ -225,6 +413,7 @@ const KEY_ENV: &str = "AIPANEL_OAI_KEY";
 pub struct McpBridge {
     pub aipanel_exe: String,
     pub data_dir: String,
+    pub trace_path: Option<String>,
 }
 
 /// 启动 codex-app-server 所需的配置。base/key/model 复用用户的 OpenAI 兼容供应商配置。
@@ -273,7 +462,11 @@ pub fn resolve_codex_bin(configured: Option<&str>) -> String {
     };
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
-            for name in [exe_name.as_str(), "codex-app-server", "codex-app-server.exe"] {
+            for name in [
+                exe_name.as_str(),
+                "codex-app-server",
+                "codex-app-server.exe",
+            ] {
                 let c = dir.join(name);
                 if c.exists() {
                     return c.display().to_string();
@@ -281,7 +474,9 @@ pub fn resolve_codex_bin(configured: Option<&str>) -> String {
             }
         }
     }
-    let dev = Path::new(env!("CARGO_MANIFEST_DIR")).join("binaries").join(&exe_name);
+    let dev = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("binaries")
+        .join(&exe_name);
     if dev.exists() {
         return dev.display().to_string();
     }
@@ -295,15 +490,19 @@ impl CodexClient {
     /// 密钥经环境变量传入(不进 argv)。
     pub fn launch(cfg: &CodexLaunch) -> AppResult<Self> {
         let mut cmd = Command::new(&cfg.program);
-        cmd.env("CODEX_HOME", isolated_codex_home());
         if let Some(base) = &cfg.base_url {
             // 与探测/chat 共用同一套智能 /v1 规整(用户只填 host 时自动补 /v1)。
-            let base = super::normalize_openai_base(base);
-            cmd.arg("-c").arg("model_providers.aipanel.name=\"AiPanel\"");
-            cmd.arg("-c").arg(format!("model_providers.aipanel.base_url=\"{base}\""));
-            cmd.arg("-c").arg(format!("model_providers.aipanel.env_key=\"{KEY_ENV}\""));
-            cmd.arg("-c").arg("model_providers.aipanel.wire_api=\"responses\"");
-            cmd.arg("-c").arg("model_providers.aipanel.requires_openai_auth=false");
+            let base = super::normalize_openai_base(base)?;
+            cmd.arg("-c")
+                .arg("model_providers.aipanel.name=\"AiPanel\"");
+            cmd.arg("-c")
+                .arg(format!("model_providers.aipanel.base_url=\"{base}\""));
+            cmd.arg("-c")
+                .arg(format!("model_providers.aipanel.env_key=\"{KEY_ENV}\""));
+            cmd.arg("-c")
+                .arg("model_providers.aipanel.wire_api=\"responses\"");
+            cmd.arg("-c")
+                .arg("model_providers.aipanel.requires_openai_auth=false");
             cmd.arg("-c").arg("model_provider=\"aipanel\"");
         }
         if let Some(model) = &cfg.model {
@@ -313,29 +512,65 @@ impl CodexClient {
             cmd.env(KEY_ENV, key);
         }
         if let Some(b) = &cfg.mcp {
-            // 把 AiPanel 注册成 codex 的 MCP 服务器(路径用 TOML 字面串单引号,避免 Windows 反斜杠转义)。
-            cmd.arg("-c").arg(format!("mcp_servers.aipanel.command='{}'", b.aipanel_exe));
-            cmd.arg("-c").arg("mcp_servers.aipanel.args=[\"mcp-server\"]");
-            cmd.arg("-c").arg(format!("mcp_servers.aipanel.env.AIPANEL_DATA_DIR='{}'", b.data_dir));
+            // 把 AiPanel 注册成 codex 的 MCP 服务器。路径/env 值按 TOML 字符串编码，
+            // 避免空格、反斜杠或引号破坏 `-c key=value` 配置。
+            cmd.arg("-c").arg(format!(
+                "mcp_servers.aipanel.command={}",
+                toml_string(&b.aipanel_exe)
+            ));
+            cmd.arg("-c")
+                .arg("mcp_servers.aipanel.args=[\"mcp-server\"]");
+            cmd.arg("-c").arg(format!(
+                "mcp_servers.aipanel.env.AIPANEL_DATA_DIR={}",
+                toml_string(&b.data_dir)
+            ));
+            if let Some(trace_path) = &b.trace_path {
+                cmd.arg("-c").arg(format!(
+                    "mcp_servers.aipanel.env.AIPANEL_TRACE_PATH={}",
+                    toml_string(trace_path)
+                ));
+            }
             // 我方工具均为安全只读,自动批准,避免 codex 走审批(审批会被我们拒绝)。
-            cmd.arg("-c").arg("mcp_servers.aipanel.default_tools_approval_mode=\"auto\"");
+            cmd.arg("-c")
+                .arg("mcp_servers.aipanel.default_tools_approval_mode=\"auto\"");
         }
+        let codex_home = isolated_codex_home();
+        cmd.env("CODEX_HOME", &codex_home);
         let mut child = cmd
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .spawn()
-            .map_err(|e| AppError::Provider(format!("无法启动 codex-app-server（{}）: {e}", cfg.program)))?;
+            .map_err(|e| {
+                let _ = std::fs::remove_dir_all(&codex_home);
+                AppError::Provider(format!("无法启动 codex-app-server（{}）: {e}", cfg.program))
+            })?;
 
-        let stdin = child.stdin.take().ok_or_else(|| AppError::Provider("no stdin".into()))?;
-        let stdout = child.stdout.take().ok_or_else(|| AppError::Provider("no stdout".into()))?;
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| {
+                let _ = std::fs::remove_dir_all(&codex_home);
+                AppError::Provider("codex app-server stdin 不可用".into())
+            })?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| {
+                let _ = std::fs::remove_dir_all(&codex_home);
+                AppError::Provider("codex app-server stdout 不可用".into())
+            })?;
+        let stderr = child.stderr.take();
 
+        let stdout_tail = Arc::new(Mutex::new(Vec::new()));
+        let stdout_tail_for_thread = Arc::clone(&stdout_tail);
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
             let reader = BufReader::new(stdout);
             for line in reader.lines() {
                 match line {
                     Ok(l) => {
+                        push_stdout_tail(&stdout_tail_for_thread, l.clone());
                         if tx.send(l).is_err() {
                             break;
                         }
@@ -344,8 +579,43 @@ impl CodexClient {
                 }
             }
         });
+        let stderr_tail = Arc::new(Mutex::new(Vec::new()));
+        if let Some(stderr) = stderr {
+            let stderr_tail_for_thread = Arc::clone(&stderr_tail);
+            std::thread::spawn(move || {
+                let reader = BufReader::new(stderr);
+                for line in reader.lines().map_while(Result::ok) {
+                    push_stderr_tail(&stderr_tail_for_thread, line);
+                }
+            });
+        }
 
-        Ok(CodexClient { child, stdin, rx, next_id: 1 })
+        Ok(CodexClient {
+            child,
+            stdin,
+            rx,
+            next_id: 1,
+            codex_home,
+            stdout_tail,
+            stderr_tail,
+        })
+    }
+
+    fn provider_error_with_stderr(&self, message: &str) -> AppError {
+        let stdout = stdout_tail(&self.stdout_tail);
+        let stderr = stderr_tail(&self.stderr_tail);
+        match (stdout, stderr) {
+            (Some(stdout), Some(stderr)) => {
+                AppError::Provider(format!("{message}; codex stdout: {stdout}; codex stderr: {stderr}"))
+            }
+            (Some(stdout), None) => {
+                AppError::Provider(format!("{message}; codex stdout: {stdout}"))
+            }
+            (None, Some(stderr)) => {
+                AppError::Provider(format!("{message}; codex stderr: {stderr}"))
+            }
+            (None, None) => AppError::Provider(message.to_string()),
+        }
     }
 
     /// 发送一个请求，并（带超时地）等待匹配的响应。期间到达的通知会被跳过
@@ -362,7 +632,7 @@ impl CodexClient {
         loop {
             let remaining = deadline.saturating_duration_since(std::time::Instant::now());
             if remaining.is_zero() {
-                return Err(AppError::Provider("codex app-server 响应超时".into()));
+                return Err(self.provider_error_with_stderr("codex app-server 响应超时"));
             }
             match self.rx.recv_timeout(remaining) {
                 Ok(line) => {
@@ -373,10 +643,10 @@ impl CodexClient {
                     }
                 }
                 Err(RecvTimeoutError::Timeout) => {
-                    return Err(AppError::Provider("codex app-server 响应超时".into()))
+                    return Err(self.provider_error_with_stderr("codex app-server 响应超时"))
                 }
                 Err(RecvTimeoutError::Disconnected) => {
-                    return Err(AppError::Provider("codex app-server 已退出".into()))
+                    return Err(self.provider_error_with_stderr("codex app-server 已退出"))
                 }
             }
         }
@@ -391,10 +661,10 @@ impl CodexClient {
                 "clientInfo": { "name": "AiPanel", "version": env!("CARGO_PKG_VERSION") },
                 "capabilities": { "experimentalApi": true },
             }),
-            Duration::from_secs(15),
+            REQUEST_TIMEOUT,
         )?;
         // 通知服务端握手完成。
-        write_line(&mut self.stdin, &json!({ "jsonrpc": "2.0", "method": "initialized" }))?;
+        write_line(&mut self.stdin, &json!({ "method": "initialized" }))?;
         Ok(result)
     }
 
@@ -413,7 +683,7 @@ impl CodexClient {
         let thread = self.request(
             "thread/start",
             json!({ "sandbox": "read-only", "approvalPolicy": "on-request" }),
-            Duration::from_secs(15),
+            REQUEST_TIMEOUT,
         )?;
         let thread_id = thread
             .get("thread")
@@ -426,10 +696,10 @@ impl CodexClient {
         let id = self.next_id;
         self.next_id += 1;
         let turn = json!({
-            "jsonrpc": "2.0", "id": id, "method": "turn/start",
+            "id": id, "method": "turn/start",
             "params": {
                 "threadId": thread_id,
-                "input": [{ "type": "text", "text": user_msg }],
+                "input": [text_input(user_msg)],
             },
         });
         write_line(&mut self.stdin, &turn)?;
@@ -454,6 +724,7 @@ impl Drop for CodexClient {
     fn drop(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
+        let _ = std::fs::remove_dir_all(&self.codex_home);
     }
 }
 
@@ -462,14 +733,97 @@ mod tests {
     use super::*;
 
     #[test]
-    fn request_line_is_valid_jsonrpc() {
+    fn request_line_matches_app_server_protocol() {
         let line = build_request(7, "initialize", json!({"a": 1}));
         assert!(line.ends_with('\n'));
         let v: Value = serde_json::from_str(line.trim()).unwrap();
-        assert_eq!(v["jsonrpc"], "2.0");
+        assert!(v.get("jsonrpc").is_none());
         assert_eq!(v["id"], 7);
         assert_eq!(v["method"], "initialize");
         assert_eq!(v["params"]["a"], 1);
+    }
+
+    #[test]
+    fn text_input_matches_v2_schema() {
+        let input = text_input("hi");
+        assert_eq!(input["type"], "text");
+        assert_eq!(input["text"], "hi");
+        assert!(input["text_elements"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn toml_string_escapes_paths_for_cli_config() {
+        assert_eq!(toml_string("/tmp/Ai Panel"), "\"/tmp/Ai Panel\"");
+        assert_eq!(toml_string("/tmp/a'b\"c"), "\"/tmp/a'b\\\"c\"");
+    }
+
+    #[test]
+    fn stderr_tail_is_bounded_and_sanitized() {
+        let buf = Arc::new(Mutex::new(Vec::new()));
+        for i in 0..25 {
+            push_stderr_tail(&buf, format!("line {i} Bearer abcdefgh ip=10.0.0.{i}"));
+        }
+        let tail = stderr_tail(&buf).unwrap();
+        assert!(!tail.contains("line 0"));
+        assert!(tail.contains("line 24"));
+        assert!(!tail.contains("Bearer abcdefgh"));
+        assert!(tail.contains("Bearer [redacted]"));
+        assert!(tail.contains("[redacted-ip]"));
+    }
+
+    #[test]
+    fn stdout_tail_is_bounded_and_sanitized() {
+        let buf = Arc::new(Mutex::new(Vec::new()));
+        for i in 0..25 {
+            push_stdout_tail(&buf, format!("out {i} Bearer abcdefgh ip=10.0.0.{i}"));
+        }
+        let tail = stdout_tail(&buf).unwrap();
+        assert!(!tail.contains("out 0"));
+        assert!(tail.contains("out 24"));
+        assert!(!tail.contains("Bearer abcdefgh"));
+        assert!(tail.contains("Bearer [redacted]"));
+        assert!(tail.contains("[redacted-ip]"));
+    }
+
+    #[test]
+    fn invalid_launch_config_does_not_create_codex_home() {
+        let result = CodexClient::launch(&CodexLaunch {
+            program: "/definitely/missing/codex-app-server".into(),
+            base_url: Some("notaurl".into()),
+            api_key: None,
+            model: None,
+            mcp: None,
+        });
+        let err = match result {
+            Ok(_) => panic!("launch unexpectedly succeeded"),
+            Err(err) => err,
+        };
+        assert_eq!(err.code(), "provider");
+    }
+
+    #[test]
+    #[ignore = "requires the bundled codex-app-server sidecar"]
+    fn bundled_sidecar_initializes_with_real_protocol() {
+        let program = resolve_codex_bin(None);
+        assert!(
+            std::path::Path::new(&program).is_file(),
+            "missing sidecar: {program}"
+        );
+        let mut client = CodexClient::launch(&CodexLaunch {
+            program,
+            base_url: None,
+            api_key: None,
+            model: None,
+            mcp: None,
+        })
+        .unwrap();
+        let result = client
+            .initialize()
+            .unwrap_or_else(|e| panic!("bundled sidecar initialize failed: {e}"));
+        assert!(result["userAgent"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("Codex"));
     }
 
     #[test]
@@ -504,11 +858,15 @@ mod tests {
     #[test]
     fn classify_recognizes_real_protocol_shapes() {
         assert!(matches!(
-            classify(&json!({"id": 5, "method": "item/tool/call", "params": {"tool": "server.list", "callId": "c1", "arguments": {}}})),
+            classify(
+                &json!({"id": 5, "method": "item/tool/call", "params": {"tool": "server.list", "callId": "c1", "arguments": {}}})
+            ),
             Msg::ToolCall { .. }
         ));
         assert!(matches!(
-            classify(&json!({"id": 6, "method": "item/commandExecution/requestApproval", "params": {}})),
+            classify(
+                &json!({"id": 6, "method": "item/commandExecution/requestApproval", "params": {}})
+            ),
             Msg::Approval { .. }
         ));
         assert!(matches!(
@@ -519,24 +877,118 @@ mod tests {
             classify(&json!({"method": "item/agentMessage/delta", "params": {"delta": "hi"}})),
             Msg::Text("hi".into())
         );
-        assert_eq!(classify(&json!({"method": "turn/completed", "params": {}})), Msg::Complete(None));
-        assert!(matches!(classify(&json!({"method": "error", "params": {"message": "boom"}})), Msg::Error(_)));
-        assert_eq!(classify(&json!({"method": "thread/started", "params": {}})), Msg::Other);
+        assert_eq!(
+            classify(&json!({"method": "turn/completed", "params": {}})),
+            Msg::Complete(None)
+        );
+        assert!(matches!(
+            classify(&json!({"method": "error", "params": {"message": "boom"}})),
+            Msg::Error(_)
+        ));
+        assert_eq!(
+            classify(
+                &json!({"method": "error", "params": {"willRetry": true, "error": {"message": "Reconnecting"}}})
+            ),
+            Msg::Other
+        );
+        assert_eq!(
+            classify(
+                &json!({"method": "error", "params": {"error": {"message": "Unauthorized", "additionalDetails": "missing key"}}})
+            ),
+            Msg::Error(
+                "模型供应商认证失败：请在设置里检查该供应商的 API Key、Base URL 与模型是否匹配。"
+                    .into()
+            )
+        );
+        assert_eq!(
+            classify(&json!({"method": "thread/started", "params": {}})),
+            Msg::Other
+        );
+    }
+
+    #[test]
+    fn classify_extracts_v2_completed_agent_message() {
+        let msg = json!({
+            "method": "turn/completed",
+            "params": {
+                "turn": {
+                    "status": {"type": "completed"},
+                    "items": [
+                        {"type": "userMessage", "content": []},
+                        {"type": "agentMessage", "text": "最终结论", "phase": null, "memoryCitation": null}
+                    ]
+                }
+            }
+        });
+        assert_eq!(classify(&msg), Msg::Complete(Some("最终结论".into())));
+    }
+
+    #[test]
+    fn classify_extracts_raw_response_output_text() {
+        let msg = json!({
+            "method": "rawResponseItem/completed",
+            "params": {
+                "item": {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [
+                        {"type": "output_text", "text": "A"},
+                        {"type": "output_text", "text": "B"}
+                    ]
+                }
+            }
+        });
+        assert_eq!(classify(&msg), Msg::Text("AB".into()));
+    }
+
+    #[test]
+    fn classify_turn_completed_failed_as_error() {
+        let msg = json!({
+            "method": "turn/completed",
+            "params": {
+                "turn": {
+                    "status": {"type": "failed"},
+                    "error": {"message": "unauthorized"}
+                }
+            }
+        });
+        assert_eq!(
+            classify(&msg),
+            Msg::Error("codex turn 失败: unauthorized".into())
+        );
+    }
+
+    #[test]
+    fn provider_errors_are_actionable_and_sanitized() {
+        assert!(user_facing_provider_error("401 Unauthorized").contains("模型供应商认证失败"));
+        assert!(user_facing_provider_error("missing API key").contains("模型供应商缺少 API Key"));
+        let sanitized = user_facing_provider_error("connect to 10.0.0.4 failed");
+        assert!(sanitized.contains("[redacted-ip]"));
     }
 
     #[test]
     fn drive_turn_dispatches_tool_then_completes() {
         let events = vec![
-            Incoming::Line(json!({"id": 11, "method": "item/tool/call", "params": {"tool": "server.list", "callId": "c1", "arguments": {}}})),
-            Incoming::Line(json!({"method": "item/agentMessage/delta", "params": {"delta": "已检查"}})),
+            Incoming::Line(
+                json!({"id": 11, "method": "item/tool/call", "params": {"tool": "server.list", "callId": "c1", "arguments": {}}}),
+            ),
+            Incoming::Line(
+                json!({"method": "item/agentMessage/delta", "params": {"delta": "已检查"}}),
+            ),
             Incoming::Line(json!({"method": "turn/completed", "params": {}})),
         ];
         let mut sent: Vec<Value> = vec![];
         let mut tools: Vec<String> = vec![];
         let out = drive_turn(
-            |v| { sent.push(v); Ok(()) },
+            |v| {
+                sent.push(v);
+                Ok(())
+            },
             scripted(events),
-            |name, _args| { tools.push(name.to_string()); Ok(json!({ "ok": true })) },
+            |name, _args| {
+                tools.push(name.to_string());
+                Ok(json!({ "ok": true }))
+            },
             Duration::from_secs(5),
         )
         .unwrap();
@@ -546,18 +998,32 @@ mod tests {
         assert_eq!(sent.len(), 1);
         assert_eq!(sent[0]["id"], 11);
         assert_eq!(sent[0]["result"]["success"], true);
-        assert!(sent[0]["result"]["contentItems"][0]["text"].as_str().unwrap().contains("ok"));
+        assert!(sent[0]["result"]["contentItems"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("ok"));
     }
 
     #[test]
     fn drive_turn_denies_native_approval() {
         let events = vec![
-            Incoming::Line(json!({"id": 22, "method": "execCommandApproval", "params": {"command": "rm -rf /"}})),
+            Incoming::Line(
+                json!({"id": 22, "method": "execCommandApproval", "params": {"command": "rm -rf /"}}),
+            ),
             Incoming::Line(json!({"method": "item/agentMessage/delta", "params": {"delta": "ok"}})),
             Incoming::Line(json!({"method": "turn/completed", "params": {}})),
         ];
         let mut sent: Vec<Value> = vec![];
-        let out = drive_turn(|v| { sent.push(v); Ok(()) }, scripted(events), |_, _| Ok(json!(null)), Duration::from_secs(5)).unwrap();
+        let out = drive_turn(
+            |v| {
+                sent.push(v);
+                Ok(())
+            },
+            scripted(events),
+            |_, _| Ok(json!(null)),
+            Duration::from_secs(5),
+        )
+        .unwrap();
         assert_eq!(out, "ok");
         assert_eq!(sent.len(), 1);
         assert_eq!(sent[0]["id"], 22);
@@ -568,34 +1034,78 @@ mod tests {
     fn drive_turn_answers_unknown_request_with_error() {
         let events = vec![
             Incoming::Line(json!({"id": 33, "method": "some/unknown", "params": {}})),
-            Incoming::Line(json!({"method": "turn/completed", "params": {"turn": {"items": [{"text": "done"}]}}})),
+            Incoming::Line(
+                json!({"method": "turn/completed", "params": {"turn": {"items": [{"text": "done"}]}}}),
+            ),
         ];
         let mut sent: Vec<Value> = vec![];
-        let out = drive_turn(|v| { sent.push(v); Ok(()) }, scripted(events), |_, _| Ok(json!(null)), Duration::from_secs(5)).unwrap();
+        let out = drive_turn(
+            |v| {
+                sent.push(v);
+                Ok(())
+            },
+            scripted(events),
+            |_, _| Ok(json!(null)),
+            Duration::from_secs(5),
+        )
+        .unwrap();
         assert_eq!(out, "done"); // 没有增量时用 turn.items 文本兜底
         assert_eq!(sent[0]["id"], 33);
-        assert!(sent[0]["error"]["message"].as_str().unwrap().contains("some/unknown"));
+        assert!(sent[0]["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("some/unknown"));
     }
 
     #[test]
     fn drive_turn_accumulates_text_deltas() {
         let events = vec![
-            Incoming::Line(json!({"method": "item/agentMessage/delta", "params": {"delta": "foo"}})),
-            Incoming::Line(json!({"method": "item/agentMessage/delta", "params": {"delta": "bar"}})),
+            Incoming::Line(
+                json!({"method": "item/agentMessage/delta", "params": {"delta": "foo"}}),
+            ),
+            Incoming::Line(
+                json!({"method": "item/agentMessage/delta", "params": {"delta": "bar"}}),
+            ),
             Incoming::Line(json!({"method": "turn/completed", "params": {}})),
         ];
-        let out = drive_turn(|_| Ok(()), scripted(events), |_, _| Ok(json!(null)), Duration::from_secs(5)).unwrap();
+        let out = drive_turn(
+            |_| Ok(()),
+            scripted(events),
+            |_, _| Ok(json!(null)),
+            Duration::from_secs(5),
+        )
+        .unwrap();
         assert_eq!(out, "foobar");
     }
 
     #[test]
     fn drive_turn_surfaces_error_and_disconnect() {
-        let e1 = drive_turn(|_| Ok(()), scripted(vec![Incoming::Line(json!({"method": "error", "params": {"message": "boom"}}))]), |_, _| Ok(json!(null)), Duration::from_secs(5)).unwrap_err();
+        let e1 = drive_turn(
+            |_| Ok(()),
+            scripted(vec![Incoming::Line(
+                json!({"method": "error", "params": {"message": "boom"}}),
+            )]),
+            |_, _| Ok(json!(null)),
+            Duration::from_secs(5),
+        )
+        .unwrap_err();
         assert_eq!(e1.code(), "provider");
         assert!(e1.to_string().contains("boom"));
-        let e2 = drive_turn(|_| Ok(()), scripted(vec![Incoming::Closed]), |_, _| Ok(json!(null)), Duration::from_secs(5)).unwrap_err();
+        let e2 = drive_turn(
+            |_| Ok(()),
+            scripted(vec![Incoming::Closed]),
+            |_, _| Ok(json!(null)),
+            Duration::from_secs(5),
+        )
+        .unwrap_err();
         assert_eq!(e2.code(), "provider");
-        let e3 = drive_turn(|_| Ok(()), scripted(vec![Incoming::Timeout]), |_, _| Ok(json!(null)), Duration::from_secs(5)).unwrap_err();
+        let e3 = drive_turn(
+            |_| Ok(()),
+            scripted(vec![Incoming::Timeout]),
+            |_, _| Ok(json!(null)),
+            Duration::from_secs(5),
+        )
+        .unwrap_err();
         assert_eq!(e3.code(), "provider");
     }
 }

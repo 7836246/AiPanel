@@ -13,6 +13,9 @@ use crate::core::error::{AppError, AppResult};
 use crate::core::types::CredentialRef;
 
 /// AiPanel 在系统 Keychain 中为其条目所用的服务名（命名空间）。
+///
+/// 该值不是 macOS bundle identifier。保留历史服务名可避免改包名或应用 ID 时让
+/// 已保存的服务器/供应商凭据失联；新的 bundle identifier 见 `tauri.conf.json`。
 const SERVICE: &str = "com.aipanel.app";
 const BACKEND_ENV: &str = "AIPANEL_CREDENTIAL_BACKEND";
 
@@ -74,16 +77,27 @@ pub struct LocalMockCredentialStore {
 
 impl CredentialStore for LocalMockCredentialStore {
     fn put_secret(&self, reference: &CredentialRef, secret: &str) -> AppResult<()> {
-        self.map.lock().unwrap().insert(reference.0.clone(), secret.to_string());
+        self.map
+            .lock()
+            .map_err(|_| AppError::Credential("credential mock store lock poisoned".into()))?
+            .insert(reference.0.clone(), secret.to_string());
         Ok(())
     }
 
     fn get_secret(&self, reference: &CredentialRef) -> AppResult<Option<String>> {
-        Ok(self.map.lock().unwrap().get(&reference.0).cloned())
+        Ok(self
+            .map
+            .lock()
+            .map_err(|_| AppError::Credential("credential mock store lock poisoned".into()))?
+            .get(&reference.0)
+            .cloned())
     }
 
     fn delete_secret(&self, reference: &CredentialRef) -> AppResult<()> {
-        self.map.lock().unwrap().remove(&reference.0);
+        self.map
+            .lock()
+            .map_err(|_| AppError::Credential("credential mock store lock poisoned".into()))?
+            .remove(&reference.0);
         Ok(())
     }
 
@@ -126,6 +140,22 @@ mod tests {
     }
 
     #[test]
+    // mock 后端锁被 poison 时应返回 credential 错误，而不是让调用方 panic。
+    fn mock_lock_poison_returns_error() {
+        let store = LocalMockCredentialStore::default();
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = store.map.lock().unwrap();
+            panic!("poison mock store");
+        }));
+
+        let err = store
+            .get_secret(&CredentialRef::for_server("s1"))
+            .unwrap_err();
+        assert_eq!(err.code(), "credential");
+        assert!(err.to_string().contains("lock poisoned"));
+    }
+
+    #[test]
     // 删除不存在的密钥应当成功（幂等）
     fn delete_missing_is_ok() {
         let store = LocalMockCredentialStore::default();
@@ -136,5 +166,11 @@ mod tests {
     // mock 后端名应为 "mock"
     fn backend_name() {
         assert_eq!(LocalMockCredentialStore::default().backend(), "mock");
+    }
+
+    #[test]
+    // Keychain service 是凭据命名空间，不跟随 bundle identifier 重命名。
+    fn keychain_service_name_is_stable() {
+        assert_eq!(SERVICE, "com.aipanel.app");
     }
 }

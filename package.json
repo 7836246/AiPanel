@@ -11,6 +11,8 @@
     "tauri:dev": "pnpm --filter @aipanel/desktop tauri dev",
     "build": "pnpm --filter @aipanel/ui build && pnpm --filter @aipanel/desktop build",
     "build:ui": "pnpm --filter @aipanel/ui build",
+    "ci:check": "bash scripts/ci-check.sh",
+    "release:check": "bash scripts/release-check.sh",
     "typecheck": "pnpm -r typecheck",
     "clean": "pnpm -r exec rm -rf dist"
   },

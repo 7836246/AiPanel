@@ -1,4 +1,12 @@
-import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import {
+  lazy,
+  Suspense,
+  useEffect,
+  useRef,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+  type ReactNode,
+} from "react";
 import {
   ArrowUp,
   Check as CheckIcon,
@@ -44,15 +52,10 @@ import {
 import AddServerDialog from "./AddServerDialog";
 import ConfirmExecuteDialog from "./ConfirmExecuteDialog";
 import EditServerDialog from "./EditServerDialog";
-import SettingsPanel, { READONLY_DEFAULT_KEY } from "./SettingsPanel";
-import AuditView from "./AuditView";
-import Dashboard from "./Dashboard";
 import ServerOverview from "./ServerOverview";
 import ServerMonitor from "./ServerMonitor";
-import FileBrowser from "./FileBrowser";
-import DockerDeployPanel from "./DockerDeployPanel";
-import TerminalSession from "./TerminalSession";
 import CommandPalette, { type PaletteCommand } from "./CommandPalette";
+import { READONLY_DEFAULT_KEY } from "./settingsKeys";
 import {
   isTauri,
   cancelRun,
@@ -89,9 +92,23 @@ import {
 } from "../lib/api";
 import "./codex-console.css";
 
+const SettingsPanel = lazy(() => import("./SettingsPanel"));
+const AuditView = lazy(() => import("./AuditView"));
+const Dashboard = lazy(() => import("./Dashboard"));
+const DockerDeployPanel = lazy(() => import("./DockerDeployPanel"));
+const FileBrowser = lazy(() => import("./FileBrowser"));
+const TerminalSession = lazy(() => import("./TerminalSession"));
+
 // 从后端错误或任意异常中提取可展示的错误文本。
 const errMsg = (e: unknown): string =>
   e && typeof e === "object" && "message" in e ? (e as AppError).message : String(e);
+
+function executionOutputLines(ex: CommandExecution): { text: string; tone: TerminalLine["tone"] }[] {
+  const chunks: { text: string; tone: TerminalLine["tone"] }[] = [];
+  for (const l of ex.stdout.split("\n")) if (l.trim()) chunks.push({ text: l, tone: ex.exitCode === 0 ? "default" : "danger" });
+  for (const l of ex.stderr.split("\n")) if (l.trim()) chunks.push({ text: l, tone: "danger" });
+  return chunks;
+}
 
 const nowIso = () => new Date().toISOString();
 // 生成本地任务 ID，优先用 crypto.randomUUID，缺失时回退到时间戳+随机串。
@@ -173,6 +190,39 @@ function NavItem({ icon, label, kbd, active, onClick, badge }: {
           {badge}
         </span>
       ) : kbd ? <span className="text-[11.5px] text-fg-subtle">{kbd}</span> : null}
+    </div>
+  );
+}
+
+function PanelLoading({ label = "加载中" }: { label?: string }) {
+  return (
+    <div className="flex min-h-0 flex-1 items-center justify-center gap-2 text-[13px] text-fg-subtle">
+      <Spinner size="sm" />
+      {label}
+    </div>
+  );
+}
+
+function ServersLoadState({
+  loading,
+  error,
+  onRetry,
+}: {
+  loading: boolean;
+  error: string | null;
+  onRetry: () => void;
+}) {
+  if (loading) return <PanelLoading label="加载服务器" />;
+  if (!error) return null;
+  return (
+    <div className="flex min-h-0 flex-1 items-center justify-center px-6">
+      <div className="max-w-md rounded-md border border-risk-blocked/40 bg-risk-blocked/10 p-4 text-[13px] text-risk-blocked">
+        <div className="font-semibold">服务器列表加载失败</div>
+        <div className="mt-1 break-words text-[12.5px] leading-relaxed">{error}</div>
+        <Button variant="secondary" size="sm" className="mt-3" onClick={onRetry}>
+          <RefreshCw size={13} /> 重试
+        </Button>
+      </div>
     </div>
   );
 }
@@ -430,6 +480,8 @@ export default function CodexConsole() {
   const [draftReview, setDraftReview] = useState<RiskReview | null>(null);
   const [reviewing, setReviewing] = useState(false);
   const [servers, setServers] = useState<ServerProfile[]>([]);
+  const [serversLoading, setServersLoading] = useState(true);
+  const [serversError, setServersError] = useState<string | null>(null);
   // 正在做 SSH 连通性探测的服务器集合：用于在状态点处显示「检测中」反馈，避免「点了像没反应」。
   const [probing, setProbing] = useState<Set<string>>(new Set());
   const [selectedServerId, setSelectedServerId] = useState<string | null>(null);
@@ -523,10 +575,30 @@ export default function CodexConsole() {
     (s) => !serverQuery || s.name.toLowerCase().includes(serverQuery.toLowerCase()) || s.host.includes(serverQuery)
   );
 
+  async function loadServers({ silent = false }: { silent?: boolean } = {}) {
+    const reqId = ++serversReqRef.current;
+    if (!silent) setServersLoading(true);
+    try {
+      const next = await listServers();
+      if (serversReqRef.current !== reqId) return;
+      setServers(next);
+      setSelectedServerId((cur) => cur ?? next[0]?.id ?? null);
+      setServersError(null);
+    } catch (e) {
+      if (serversReqRef.current !== reqId) return;
+      const msg = errMsg(e);
+      setServersError(msg);
+      if (silent) push("danger", `刷新服务器失败: ${msg}`);
+    } finally {
+      if (serversReqRef.current === reqId && !silent) setServersLoading(false);
+    }
+  }
+
   useEffect(() => {
-    listServers().then((s) => { setServers(s); setSelectedServerId((cur) => cur ?? s[0]?.id ?? null); }).catch(() => {});
-    listProviders().then(setProviders).catch(() => {});
-    getModelSelectionPolicy().then(setPolicy).catch(() => {});
+    void loadServers();
+    listProviders().then(setProviders).catch((e) => push("danger", `加载模型供应商失败: ${errMsg(e)}`));
+    getModelSelectionPolicy().then(setPolicy).catch((e) => push("danger", `加载模型策略失败: ${errMsg(e)}`));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // 保持 currentRef 与 current 同步。
@@ -545,7 +617,10 @@ export default function CodexConsole() {
     setCurrent(null);
     setTermLines([]);
     if (!selectedServerId) { setTasks([]); return; }
-    listTasks(selectedServerId).then(setTasks).catch(() => setTasks([]));
+    listTasks(selectedServerId).then(setTasks).catch((e) => {
+      setTasks([]);
+      push("danger", `加载运行历史失败: ${errMsg(e)}`);
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedServerId]);
 
@@ -562,7 +637,7 @@ export default function CodexConsole() {
   useEffect(() => {
     if (!isTauri()) return;
     const tick = () => {
-      if (document.visibilityState === "visible" && servers.length > 0) refreshAll();
+      if (document.visibilityState === "visible" && !serversError && servers.length > 0) refreshAll();
     };
     const iv = setInterval(tick, 60000);
     return () => clearInterval(iv);
@@ -571,7 +646,7 @@ export default function CodexConsole() {
 
   // 进入「概览」时自动刷新一次所有服务器连通状态，保证在线/离线计数实时。
   useEffect(() => {
-    if (view === "dashboard" && servers.length > 0) refreshAll();
+    if (view === "dashboard" && !serversError && servers.length > 0) refreshAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view]);
 
@@ -584,7 +659,41 @@ export default function CodexConsole() {
   }, [selectedServerId]);
 
   async function refreshTasks() {
-    if (selectedServerId) setTasks(await listTasks(selectedServerId).catch(() => []));
+    if (!selectedServerId) return;
+    try {
+      setTasks(await listTasks(selectedServerId));
+    } catch (e) {
+      setTasks([]);
+      push("danger", `刷新运行历史失败: ${errMsg(e)}`);
+    }
+  }
+
+  async function renameTaskRecord(task: TaskRecord) {
+    const name = window.prompt("重命名此运行", task.title)?.trim();
+    if (!name) return;
+    const updated = { ...task, title: name, updatedAt: nowIso() };
+    if (currentRef.current?.id === task.id) setCurrent(updated);
+    try {
+      await saveTask(updated);
+      await refreshTasks();
+    } catch (e) {
+      push("danger", `重命名失败: ${errMsg(e)}`);
+      if (currentRef.current?.id === task.id) setCurrent(task);
+    }
+  }
+
+  async function deleteTaskRecord(id: string) {
+    if (currentRef.current?.id === id) {
+      cancelBackend();
+      setRunning(false);
+    }
+    try {
+      await deleteTask(id);
+      if (currentRef.current?.id === id) setCurrent(null);
+      await refreshTasks();
+    } catch (e) {
+      push("danger", `删除运行记录失败: ${errMsg(e)}`);
+    }
   }
 
   // 打开一条历史任务：先取消任何进行中的运行（避免其回调冲掉刚打开的内容），
@@ -604,7 +713,8 @@ export default function CodexConsole() {
     const lines: TerminalLine[] = [];
     for (const ex of executions) {
       lines.push({ text: `$ ${ex.command}`, tone: "prompt" });
-      for (const l of (ex.stdout || ex.stderr).split("\n")) if (l.trim()) lines.push({ text: l, tone: ex.exitCode === 0 ? "default" : "danger" });
+      if (ex.exitCode === -1) lines.push({ text: "未获得正常退出码，命令可能未启动或连接在执行前中断。", tone: "danger" });
+      for (const l of executionOutputLines(ex)) lines.push(l);
     }
     if (summary) { lines.push({ text: "", tone: "muted" }); lines.push({ text: summary, tone: "muted" }); }
     return lines;
@@ -818,8 +928,12 @@ export default function CodexConsole() {
     setDraftSteps(null);
     setDraftReview(null);
     setReviewing(false);
-    await saveTask(updated).catch(() => {});
-    await refreshTasks();
+    try {
+      await saveTask(updated);
+      await refreshTasks();
+    } catch (e) {
+      push("danger", `保存计划编辑失败: ${errMsg(e)}`);
+    }
   }
 
   // 草稿步骤的增删改/移动:更新草稿并触发重判。
@@ -867,6 +981,7 @@ export default function CodexConsole() {
   async function execute(confirmed: boolean, doubleConfirmed: boolean, review?: RiskReview) {
     setConfirmOpen(false);
     if (!current?.plan || !confirmed) return;
+    const baseTask = current;
     const plan = current.plan;
     const myId = ++runIdRef.current;
     setRunning(true);
@@ -876,7 +991,19 @@ export default function CodexConsole() {
     setTermLines([...lines]);
     const cancelId = newId();
     cancelIdRef.current = cancelId;
+    const runningTask: TaskRecord = {
+      ...baseTask,
+      plan,
+      riskReview: review ?? baseTask.riskReview,
+      executions: [],
+      status: "running",
+      summary: undefined,
+      updatedAt: nowIso(),
+    };
+    setCurrent(runningTask);
     try {
+      await saveTask(runningTask);
+      await refreshTasks();
       const rec = await runConfirmedPlanStream(plan, { confirmed, doubleConfirmed, readOnlyMode, runId: cancelId }, (ev) => {
         if (runIdRef.current !== myId) return;
         if (ev.type === "step") {
@@ -889,7 +1016,7 @@ export default function CodexConsole() {
       // 即使期间被取消/切走（runId 不再匹配），也把后端返回的最终结果落库，
       // 避免历史里的计划任务停留在「待确认」、已执行步骤丢失。
       const done: TaskRecord = {
-        ...current, plan, riskReview: review ?? current.riskReview, executions: rec.executions,
+        ...runningTask, plan, riskReview: review ?? runningTask.riskReview, executions: rec.executions,
         summary: rec.summary, status: rec.status, updatedAt: nowIso(),
       };
       await saveTask(done);
@@ -901,11 +1028,24 @@ export default function CodexConsole() {
       push(rec.status === "completed" ? "success" : "danger", rec.status === "completed" ? "计划执行完成" : "计划执行未全部成功");
     } catch (e) {
       if (runIdRef.current !== myId) return;
-      lines.push({ text: `执行失败: ${errMsg(e)}`, tone: "danger" });
+      const msg = errMsg(e);
+      lines.push({ text: `执行失败: ${msg}`, tone: "danger" });
       setTermLines([...lines]);
-      push("danger", `执行失败: ${errMsg(e)}`);
+      const failedTask: TaskRecord = {
+        ...runningTask,
+        status: "failed",
+        summary: msg,
+        updatedAt: nowIso(),
+      };
+      await saveTask(failedTask).catch((saveErr) => push("danger", `保存失败状态失败: ${errMsg(saveErr)}`));
+      if (currentRef.current?.id === failedTask.id) setCurrent(failedTask);
+      await refreshTasks();
+      push("danger", `执行失败: ${msg}`);
     } finally {
-      if (runIdRef.current === myId) setRunning(false);
+      if (runIdRef.current === myId) {
+        cancelIdRef.current = "";
+        setRunning(false);
+      }
     }
   }
 
@@ -914,12 +1054,12 @@ export default function CodexConsole() {
   async function stop() {
     cancelBackend();
     setRunning(false);
-    setStepStatus((prev) => prev.map((s) => (s === "running" ? "pending" : s)));
+    setStepStatus((prev) => prev.map((s) => (s === "running" ? "failed" : s)));
     setTermLines((prev) => [...prev, { text: "⏹ 已取消", tone: "muted" }]);
     const cur = currentRef.current;
     if (cur && cur.status === "running") {
-      const cancelled: TaskRecord = { ...cur, status: "failed", summary: cur.summary ?? "已取消", updatedAt: nowIso() };
-      await saveTask(cancelled).catch(() => {});
+      const cancelled: TaskRecord = { ...cur, status: "failed", summary: "已取消", updatedAt: nowIso() };
+      await saveTask(cancelled).catch((e) => push("danger", `保存取消状态失败: ${errMsg(e)}`));
       if (currentRef.current?.id === cancelled.id) setCurrent(cancelled);
       await refreshTasks();
     }
@@ -1078,7 +1218,20 @@ export default function CodexConsole() {
             />
           )}
 
-          {servers.length === 0 ? (
+          {serversLoading ? (
+            <div className="flex items-center gap-2 px-2.5 py-5 text-[12.5px] text-fg-subtle">
+              <Spinner size="sm" />
+              加载服务器…
+            </div>
+          ) : serversError ? (
+            <div className="mx-2 mt-2 rounded-md border border-risk-blocked/40 bg-risk-blocked/10 p-2.5 text-[12px] text-risk-blocked">
+              <div className="font-medium">服务器加载失败</div>
+              <div className="mt-1 line-clamp-4 break-words">{serversError}</div>
+              <button className="mt-2 inline-flex items-center gap-1 underline" onClick={() => void loadServers()}>
+                <RefreshCw size={12} /> 重试
+              </button>
+            </div>
+          ) : servers.length === 0 ? (
             <div className="flex flex-col items-center gap-1.5 px-2.5 py-6 text-center">
               <ServerIconLucide size={22} className="text-fg-subtle" strokeWidth={1.75} />
               <div className="text-[12.5px] text-fg-subtle">还没有服务器,点 ＋ 添加</div>
@@ -1098,7 +1251,18 @@ export default function CodexConsole() {
                         { label: "Docker 部署", onClick: () => { setSelectedServerId(srv.id); setView("deploy"); } },
                         { label: srv.favorite ? "取消收藏" : "收藏置顶", onClick: () => toggleFavorite(srv.id, !srv.favorite) },
                         { label: "编辑服务器", onClick: () => setEditing(srv) },
-                        { label: "删除服务器", danger: true, onClick: () => { if (window.confirm(`删除服务器「${srv.name}」?`)) void deleteServer(srv.id).then(() => { setServers((prev) => prev.filter((s) => s.id !== srv.id)); if (selectedServerId === srv.id) setSelectedServerId(null); push("success", "服务器已删除"); }).catch((e) => push("danger", errMsg(e))); } },
+                        { label: "删除服务器", danger: true, onClick: () => {
+                          if (!window.confirm(`删除服务器「${srv.name}」?`)) return;
+                          void deleteServer(srv.id)
+                            .then(() => {
+                              setServers((prev) => prev.filter((s) => s.id !== srv.id));
+                              setServersError(null);
+                              setServersLoading(false);
+                              if (selectedServerId === srv.id) setSelectedServerId(null);
+                              push("success", "服务器已删除");
+                            })
+                            .catch((e) => push("danger", errMsg(e)));
+                        } },
                       ])
                     }
                     className={`group flex cursor-pointer items-center gap-2.5 rounded-md px-2.5 py-1.5 text-[13.5px] transition-colors ${isSel ? "bg-selected text-fg" : "text-fg-muted hover:bg-hover"}`}
@@ -1131,15 +1295,15 @@ export default function CodexConsole() {
                             onContextMenu={(e) =>
                               openCtx(e, [
                                 { label: "打开", onClick: () => openTask(t) },
-                                { label: "重命名", onClick: () => { const name = window.prompt("重命名此运行", t.title)?.trim(); if (!name) return; const u = { ...t, title: name, updatedAt: nowIso() }; if (currentRef.current?.id === t.id) setCurrent(u); void saveTask(u).then(refreshTasks).catch(() => {}); } },
-                                { label: "删除", danger: true, onClick: () => { void (async () => { if (currentRef.current?.id === t.id) { cancelBackend(); setRunning(false); } await deleteTask(t.id); if (currentRef.current?.id === t.id) setCurrent(null); await refreshTasks(); })(); } },
+                                { label: "重命名", onClick: () => { void renameTaskRecord(t); } },
+                                { label: "删除", danger: true, onClick: () => { void deleteTaskRecord(t.id); } },
                               ])
                             }
                             className={`group flex cursor-pointer items-center gap-2 rounded-md px-2.5 py-1.5 text-[13px] transition-colors ${current?.id === t.id ? "bg-selected" : "text-fg-muted hover:bg-hover"}`}
                           >
                             <span className="flex-none text-fg-subtle" title={t.kind}>{KIND_GLYPH[t.kind] ?? <ClipboardList size={13} />}</span>
                             <span className="min-w-0 flex-1 truncate">{t.title}</span>
-                            <IconButton aria-label="删除记录" size="sm" className="opacity-0 transition-opacity group-hover:opacity-100" onClick={async (e) => { e.stopPropagation(); if (currentRef.current?.id === t.id) { cancelBackend(); setRunning(false); } await deleteTask(t.id); if (currentRef.current?.id === t.id) setCurrent(null); await refreshTasks(); }}>
+                            <IconButton aria-label="删除记录" size="sm" className="opacity-0 transition-opacity group-hover:opacity-100" onClick={(e) => { e.stopPropagation(); void deleteTaskRecord(t.id); }}>
                               <XIcon size={12} />
                             </IconButton>
                           </div>
@@ -1205,11 +1369,7 @@ export default function CodexConsole() {
                             className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[13px] text-fg-muted transition-colors hover:bg-hover hover:text-fg"
                             onClick={() => {
                               setTitleMenuOpen(false);
-                              const name = window.prompt("重命名此运行", current.title)?.trim();
-                              if (!name) return;
-                              const updated = { ...current, title: name, updatedAt: nowIso() };
-                              setCurrent(updated);
-                              void saveTask(updated).then(refreshTasks).catch(() => {});
+                              void renameTaskRecord(current);
                             }}
                           >
                             重命名
@@ -1220,8 +1380,7 @@ export default function CodexConsole() {
                               setTitleMenuOpen(false);
                               if (!window.confirm("删除此运行记录?")) return;
                               const id = current.id;
-                              setCurrent(null);
-                              void deleteTask(id).then(refreshTasks).catch(() => {});
+                              void deleteTaskRecord(id);
                             }}
                           >
                             删除此运行
@@ -1305,29 +1464,39 @@ export default function CodexConsole() {
         </div>
 
         {view === "audit" ? (
-          <AuditView onNotify={push} />
+          <Suspense fallback={<PanelLoading label="加载审计" />}>
+            <AuditView onNotify={push} />
+          </Suspense>
         ) : view === "settings" ? (
-          <SettingsPanel />
+          <Suspense fallback={<PanelLoading label="加载设置" />}>
+            <SettingsPanel />
+          </Suspense>
         ) : view === "deploy" ? (
           selected ? (
-            <DockerDeployPanel serverId={selected.id} onPlan={(plan, title) => adoptPlan(plan, title)} />
+            <Suspense fallback={<PanelLoading label="加载部署面板" />}>
+              <DockerDeployPanel serverId={selected.id} onPlan={(plan, title) => adoptPlan(plan, title)} />
+            </Suspense>
           ) : (
             <div className="flex min-h-0 flex-1 items-center justify-center text-[13px] text-fg-subtle">
               先在左侧选择一台服务器,再进行 Docker 部署
             </div>
           )
+        ) : serversLoading || serversError ? (
+          <ServersLoadState loading={serversLoading} error={serversError} onRetry={() => void loadServers()} />
         ) : view === "dashboard" ? (
           servers.length === 0 ? (
             <FirstRun onAdd={() => setAddOpen(true)} />
           ) : (
-            <Dashboard
-              servers={servers}
-              selectedServerId={selectedServerId}
-              onSelect={(id) => { setSelectedServerId(id); setView("console"); }}
-              onToggleFavorite={toggleFavorite}
-              onRefreshAll={refreshAll}
-              refreshing={refreshing}
-            />
+            <Suspense fallback={<PanelLoading label="加载概览" />}>
+              <Dashboard
+                servers={servers}
+                selectedServerId={selectedServerId}
+                onSelect={(id) => { setSelectedServerId(id); setView("console"); }}
+                onToggleFavorite={toggleFavorite}
+                onRefreshAll={refreshAll}
+                refreshing={refreshing}
+              />
+            </Suspense>
           )
         ) : servers.length === 0 ? (
           <FirstRun onAdd={() => setAddOpen(true)} />
@@ -1506,7 +1675,11 @@ export default function CodexConsole() {
                     <ModelPicker
                       key={aiProvider?.id ?? "none"}
                       provider={aiProvider}
-                      onChanged={() => listProviders().then(setProviders).catch(() => {})}
+                      onChanged={() =>
+                        listProviders()
+                          .then(setProviders)
+                          .catch((e) => push("danger", `刷新模型供应商失败: ${errMsg(e)}`))
+                      }
                       onConfigure={() => setView("settings")}
                     />
                     <button aria-label="发送" title={!selectedServerId ? "先选择左侧服务器" : !intentValue.trim() ? "请输入运维任务描述" : running ? "运行中…" : "生成计划"} onClick={generatePlan} className="flex h-[30px] w-[30px] flex-none items-center justify-center rounded-full bg-brand text-brand-fg transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/60 disabled:opacity-40" disabled={!intentValue.trim() || !selectedServerId || running}>
@@ -1554,7 +1727,9 @@ export default function CodexConsole() {
                   </div>
                   <aside className="flex min-h-0 min-w-0 flex-none flex-col overflow-hidden border-l border-border" style={{ width: filesW }}>
                     {selected ? (
-                      <FileBrowser key={selected.id} serverId={selected.id} serverName={selected.name} />
+                      <Suspense fallback={<PanelLoading label="加载文件面板" />}>
+                        <FileBrowser key={selected.id} serverId={selected.id} serverName={selected.name} />
+                      </Suspense>
                     ) : (
                       <div className="flex flex-1 items-center justify-center px-4 text-center text-[12.5px] text-fg-subtle">
                         选择左侧服务器后查看文件
@@ -1577,7 +1752,9 @@ export default function CodexConsole() {
                 </div>
                 <div className="flex min-h-0 flex-none flex-col" style={{ height: shellH }}>
                   {selected ? (
-                    <TerminalSession key={selected.id} serverId={selected.id} serverName={selected.name} connLabel={`${selected.username}@${selected.host}`} />
+                    <Suspense fallback={<PanelLoading label="加载终端" />}>
+                      <TerminalSession key={selected.id} serverId={selected.id} serverName={selected.name} connLabel={`${selected.username}@${selected.host}`} />
+                    </Suspense>
                   ) : (
                     <div className="flex flex-1 items-center justify-center text-[12.5px] text-fg-subtle">
                       选择左侧服务器后打开终端
@@ -1590,13 +1767,29 @@ export default function CodexConsole() {
         )}
       </main>
 
-      <AddServerDialog open={addOpen} onClose={() => setAddOpen(false)} onCreated={(s) => { setServers((prev) => [...prev, s]); setSelectedServerId(s.id); push("success", `服务器「${s.name}」已添加`); }} />
+      <AddServerDialog
+        open={addOpen}
+        onClose={() => setAddOpen(false)}
+        onCreated={(s) => {
+          setServers((prev) => [...prev, s]);
+          setServersError(null);
+          setServersLoading(false);
+          setSelectedServerId(s.id);
+          push("success", `服务器「${s.name}」已添加`);
+        }}
+      />
       <EditServerDialog
         open={editing !== null}
         server={editing}
         onClose={() => setEditing(null)}
         onSaved={(u) => { setServers((prev) => prev.map((s) => (s.id === u.id ? u : s))); push("success", "服务器已保存"); }}
-        onDeleted={(id) => { setServers((prev) => prev.filter((s) => s.id !== id)); setSelectedServerId((cur) => (cur === id ? null : cur)); push("success", "服务器已删除"); }}
+        onDeleted={(id) => {
+          setServers((prev) => prev.filter((s) => s.id !== id));
+          setServersError(null);
+          setServersLoading(false);
+          setSelectedServerId((cur) => (cur === id ? null : cur));
+          push("success", "服务器已删除");
+        }}
       />
       <ConfirmExecuteDialog open={confirmOpen} plan={current?.plan ?? null} review={confirmReview} onClose={() => setConfirmOpen(false)} onConfirm={(c, d) => execute(c, d, confirmReview ?? undefined)} />
 

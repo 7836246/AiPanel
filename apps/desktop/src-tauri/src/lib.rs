@@ -102,6 +102,7 @@ pub fn run() {
             commands::search::search_audit_records,
             commands::search::search_tasks,
             commands::search::export_audit_json,
+            commands::search::export_audit_json_to_path,
             commands::list_audit_records,
             commands::get_audit_record,
             commands::create_plan,

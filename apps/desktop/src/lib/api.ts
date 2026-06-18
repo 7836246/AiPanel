@@ -553,10 +553,23 @@ export async function searchTasks(serverId: string | undefined, query: string, l
   return invoke<TaskRecord[]>("search_tasks", { serverId, query, limit });
 }
 
-/** 导出全部审计记录为格式化 JSON 字符串（已脱敏，可安全写盘/分享）。 */
-export async function exportAuditJson(): Promise<string> {
-  if (!isTauri()) return JSON.stringify([], null, 2);
-  return invoke<string>("export_audit_json", {});
+/** 导出全部审计记录为格式化 JSON 文件（已脱敏，可安全写盘/分享）。取消返回 false。 */
+export async function exportAuditJson(): Promise<boolean> {
+  const defaultPath = `aipanel-audit-${new Date().toISOString().slice(0, 10)}.json`;
+  if (!isTauri()) {
+    const blob = new Blob([JSON.stringify([], null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = defaultPath;
+    a.click();
+    URL.revokeObjectURL(url);
+    return true;
+  }
+  const dest = await saveDialog({ defaultPath, title: "导出审计 JSON" });
+  if (!dest) return false;
+  await invoke<void>("export_audit_json_to_path", { path: dest });
+  return true;
 }
 
 export async function serverDoctorPlan(id: string): Promise<Plan> {
@@ -761,16 +774,21 @@ export async function listProviders(): Promise<ProviderConfig[]> {
   return invoke<ProviderConfig[]>("list_providers");
 }
 
-export async function saveProvider(input: ProviderInput, apiKey?: string): Promise<ProviderConfig> {
+export async function saveProvider(
+  input: ProviderInput,
+  apiKey?: string,
+  clearApiKey = false,
+): Promise<ProviderConfig> {
   if (!isTauri()) {
+    const id = input.id ?? `mock-${Date.now()}`;
     const cfg: ProviderConfig = {
-      id: input.id ?? `mock-${Date.now()}`,
+      id,
       name: input.name,
       kind: input.kind,
       baseUrl: input.baseUrl,
       model: input.model,
       codexPath: input.codexPath,
-      credentialRef: apiKey ? `provider:${input.id ?? "new"}` : undefined,
+      credentialRef: clearApiKey ? undefined : apiKey ? `provider:${id}` : undefined,
       enabled: input.enabled,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -778,7 +796,7 @@ export async function saveProvider(input: ProviderInput, apiKey?: string): Promi
     mockProviders = [...mockProviders.filter((p) => p.id !== cfg.id), cfg];
     return cfg;
   }
-  return invoke<ProviderConfig>("save_provider", { input, apiKey: apiKey ?? null });
+  return invoke<ProviderConfig>("save_provider", { input, apiKey: apiKey ?? null, clearApiKey });
 }
 
 export async function deleteProvider(id: string): Promise<void> {
@@ -799,17 +817,19 @@ export async function saveModelSelectionPolicy(policy: ModelSelectionPolicy): Pr
   return invoke<void>("save_model_selection_policy", { policy });
 }
 
-export async function testProvider(input: ProviderInput, apiKey?: string): Promise<ProviderTestResult> {
+export async function testProvider(input: ProviderInput | ProviderConfig, apiKey?: string): Promise<ProviderTestResult> {
+  const anyIn = input as ProviderConfig;
   const config: ProviderConfig = {
-    id: input.id ?? "test",
+    id: anyIn.id ?? "test",
     name: input.name,
     kind: input.kind,
     baseUrl: input.baseUrl,
     model: input.model,
     codexPath: input.codexPath,
+    credentialRef: anyIn.credentialRef,
     enabled: input.enabled,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
+    createdAt: anyIn.createdAt ?? new Date().toISOString(),
+    updatedAt: anyIn.updatedAt ?? new Date().toISOString(),
   };
   if (!isTauri())
     // 浏览器 mock：仅做最基本的配置完整性检查（OpenAI 兼容须填 baseUrl）。

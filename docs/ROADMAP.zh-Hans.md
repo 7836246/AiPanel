@@ -6,7 +6,7 @@ AiPanel 的目标不是复刻传统服务器面板，而是做一个本地运行
 
 实现路径改为**桌面端优先**（不做独立 CLI）。已落地的安全执行闭环与桌面客户端：服务器配置持久化（SQLite）、增删改、凭据进系统 Keychain、SSH 连通性测试、**流式**只读体检、命令风险分级（Low/Medium/High/Blocked）、写操作确认 / 高风险二次确认对话框、本地审计、AiPanel Tools 安全工具层、模型供应商管理。
 
-**AI 已接通真实模型**：配置 OpenAI 兼容供应商后（只需 base URL + API Key，模型自动探测 `/v1/models` 并在首页选择），自然语言经真实 LLM 产出结构化计划（风险仍由 AiPanel 重判），执行前可**逐步编辑**计划，并可让 Agent 用只读工具自动诊断并总结；无供应商时回退到本地 Mock。**Codex app-server 的 turn / 工具调用回路已接通**：`CodexAppServerProvider` 的 chat/plan/summarize/stream_events 走真实 turn（`thread/start` → `turn/start` → 事件流 → 工具分发回灌），并作为首选 Agent Runtime、OpenAI 兼容为回退；该回路以**模拟 JSON-RPC 事件流单测**覆盖（tool call / result / final / 错误 / 超时 / 子进程退出 / 写工具未确认即拒绝），尚待对实际安装的 `codex` 二进制做端到端验证。**Docker 应用部署工作流已落地**（检测/安装、Compose 部署、Caddy/Nginx 反代 + HTTPS、部署后健康检查、5 个常用模板，全部生成结构化 Plan 并经风险审查与确认）。下面 M1–M5 多数条目已完成。
+**AI 已接通真实模型**：配置 OpenAI 兼容供应商后（只需 base URL + API Key，模型自动探测 `/v1/models` 并在首页选择），自然语言经真实 LLM 产出结构化计划（风险仍由 AiPanel 重判），执行前可**逐步编辑**计划，并可让 Agent 用只读工具自动诊断并总结；无供应商时回退到本地 Mock。**Codex app-server 的 turn / 工具调用回路已接通**：`CodexAppServerProvider` 的 chat/plan/summarize/stream_events 走真实 turn（`thread/start` → `turn/start` → 事件流 → 工具分发回灌），并作为首选 Agent Runtime、OpenAI 兼容为回退；该回路以模拟事件流单测覆盖（tool call / result / final / 错误 / 超时 / 子进程退出 / 写工具未确认即拒绝），并已用打包的真实 sidecar 验证 initialize / thread-start / turn-start 协议形状。完整模型轮次仍取决于用户配置的供应商 API Key、Base URL 与模型权限。**Docker 应用部署工作流已落地**（检测/安装、Compose 部署、Caddy/Nginx 反代 + HTTPS、部署后健康检查、5 个常用模板，全部生成结构化 Plan 并经风险审查与确认）。下面 M1–M5 多数条目已完成。
 
 ## M0：项目定义
 
@@ -82,4 +82,3 @@ AiPanel 的目标不是复刻传统服务器面板，而是做一个本地运行
 - 不默认开放新的公网管理入口；
 - 不直接执行未审查的 AI 命令；
 - 不把用户服务器凭据上传到第三方服务。
-

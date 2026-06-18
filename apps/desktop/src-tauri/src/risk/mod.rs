@@ -65,7 +65,7 @@ fn segment_head(segment: &str) -> &str {
             if i < toks.len() {
                 let t = toks[i];
                 let numeric = !t.is_empty()
-                    && t.chars().next().map_or(false, |ch| ch.is_ascii_digit())
+                    && t.chars().next().is_some_and(|ch| ch.is_ascii_digit())
                     && t.chars().all(|ch| ch.is_ascii_digit() || matches!(ch, '.' | 's' | 'm' | 'h' | 'd'));
                 if numeric {
                     i += 1;
@@ -91,15 +91,11 @@ fn command_heads(cmd: &str) -> Vec<String> {
     let unified = cmd
         .replace("&&", "\n")
         .replace("||", "\n")
-        .replace('|', "\n")
-        .replace('&', "\n")
-        .replace(';', "\n")
+        .replace(['|', '&', ';'], "\n")
         // 命令替换 / 子shell：把 $(...)、``、(...) 的边界也切开，使内部命令成为独立段，
         // 其段首命令同样会被检查（如 `echo $(reboot)`、`(rm -rf /)`）。
         .replace("$(", "\n")
-        .replace('`', "\n")
-        .replace('(', "\n")
-        .replace(')', "\n");
+        .replace(['`', '(', ')'], "\n");
     unified
         .split('\n')
         .map(|seg| segment_head(seg).to_string())
@@ -125,6 +121,7 @@ fn invokes_any(cmd: &str, names: &[&str]) -> bool {
 /// - 任一段首命令是数据库客户端（psql/mysql/mariadb/sqlite3 等）；或
 /// - 命令含 `-c` / `-e`（客户端内联执行语句的常见标志）；或
 /// - 命令引用了 `.sql` 脚本文件。
+///
 /// 仅在该上下文下才对 DROP/TRUNCATE/DELETE 等 SQL 危险语句判级，
 /// 避免 `grep 'drop database' app.log` 这类只读命令被误升级。
 fn looks_like_sql_context(cmd: &str) -> bool {
@@ -256,9 +253,7 @@ pub fn classify_command(command: &str) -> Classification {
             let init_halt = c
                 .replace("&&", "\n")
                 .replace("||", "\n")
-                .replace('|', "\n")
-                .replace('&', "\n")
-                .replace(';', "\n")
+                .replace(['|', '&', ';'], "\n")
                 .split('\n')
                 .any(|seg| segment_head(seg) == "init" && seg.split_whitespace().any(|t| t == "0" || t == "6"));
             if init_halt {
@@ -278,9 +273,7 @@ pub fn classify_command(command: &str) -> Classification {
         let kill_pid1 = c
             .replace("&&", "\n")
             .replace("||", "\n")
-            .replace('|', "\n")
-            .replace('&', "\n")
-            .replace(';', "\n")
+            .replace(['|', '&', ';'], "\n")
             .split('\n')
             .any(|seg| segment_head(seg) == "kill" && seg.split_whitespace().any(|t| t == "1"));
         if kill_pid1 {
@@ -423,7 +416,7 @@ pub fn classify_command(command: &str) -> Classification {
     // 仅检查命令的首段（避免 `mount | grep ...` 这类只读管道被误判为挂载操作）。
     {
         let first_seg = c
-            .split(|ch| ch == '|' || ch == ';' || ch == '&')
+            .split(['|', ';', '&'])
             .next()
             .unwrap_or(&c);
         let tokens: Vec<&str> = first_seg.split_whitespace().collect();
@@ -522,7 +515,7 @@ pub fn classify_command(command: &str) -> Classification {
             "ip6tables", "chattr", "mkswap", "fdisk", "parted",
         ];
         // 去掉引号/反引号，使被引号包裹的命令（`sh -c "rm -rf /"`）也能被 token 扫描命中。
-        let dequoted = c.replace(|ch: char| matches!(ch, '"' | '\'' | '`'), " ");
+        let dequoted = c.replace(['"', '\'', '`'], " ");
         let has_danger = dequoted.split_whitespace().any(|t| {
             DANGER.contains(&t) || DANGER.iter().any(|d| t.starts_with(&format!("{d}.")))
         });

@@ -10,7 +10,7 @@ AiPanel 是本地优先的 AI 运维客户端。新的架构原则是：**Codex 
 AiPanel Desktop
   Tauri v2 + React + TypeScript
         |
-        | JSON-RPC / stdio
+        | newline-delimited JSON / stdio
         v
 Codex App Server
   Agent Runtime
@@ -32,9 +32,9 @@ Remote Server
 
 - 桌面端：Tauri v2 + React + TypeScript；
 - Agent Runtime：Codex app-server；
-- Agent 通信：JSON-RPC / stdio；
+- Agent 通信：newline-delimited JSON / stdio；
 - 模型配置：AiPanel Provider Manager；
-- 工具系统：AiPanel MCP / JSON-RPC Tools；
+- 工具系统：AiPanel MCP / Core Tools；
 - SSH 执行：AiPanel 自己实现；
 - 风险审查：AiPanel 自己实现；
 - 审计记录：AiPanel 自己实现；
@@ -103,7 +103,7 @@ Provider Manager 负责模型供应商配置和自动选择。
 
 ## AiPanel Tools
 
-Codex 通过工具调用使用 AiPanel 能力。工具可以通过 MCP 或 JSON-RPC 暴露。
+Codex 通过工具调用使用 AiPanel 能力。工具通过 MCP 暴露给 Codex，并在 AiPanel 内部统一路由到 Core Tools。
 
 示例工具：
 
@@ -206,7 +206,6 @@ AiPanel 应默认遵循：
 
 各组件已在 `apps/desktop/src-tauri/src/` 下模块化实现（不拆独立 crate）：
 
-- AiPanel Tools → `tools/`：`server.list` / `server.info` / `server.doctor.readonly` / `ssh.run_readonly` / `task.plan` / `task.review` / `task.execute_confirmed` / `audit.write`，每个工具带权限（ReadOnly/Write）与审计策略；只读默认可用，写操作需用户确认，Agent 不能自行授权（`task.execute_confirmed` 没有用户确认会被拒绝）。统一通过 `dispatch(name, args)`（JSON-RPC 形态）路由，MCP 适配可后置。
+- AiPanel Tools → `tools/` + `mcp/`：`server.list` / `server.info` / `server.doctor.readonly` / `ssh.run_readonly` / `task.plan` / `task.review` / `task.execute_confirmed` / `audit.write`，每个工具带权限（ReadOnly/Write）与审计策略；只读默认可用，写操作需用户确认，Agent 不能自行授权（`task.execute_confirmed` 没有用户确认会被拒绝）。内部统一通过 `dispatch(name, args)` 路由，Codex 侧通过 stdio MCP server 只暴露只读工具。
 - Plan Engine → `plan/`；Risk Reviewer → `risk/`；SSH Executor → `ssh/`；Server Doctor → `doctor/`；Audit Log → `audit/` + `store/`；Provider Manager / Agent Runtime → `agent/`；本地存储 → `store/`（SQLite）；密钥 → `credentials/`（Keychain）。
 - 前端经 Tauri 命令（`commands/`）调用，详见 CLAUDE.md「后端结构」。
-

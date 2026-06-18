@@ -13,12 +13,18 @@
 //! - 部署用 `cd <dir> && docker compose up -d`：注意 Risk Reviewer 解析 docker 子命令时，
 //!   `-f <file>` 这种带值短选项会把子命令误吞成路径而把 `up -d` 判为 Low；改用 `cd` 进目录
 //!   后让 compose 自动发现 docker-compose.yml，子命令是 `up`，可被正确判为 Medium。
+//! - 部署前先做应用端口占用预检，以 `ss` 只读检查暴露，避免执行到
+//!   `docker compose up -d` 后才发现端口冲突。反代的 80/443 可能已由 Caddy/Nginx
+//!   正常监听，不能简单按“端口占用”阻断。
+//! - 部署前预检 compose 里声明的 `container_name` 是否已存在；容器名是 Docker 全局唯一
+//!   资源，冲突时必须在写文件/启动前停住。
 //!
 //! 这些计划面向「在服务器上准备/部署 Docker 应用」。compose / .env / 反代配置都落在
 //! `/opt/aipanel/<slug>/` 之下，便于审计与回滚。
 
 use serde::{Deserialize, Serialize};
 
+use crate::core::error::{AppError, AppResult};
 use crate::core::types::{new_id, now, Plan, PlanStep, RiskLevel};
 
 /// 所有由本模块生成的文件统一落在此根目录下，按应用 slug 分子目录。
@@ -49,6 +55,28 @@ fn make_plan(server_id: &str, goal: impl Into<String>, steps: Vec<PlanStep>) -> 
         steps,
         created_at: now(),
     }
+}
+
+/// 生成只读端口占用检查步骤。端口空闲时成功；若有监听则打印占用行并以非 0 退出，
+/// 让执行链路在写 compose / 启动容器 / reload 代理前停止。
+fn port_check_step(port: u16, summary: impl Into<String>) -> PlanStep {
+    step(
+        summary,
+        format!(
+            "used=$(ss -ltnH 'sport = :{port}'); if [ -n \"$used\" ]; then echo \"port {port} is already in use:\"; echo \"$used\"; exit 1; fi"
+        ),
+    )
+}
+
+/// 生成只读容器名冲突检查步骤。容器名存在时以非 0 退出，避免 `docker compose up -d`
+/// 到一半才因全局 container_name 冲突失败。
+fn container_name_check_step(name: &str) -> PlanStep {
+    step(
+        format!("预检 Docker 容器名 {name} 是否已存在（不存在才可继续部署）"),
+        format!(
+            "existing=$(docker ps -a --filter name=^{name}$ --format '{{{{.Names}}}}'); if [ -n \"$existing\" ]; then echo \"container name {name} already exists:\"; echo \"$existing\"; exit 1; fi"
+        ),
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -153,6 +181,17 @@ impl AppTemplate {
             AppTemplate::WordPress => 8080,
             AppTemplate::Postgres => 5432,
             AppTemplate::Redis => 6379,
+        }
+    }
+
+    /// compose 中声明的固定容器名。Docker 容器名是全局唯一资源，部署前要预检冲突。
+    fn container_names(&self) -> &'static [&'static str] {
+        match self {
+            AppTemplate::UptimeKuma => &["uptime-kuma"],
+            AppTemplate::N8n => &["n8n"],
+            AppTemplate::WordPress => &["wordpress", "wordpress-db"],
+            AppTemplate::Postgres => &["postgres"],
+            AppTemplate::Redis => &["redis"],
         }
     }
 
@@ -264,7 +303,7 @@ volumes:
     container_name: postgres
     restart: unless-stopped
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     environment:
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
     volumes:
@@ -281,7 +320,7 @@ volumes:
     restart: unless-stopped
     command: redis-server --appendonly yes
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis_data:/data
 
@@ -300,24 +339,24 @@ volumes:
     /// 生成写 `.env` 的命令（用 `openssl rand` 现场生成随机密码 + 非敏感占位）。
     /// 返回 None 表示该应用不需要 .env。summary 会提示用户妥善保管/可自行替换。
     ///
-    /// 注意：密码用 `$(openssl rand -base64 24)` 在服务器端生成并写入 .env，
-    /// **不**在计划文本里硬编码任何真实密钥；非敏感字段（库名/用户名）用可读默认值。
+    /// 注意：密码先生成到 shell 变量，并显式检查非空；若远端缺 `openssl` 或随机生成失败，
+    /// 命令会在写 `.env` 前退出，避免静默写出空密码。计划文本里不硬编码真实密钥。
     fn env_file_command(&self) -> Option<String> {
         let path = self.env_path();
         match self {
             AppTemplate::WordPress => Some(format!(
-                "mkdir -p {dir} && cat > {path} <<EOF\n\
-                 MYSQL_ROOT_PASSWORD=$(openssl rand -base64 24)\n\
+                "mkdir -p {dir} && mysql_root_password=$(openssl rand -base64 24) || exit 1; mysql_password=$(openssl rand -base64 24) || exit 1; [ -n \"$mysql_root_password\" ] && [ -n \"$mysql_password\" ] || exit 1; cat > {path} <<EOF\n\
+                 MYSQL_ROOT_PASSWORD=$mysql_root_password\n\
                  MYSQL_DATABASE=wordpress\n\
                  MYSQL_USER=wordpress\n\
-                 MYSQL_PASSWORD=$(openssl rand -base64 24)\n\
+                 MYSQL_PASSWORD=$mysql_password\n\
                  EOF",
                 dir = self.dir(),
                 path = path,
             )),
             AppTemplate::Postgres => Some(format!(
-                "mkdir -p {dir} && cat > {path} <<EOF\n\
-                 POSTGRES_PASSWORD=$(openssl rand -base64 24)\n\
+                "mkdir -p {dir} && postgres_password=$(openssl rand -base64 24) || exit 1; [ -n \"$postgres_password\" ] || exit 1; cat > {path} <<EOF\n\
+                 POSTGRES_PASSWORD=$postgres_password\n\
                  EOF",
                 dir = self.dir(),
                 path = path,
@@ -361,13 +400,59 @@ pub enum ReverseProxy {
 
 impl ReverseProxy {
     /// 从字符串解析反代方式（命令层字符串路由）。未知值回退为 None。
-    pub fn parse(s: &str) -> ReverseProxy {
+    pub fn parse(s: &str) -> AppResult<ReverseProxy> {
         match s.trim().to_lowercase().as_str() {
-            "caddy" => ReverseProxy::Caddy,
-            "nginx" => ReverseProxy::Nginx,
-            _ => ReverseProxy::None,
+            "" | "none" => Ok(ReverseProxy::None),
+            "caddy" => Ok(ReverseProxy::Caddy),
+            "nginx" => Ok(ReverseProxy::Nginx),
+            _ => Err(AppError::Validation(
+                "未知反向代理方式：仅支持 none、caddy、nginx".into(),
+            )),
         }
     }
+}
+
+/// 校验并规范化部署域名。
+///
+/// 空值/纯空白按无域名处理；非空值必须是普通 FQDN，避免把未验证输入拼进
+/// Caddyfile、Nginx 配置路径、server_name 或 certbot 命令。
+pub fn normalize_domain(input: Option<String>) -> AppResult<Option<String>> {
+    let Some(raw) = input else {
+        return Ok(None);
+    };
+    let domain = raw.trim().to_ascii_lowercase();
+    if domain.is_empty() {
+        return Ok(None);
+    }
+
+    let invalid = || {
+        AppError::Validation(
+            "域名格式无效：请填写普通 FQDN，例如 app.example.com；不支持端口、路径、通配符、下划线或特殊字符"
+                .into(),
+        )
+    };
+
+    if domain.len() > 253
+        || domain.starts_with('.')
+        || domain.ends_with('.')
+        || !domain.contains('.')
+        || domain.contains("..")
+    {
+        return Err(invalid());
+    }
+
+    let labels: Vec<&str> = domain.split('.').collect();
+    if labels.iter().any(|label| {
+        label.is_empty()
+            || label.len() > 63
+            || label.starts_with('-')
+            || label.ends_with('-')
+            || !label.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+    }) {
+        return Err(invalid());
+    }
+
+    Ok(Some(domain))
 }
 
 /// 部署选项：可选域名 + 反向代理方式。
@@ -393,20 +478,41 @@ pub struct DeployOptions {
 ///   计划文本里不含任何真实密钥；summary 提示用户保管/替换。
 /// - 反代：Caddy 自动 HTTPS；Nginx 给出 certbot 步骤（仅当有 domain）；None 不加反代步骤。
 /// - 健康检查：`docker compose ... ps`，HTTP 应用再加只读 `curl`（判为 Low）。
-pub fn deploy_plan(server_id: &str, app: AppTemplate, opts: &DeployOptions) -> Plan {
+pub fn deploy_plan(server_id: &str, app: AppTemplate, opts: &DeployOptions) -> AppResult<Plan> {
+    let opts = DeployOptions {
+        domain: normalize_domain(opts.domain.clone())?,
+        reverse_proxy: opts.reverse_proxy,
+    };
+    if !app.is_http_service() && opts.reverse_proxy != ReverseProxy::None {
+        return Err(AppError::Validation(format!(
+            "{} 不是 HTTP 服务，不支持配置 Caddy/Nginx 反向代理",
+            app.display_name()
+        )));
+    }
     let dir = app.dir();
     let compose_path = app.compose_path();
     let port = app.port();
 
     let mut steps: Vec<PlanStep> = Vec::new();
 
-    // 1) 准备应用目录。
+    // 0) 预检应用宿主端口，避免 up -d 后才发现端口冲突。
+    steps.push(port_check_step(
+        port,
+        format!("预检宿主机端口 {port} 是否已被占用（为空表示可用）"),
+    ));
+
+    // 1) 预检固定容器名，避免 Docker 全局名称冲突导致 up -d 失败。
+    for name in app.container_names() {
+        steps.push(container_name_check_step(name));
+    }
+
+    // 2) 准备应用目录。
     steps.push(step(
         format!("创建应用目录 {dir}"),
         format!("mkdir -p {dir}"),
     ));
 
-    // 2) 写 docker-compose.yml（heredoc，幂等覆盖）。
+    // 3) 写 docker-compose.yml（heredoc，幂等覆盖）。
     steps.push(step(
         format!("写入 {} 的 docker-compose.yml", app.display_name()),
         format!(
@@ -417,7 +523,7 @@ pub fn deploy_plan(server_id: &str, app: AppTemplate, opts: &DeployOptions) -> P
         ),
     ));
 
-    // 3) 若需要敏感值则写 .env（随机密码现场生成）。
+    // 4) 若需要敏感值则写 .env（随机密码现场生成）。
     if app.needs_env() {
         if let Some(cmd) = app.env_file_command() {
             steps.push(step(
@@ -430,7 +536,7 @@ pub fn deploy_plan(server_id: &str, app: AppTemplate, opts: &DeployOptions) -> P
         }
     }
 
-    // 4) 启动应用。
+    // 5) 启动应用。
     steps.push(step(
         format!("启动 {}（docker compose up -d）", app.display_name()),
         // 用 `cd <dir> && docker compose up -d`（而非 `-f <path>`）：Risk Reviewer 解析
@@ -440,7 +546,7 @@ pub fn deploy_plan(server_id: &str, app: AppTemplate, opts: &DeployOptions) -> P
         format!("cd {dir} && docker compose up -d"),
     ));
 
-    // 5) 反向代理（仅 HTTP 服务才有意义）。
+    // 6) 反向代理（仅 HTTP 服务才有意义）。
     if app.is_http_service() {
         match opts.reverse_proxy {
             ReverseProxy::None => {}
@@ -449,7 +555,7 @@ pub fn deploy_plan(server_id: &str, app: AppTemplate, opts: &DeployOptions) -> P
         }
     }
 
-    // 6) 部署后健康检查：compose ps + （HTTP 应用）只读 curl。
+    // 7) 部署后健康检查：compose ps + （HTTP 应用）只读 curl。
     steps.push(step(
         format!("检查 {} 容器运行状态", app.display_name()),
         format!("docker compose -f {compose_path} ps"),
@@ -457,7 +563,7 @@ pub fn deploy_plan(server_id: &str, app: AppTemplate, opts: &DeployOptions) -> P
     if app.is_http_service() {
         steps.push(step(
             format!("健康检查：访问本地端口 {port}（只读）"),
-            format!("curl -fsS http://localhost:{port}/ || true"),
+            format!("curl -fsS --max-time 10 http://localhost:{port}/"),
         ));
     }
 
@@ -478,7 +584,7 @@ pub fn deploy_plan(server_id: &str, app: AppTemplate, opts: &DeployOptions) -> P
         }
     };
 
-    make_plan(server_id, goal, steps)
+    Ok(make_plan(server_id, goal, steps))
 }
 
 /// 追加 Caddy 反向代理步骤。Caddy 会为配置的 domain 自动签发并续期 HTTPS 证书。
@@ -557,6 +663,11 @@ mod tests {
         plan.steps.iter().any(|s| s.command.contains(needle))
     }
 
+    /// 测试辅助：测试用例里的合法输入应能生成计划。
+    fn deploy_plan_ok(server_id: &str, app: AppTemplate, opts: &DeployOptions) -> Plan {
+        deploy_plan(server_id, app, opts).unwrap()
+    }
+
     #[test]
     // detect 计划全部步骤应为 Low / 只读，且非空。
     fn detect_plan_is_all_read_only_low() {
@@ -594,23 +705,25 @@ mod tests {
     fn every_step_risk_matches_classifier() {
         let mut plans = vec![detect_docker_plan("s"), install_docker_plan("s")];
         for app in AppTemplate::ALL {
-            plans.push(deploy_plan("s", *app, &DeployOptions::default()));
-            plans.push(deploy_plan(
-                "s",
-                *app,
-                &DeployOptions {
-                    domain: Some("example.com".into()),
-                    reverse_proxy: ReverseProxy::Caddy,
-                },
-            ));
-            plans.push(deploy_plan(
-                "s",
-                *app,
-                &DeployOptions {
-                    domain: Some("example.com".into()),
-                    reverse_proxy: ReverseProxy::Nginx,
-                },
-            ));
+            plans.push(deploy_plan_ok("s", *app, &DeployOptions::default()));
+            if app.is_http_service() {
+                plans.push(deploy_plan_ok(
+                    "s",
+                    *app,
+                    &DeployOptions {
+                        domain: Some("example.com".into()),
+                        reverse_proxy: ReverseProxy::Caddy,
+                    },
+                ));
+                plans.push(deploy_plan_ok(
+                    "s",
+                    *app,
+                    &DeployOptions {
+                        domain: Some("example.com".into()),
+                        reverse_proxy: ReverseProxy::Nginx,
+                    },
+                ));
+            }
         }
         for p in &plans {
             for s in &p.steps {
@@ -637,7 +750,7 @@ mod tests {
             (AppTemplate::Redis, "redis"),
         ];
         for (app, image) in cases {
-            let p = deploy_plan("s1", *app, &DeployOptions::default());
+            let p = deploy_plan_ok("s1", *app, &DeployOptions::default());
             assert!(!p.steps.is_empty(), "{:?} 计划不应为空", app);
             assert!(
                 any_cmd_contains(&p, image),
@@ -662,10 +775,94 @@ mod tests {
     }
 
     #[test]
+    // 每个部署计划都应先只读预检应用宿主端口，避免 up -d 后才发现端口冲突。
+    fn deploy_plan_checks_application_port_before_starting() {
+        for app in AppTemplate::ALL {
+            let p = deploy_plan_ok("s1", *app, &DeployOptions::default());
+            let needle = format!("sport = :{}", app.port());
+            let idx_port = p
+                .steps
+                .iter()
+                .position(|s| s.command.contains(&needle))
+                .expect("应包含应用端口预检");
+            let idx_up = p
+                .steps
+                .iter()
+                .position(|s| s.command.contains("docker compose") && s.command.contains("up -d"))
+                .expect("应包含启动步骤");
+            let check = &p.steps[idx_port];
+            assert!(idx_port < idx_up, "端口预检必须早于启动步骤: {:?}", app);
+            assert!(check.command.contains("exit 1"), "端口冲突时必须阻止后续步骤");
+            assert_eq!(check.risk, RiskLevel::Low, "端口预检必须是只读 Low");
+            assert!(check.read_only, "端口预检必须标记为只读");
+        }
+    }
+
+    #[test]
+    // 每个固定 container_name 都应在写文件/启动前预检；冲突时停止后续部署。
+    fn deploy_plan_checks_container_names_before_writing_or_starting() {
+        for app in AppTemplate::ALL {
+            let p = deploy_plan_ok("s1", *app, &DeployOptions::default());
+            let idx_write = p
+                .steps
+                .iter()
+                .position(|s| s.command.contains("docker-compose.yml"))
+                .expect("应包含写 compose 步骤");
+            let idx_up = p
+                .steps
+                .iter()
+                .position(|s| s.command.contains("docker compose") && s.command.contains("up -d"))
+                .expect("应包含启动步骤");
+
+            for name in app.container_names() {
+                let exact_filter = format!("name=^{name}$");
+                let idx_check = p
+                    .steps
+                    .iter()
+                    .position(|s| s.command.contains(&exact_filter))
+                    .unwrap_or_else(|| panic!("{:?} 应预检容器名 {name}", app));
+                let check = &p.steps[idx_check];
+                assert!(idx_check < idx_write, "容器名预检必须早于写 compose: {:?}", app);
+                assert!(idx_check < idx_up, "容器名预检必须早于启动: {:?}", app);
+                assert!(check.command.contains("docker ps -a"));
+                assert!(check.command.contains("exit 1"), "容器名冲突时必须阻止后续步骤");
+                assert_eq!(check.risk, RiskLevel::Low, "容器名预检必须是只读 Low");
+                assert!(check.read_only);
+            }
+        }
+    }
+
+    #[test]
+    // HTTP 反代计划不应因 80/443 已由代理服务监听而提前阻断；配置错误交给 reload/certbot 暴露。
+    fn reverse_proxy_plans_do_not_block_existing_proxy_ports() {
+        for reverse_proxy in [ReverseProxy::Caddy, ReverseProxy::Nginx] {
+            let p = deploy_plan_ok(
+                "s1",
+                AppTemplate::UptimeKuma,
+                &DeployOptions {
+                    domain: Some("kuma.example.com".into()),
+                    reverse_proxy,
+                },
+            );
+            for port in [80, 443] {
+                let needle = format!("sport = :{port}");
+                assert!(
+                    !p
+                    .steps
+                    .iter()
+                    .any(|s| s.command.contains(&needle) && s.command.contains("exit 1")),
+                    "反代计划不应把代理监听端口 {port} 当作阻断条件: {:?}",
+                    reverse_proxy
+                );
+            }
+        }
+    }
+
+    #[test]
     // WordPress / Postgres 需写 .env，且密码用 openssl rand 现场生成（无硬编码密钥）。
     fn secretful_apps_write_env_with_generated_passwords() {
         for app in [AppTemplate::WordPress, AppTemplate::Postgres] {
-            let p = deploy_plan("s1", app, &DeployOptions::default());
+            let p = deploy_plan_ok("s1", app, &DeployOptions::default());
             // 有写 .env 的步骤。
             assert!(
                 any_cmd_contains(&p, "/.env <<") || any_cmd_contains(&p, ".env <<EOF"),
@@ -678,10 +875,20 @@ mod tests {
                 "{:?} 的密码应由 openssl 随机生成",
                 app
             );
+            assert!(
+                any_cmd_contains(&p, "|| exit 1") && any_cmd_contains(&p, "[ -n"),
+                "{:?} 生成密码失败或为空时必须阻止写入 .env",
+                app
+            );
+            assert!(
+                !any_cmd_contains(&p, "PASSWORD=$(openssl rand"),
+                "{:?} 不应在 .env heredoc 里直接展开 openssl，避免失败时写出空密码",
+                app
+            );
         }
         // 不需要敏感值的应用不应写 .env。
         for app in [AppTemplate::UptimeKuma, AppTemplate::N8n, AppTemplate::Redis] {
-            let p = deploy_plan("s1", app, &DeployOptions::default());
+            let p = deploy_plan_ok("s1", app, &DeployOptions::default());
             assert!(!any_cmd_contains(&p, "openssl rand"), "{:?} 不应生成密码", app);
         }
     }
@@ -690,7 +897,7 @@ mod tests {
     // 计划文本中绝不出现任何看起来像真实密钥的硬编码值（除占位/随机生成方式）。
     fn no_hardcoded_real_secret_values() {
         for app in AppTemplate::ALL {
-            let p = deploy_plan("s1", *app, &DeployOptions::default());
+            let p = deploy_plan_ok("s1", *app, &DeployOptions::default());
             for s in &p.steps {
                 // 出现密码相关字段时，要么是 ${...} 占位，要么是 openssl 生成，
                 // 不能直接 `PASSWORD=<明文字面量>`。
@@ -721,7 +928,7 @@ mod tests {
             domain: Some("kuma.example.com".into()),
             reverse_proxy: ReverseProxy::Caddy,
         };
-        let p = deploy_plan("s1", AppTemplate::UptimeKuma, &opts);
+        let p = deploy_plan_ok("s1", AppTemplate::UptimeKuma, &opts);
         assert!(any_cmd_contains(&p, "reverse_proxy"), "应含 reverse_proxy");
         assert!(any_cmd_contains(&p, "kuma.example.com"), "应含 domain");
         // Caddy 自动 HTTPS 的语义：summary 或 goal 提到自动签发 HTTPS。
@@ -739,7 +946,7 @@ mod tests {
             domain: Some("n8n.example.com".into()),
             reverse_proxy: ReverseProxy::Nginx,
         };
-        let p = deploy_plan("s1", AppTemplate::N8n, &opts);
+        let p = deploy_plan_ok("s1", AppTemplate::N8n, &opts);
         assert!(any_cmd_contains(&p, "proxy_pass"), "应含 nginx proxy_pass");
         assert!(any_cmd_contains(&p, "n8n.example.com"), "应含 domain");
         assert!(any_cmd_contains(&p, "certbot --nginx -d n8n.example.com"), "应含 certbot 步骤");
@@ -752,7 +959,7 @@ mod tests {
             domain: None,
             reverse_proxy: ReverseProxy::Nginx,
         };
-        let p = deploy_plan("s1", AppTemplate::WordPress, &opts);
+        let p = deploy_plan_ok("s1", AppTemplate::WordPress, &opts);
         assert!(any_cmd_contains(&p, "proxy_pass"), "应含 nginx 反代配置");
         assert!(!any_cmd_contains(&p, "certbot"), "无 domain 不应申请证书");
     }
@@ -760,7 +967,7 @@ mod tests {
     #[test]
     // ReverseProxy::None：不含任何反代相关步骤。
     fn reverse_proxy_none_has_no_proxy_steps() {
-        let p = deploy_plan("s1", AppTemplate::UptimeKuma, &DeployOptions::default());
+        let p = deploy_plan_ok("s1", AppTemplate::UptimeKuma, &DeployOptions::default());
         assert!(!any_cmd_contains(&p, "reverse_proxy"));
         assert!(!any_cmd_contains(&p, "proxy_pass"));
         assert!(!any_cmd_contains(&p, "Caddyfile"));
@@ -768,30 +975,49 @@ mod tests {
     }
 
     #[test]
-    // 数据库类应用（非 HTTP）不应有 curl 健康检查或反代步骤。
-    fn database_apps_have_no_http_healthcheck_or_proxy() {
+    // 数据库类应用（非 HTTP）不应有 curl 健康检查，且请求反代时必须明确拒绝。
+    fn database_apps_have_no_http_healthcheck_and_reject_proxy() {
         for app in [AppTemplate::Postgres, AppTemplate::Redis] {
-            // 即便请求了反代，数据库也不会加反代步骤（非 HTTP）。
+            let p = deploy_plan_ok("s1", app, &DeployOptions::default());
+            assert!(!any_cmd_contains(&p, "curl"), "{:?} 不应有 curl 健康检查", app);
+            assert!(!any_cmd_contains(&p, "reverse_proxy"), "{:?} 默认不应加反代", app);
+
             let opts = DeployOptions {
                 domain: Some("db.example.com".into()),
                 reverse_proxy: ReverseProxy::Caddy,
             };
-            let p = deploy_plan("s1", app, &opts);
-            assert!(!any_cmd_contains(&p, "curl"), "{:?} 不应有 curl 健康检查", app);
-            assert!(!any_cmd_contains(&p, "reverse_proxy"), "{:?} 不应加反代", app);
+            let err = deploy_plan("s1", app, &opts).unwrap_err();
+            assert_eq!(err.code(), "validation", "{:?} 请求反代应被拒绝", app);
         }
+    }
+
+    #[test]
+    // 数据库类模板默认仅绑定本机回环地址，避免一键部署后把数据库端口直接暴露到公网。
+    fn database_apps_bind_ports_to_loopback_only() {
+        let postgres = deploy_plan_ok("s1", AppTemplate::Postgres, &DeployOptions::default());
+        assert!(any_cmd_contains(&postgres, "\"127.0.0.1:5432:5432\""));
+        assert!(!any_cmd_contains(&postgres, "\"5432:5432\""));
+
+        let redis = deploy_plan_ok("s1", AppTemplate::Redis, &DeployOptions::default());
+        assert!(any_cmd_contains(&redis, "\"127.0.0.1:6379:6379\""));
+        assert!(!any_cmd_contains(&redis, "\"6379:6379\""));
     }
 
     #[test]
     // HTTP 应用应有只读 curl 健康检查，且 curl 判为 Low。
     fn http_apps_have_readonly_curl_healthcheck() {
         for app in [AppTemplate::UptimeKuma, AppTemplate::N8n, AppTemplate::WordPress] {
-            let p = deploy_plan("s1", app, &DeployOptions::default());
+            let p = deploy_plan_ok("s1", app, &DeployOptions::default());
             let curl = p.steps.iter().find(|s| s.command.contains("curl"));
             assert!(curl.is_some(), "{:?} 应有 curl 健康检查", app);
             let curl = curl.unwrap();
             assert_eq!(curl.risk, RiskLevel::Low, "{:?} 的 curl 应为 Low", app);
             assert!(curl.read_only);
+            assert!(
+                !curl.command.contains("|| true"),
+                "{:?} 的健康检查失败时必须让计划执行失败",
+                app
+            );
         }
     }
 
@@ -828,13 +1054,89 @@ mod tests {
     }
 
     #[test]
-    // ReverseProxy::parse 与默认值。
+    // ReverseProxy::parse 与默认值；未知值必须显式拒绝，避免静默生成与用户选择不一致的计划。
     fn reverse_proxy_parse_and_default() {
-        assert_eq!(ReverseProxy::parse("caddy"), ReverseProxy::Caddy);
-        assert_eq!(ReverseProxy::parse("Nginx"), ReverseProxy::Nginx);
-        assert_eq!(ReverseProxy::parse("none"), ReverseProxy::None);
-        assert_eq!(ReverseProxy::parse("garbage"), ReverseProxy::None);
+        assert_eq!(ReverseProxy::parse("caddy").unwrap(), ReverseProxy::Caddy);
+        assert_eq!(ReverseProxy::parse("Nginx").unwrap(), ReverseProxy::Nginx);
+        assert_eq!(ReverseProxy::parse("none").unwrap(), ReverseProxy::None);
+        assert_eq!(ReverseProxy::parse("").unwrap(), ReverseProxy::None);
+        assert_eq!(ReverseProxy::parse("garbage").unwrap_err().code(), "validation");
         assert_eq!(ReverseProxy::default(), ReverseProxy::None);
+    }
+
+    #[test]
+    // 部署域名进入 shell / Nginx / Caddy / certbot 前必须先规范化。
+    fn normalize_domain_accepts_fqdn_and_blank() {
+        assert_eq!(normalize_domain(None).unwrap(), None);
+        assert_eq!(normalize_domain(Some("   ".into())).unwrap(), None);
+        assert_eq!(
+            normalize_domain(Some(" App.Example.COM ".into())).unwrap(),
+            Some("app.example.com".into())
+        );
+        assert_eq!(
+            normalize_domain(Some("xn--fsqu00a.xn--0zwm56d".into())).unwrap(),
+            Some("xn--fsqu00a.xn--0zwm56d".into())
+        );
+    }
+
+    #[test]
+    // 拒绝可破坏 shell、Caddyfile、Nginx server_name/conf path 或 certbot 参数边界的输入。
+    fn normalize_domain_rejects_invalid_or_injectable_values() {
+        let long_label = format!("{}.example.com", "a".repeat(64));
+        let long_domain = format!("{}.com", "a".repeat(250));
+        let cases = [
+            "localhost",
+            "*.example.com",
+            ".example.com",
+            "example.com.",
+            "example..com",
+            "-bad.example.com",
+            "bad-.example.com",
+            "exa_mple.com",
+            "bad name.com",
+            "bad/name.com",
+            r"bad\name.com",
+            "example.com:443",
+            "example.com; touch /tmp/pwn",
+            "example.com && reboot",
+            "example.com | sh",
+            "example.com $HOME",
+            "example.com `id`",
+            "example.com 'quoted'",
+            "example.com \"quoted\"",
+            "example.com\nreverse_proxy localhost:1",
+            long_label.as_str(),
+            long_domain.as_str(),
+        ];
+
+        for case in cases {
+            assert!(normalize_domain(Some(case.into())).is_err(), "应拒绝非法域名: {case:?}");
+        }
+    }
+
+    #[test]
+    // 非法域名必须在生成计划前被拒绝，不能进入 Caddy/Nginx/certbot 命令文本。
+    fn rejected_domain_values_do_not_reach_deploy_commands() {
+        for rejected in ["example.com; touch /tmp/pwn", "example.com\nserver_name _;"] {
+            let normalized = normalize_domain(Some(rejected.into()));
+            assert!(normalized.is_err());
+            let opts = DeployOptions {
+                domain: Some(rejected.into()),
+                reverse_proxy: ReverseProxy::Nginx,
+            };
+            assert!(
+                deploy_plan("s1", AppTemplate::UptimeKuma, &opts).is_err(),
+                "核心部署计划入口也必须拒绝未规范化的危险域名"
+            );
+        }
+
+        let opts = DeployOptions {
+            domain: normalize_domain(Some(" App.Example.COM ".into())).unwrap(),
+            reverse_proxy: ReverseProxy::Nginx,
+        };
+        let p = deploy_plan_ok("s1", AppTemplate::UptimeKuma, &opts);
+        assert!(any_cmd_contains(&p, "app.example.com"));
+        assert!(!any_cmd_contains(&p, "App.Example.COM"));
     }
 
     #[test]
@@ -847,7 +1149,7 @@ mod tests {
         // `docker compose -f <file> up -d` 现在正确判为 Medium。`cd <dir> &&` 形式同样为 Medium。
         assert!(lvl("docker compose -f /opt/aipanel/redis/docker-compose.yml up -d") >= RiskLevel::Medium);
         // Low（只读）：
-        assert_eq!(lvl("curl -fsS http://localhost:3001/ || true"), RiskLevel::Low);
+        assert_eq!(lvl("curl -fsS --max-time 10 http://localhost:3001/"), RiskLevel::Low);
         assert_eq!(lvl("docker compose -f /opt/aipanel/redis/docker-compose.yml ps"), RiskLevel::Low);
         assert_eq!(lvl("docker --version"), RiskLevel::Low);
         assert_eq!(lvl("docker compose version"), RiskLevel::Low);
@@ -862,7 +1164,7 @@ mod tests {
             domain: Some("example.com".into()),
             reverse_proxy: ReverseProxy::Nginx,
         };
-        let p = deploy_plan("s1", AppTemplate::WordPress, &opts);
+        let p = deploy_plan_ok("s1", AppTemplate::WordPress, &opts);
         for s in &p.steps {
             // 凡是带 heredoc 写文件的步骤，都应先 mkdir -p。
             if s.command.contains("<<'EOF'") || s.command.contains("<<EOF") {

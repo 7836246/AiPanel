@@ -128,9 +128,7 @@ struct LlmStep {
 impl OpenAiCompatibleProvider {
     fn base(&self) -> AppResult<String> {
         match &self.config.base_url {
-            Some(u) if u.starts_with("http://") || u.starts_with("https://") => {
-                Ok(normalize_openai_base(u))
-            }
+            Some(u) => normalize_openai_base(u),
             _ => Err(AppError::Provider("base_url 缺失或不是 http(s) URL".into())),
         }
     }
@@ -180,14 +178,36 @@ impl OpenAiCompatibleProvider {
 /// 智能规整 OpenAI 兼容的 base URL:**只有 `scheme://host[:port]` 而无路径段时**,
 /// 按约定补 `/v1`(用户常只填 `https://host`)。已带路径(如 `…/v1` 或自定义前缀)则原样保留。
 /// 探测 / chat / codex 三处共用此规整,确保「探测成功」与「实际对话」用的是同一地址。
-pub(crate) fn normalize_openai_base(raw: &str) -> String {
-    let b = raw.trim().trim_end_matches('/');
-    if let Some((_, rest)) = b.split_once("://") {
-        if !rest.contains('/') {
-            return format!("{b}/v1");
-        }
+pub(crate) fn normalize_openai_base(raw: &str) -> AppResult<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() || trimmed.chars().any(char::is_control) {
+        return Err(AppError::Provider("base_url 缺失或不是 http(s) URL".into()));
     }
-    b.to_string()
+
+    let mut url = reqwest::Url::parse(trimmed)
+        .map_err(|_| AppError::Provider("base_url 不是有效 URL".into()))?;
+    let Some(host) = url.host_str() else {
+        return Err(AppError::Provider("base_url 缺失或不是 http(s) URL".into()));
+    };
+    let host_is_usable = host == "localhost"
+        || host.contains('.')
+        || host.parse::<std::net::IpAddr>().is_ok();
+    if !matches!(url.scheme(), "http" | "https") || !host_is_usable {
+        return Err(AppError::Provider("base_url 缺失或不是 http(s) URL".into()));
+    }
+    if url.query().is_some() || url.fragment().is_some() {
+        return Err(AppError::Provider("base_url 不应包含 query 或 fragment".into()));
+    }
+
+    let has_custom_path = url.path() != "/";
+    if has_custom_path {
+        let path = url.path().trim_end_matches('/').to_string();
+        url.set_path(&path);
+    } else {
+        url.set_path("/v1");
+    }
+
+    Ok(url.to_string().trim_end_matches('/').to_string())
 }
 
 /// 若模型把 JSON 包在 ```json … ``` 代码围栏里，去掉围栏。
@@ -534,11 +554,29 @@ mod tests {
 
     #[test]
     fn normalize_base_appends_v1_only_when_no_path() {
-        assert_eq!(normalize_openai_base("https://www.anthropic.mom"), "https://www.anthropic.mom/v1");
-        assert_eq!(normalize_openai_base("https://host:8080/"), "https://host:8080/v1");
-        assert_eq!(normalize_openai_base("https://api.openai.com/v1"), "https://api.openai.com/v1");
-        assert_eq!(normalize_openai_base("https://api.openai.com/v1/"), "https://api.openai.com/v1");
-        assert_eq!(normalize_openai_base("https://gw.example.com/openai"), "https://gw.example.com/openai");
+        assert_eq!(normalize_openai_base("https://www.anthropic.mom").unwrap(), "https://www.anthropic.mom/v1");
+        assert_eq!(normalize_openai_base("http://localhost:8080/").unwrap(), "http://localhost:8080/v1");
+        assert_eq!(normalize_openai_base("https://api.openai.com/v1").unwrap(), "https://api.openai.com/v1");
+        assert_eq!(normalize_openai_base("https://api.openai.com/v1/").unwrap(), "https://api.openai.com/v1");
+        assert_eq!(normalize_openai_base("https://gw.example.com/openai").unwrap(), "https://gw.example.com/openai");
+        assert_eq!(normalize_openai_base("http://localhost:11434/v1").unwrap(), "http://localhost:11434/v1");
+        assert_eq!(normalize_openai_base("http://127.0.0.1:8080").unwrap(), "http://127.0.0.1:8080/v1");
+    }
+
+    #[test]
+    fn normalize_base_rejects_invalid_or_ambiguous_urls() {
+        for raw in [
+            "",
+            "api.openai.com/v1",
+            "ftp://api.example.com/v1",
+            "https:///v1",
+            "https://host:8080/",
+            "https://api.example.com/v1?token=x",
+            "https://api.example.com/v1#models",
+            "https://api.example.com/v1\nx",
+        ] {
+            assert!(normalize_openai_base(raw).is_err(), "应拒绝非法 base_url: {raw:?}");
+        }
     }
 
     #[test]

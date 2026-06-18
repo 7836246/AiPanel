@@ -177,8 +177,7 @@ pub async fn run_doctor(
 
     for (key, _summary, cmd) in PROBES {
         let result = crate::ssh::run_readonly(server, secret, cmd, PROBE_TIMEOUT).await;
-        // `key` 的类型是 `&&'static str`；record_probe 接收 `&'static str`。
-        record_probe(*key, result, &mut out, &mut warnings, &mut executions);
+        record_probe(key, result, &mut out, &mut warnings, &mut executions);
     }
 
     check_disk_pressure(&out, &mut warnings);
@@ -247,7 +246,7 @@ pub async fn run_doctor_streamed(
         // 本次探针是否成功？沿用 run_doctor 的记账逻辑：docker 非零退出是良性的
         //（docker 经常缺失），因此不将其标记为失败。
         let ok = matches!(&probe_result, Ok(exec) if exec.exit_code == 0) || *key == "docker";
-        let emitted = record_probe(*key, probe_result, &mut out, &mut warnings, &mut executions);
+        let emitted = record_probe(key, probe_result, &mut out, &mut warnings, &mut executions);
         for message in emitted {
             on_event(DoctorStreamEvent::Warning { message });
         }

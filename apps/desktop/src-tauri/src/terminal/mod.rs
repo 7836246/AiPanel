@@ -11,7 +11,7 @@
 //!   password（sshpass -e，密码经 SSHPASS 环境变量传入，绝不进 argv）；
 //! - 临时私钥文件权限 0600，会话句柄持有它，drop 时删除；
 //! - 因为这是交互式逐键会话，**不在此处做整缓冲区脱敏/审计**——脱敏针对的是
-//!   发送给 AI 或落库的内容，而交互终端的输出直接回显给操作者本人（见下方 TODO）。
+//!   发送给 AI 或落库的内容，而交互终端的输出直接回显给操作者本人。
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
@@ -28,6 +28,8 @@ const CONNECT_TIMEOUT_SECS: u64 = 10;
 /// 一个活跃的交互式终端会话。所有字段都在注册表的 `Mutex` 内，因此即使
 /// 某些 portable-pty 类型本身不是 `Send`，被 `Mutex` 包裹后也可安全跨线程持有。
 struct Session {
+    /// 会话所属服务器 id，用于服务器被删除时按服务器回收仍在运行的终端。
+    server_id: String,
     /// 向 PTY master 写入（即把用户的按键送进远端）。
     writer: Box<dyn Write + Send>,
     /// 子进程句柄（本地 ssh / sshpass 进程），用于关闭时 kill。
@@ -45,6 +47,13 @@ static SESSIONS: OnceLock<Mutex<HashMap<String, Session>>> = OnceLock::new();
 /// 取回（必要时初始化）全局会话注册表。
 fn sessions() -> &'static Mutex<HashMap<String, Session>> {
     SESSIONS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn sessions_lock(
+) -> AppResult<std::sync::MutexGuard<'static, HashMap<String, Session>>> {
+    sessions()
+        .lock()
+        .map_err(|_| AppError::Ssh("terminal session registry lock poisoned".into()))
 }
 
 /// 临时私钥文件，在 drop 时删除。
@@ -237,9 +246,10 @@ pub fn open(
 
     // 4) 先登记会话(在起读线程之前,避免「立即 EOF 的线程先于 insert 调 close」的竞态)。
     let session_id = crate::core::types::new_id();
-    sessions().lock().unwrap().insert(
+    sessions_lock()?.insert(
         session_id.clone(),
         Session {
+            server_id: server.id.clone(),
             writer,
             child,
             master: pair.master,
@@ -277,7 +287,7 @@ pub fn open(
 
 /// 把用户输入写进会话的 PTY（即送往远端）。找不到会话时报错。
 pub fn write(id: &str, data: &str) -> AppResult<()> {
-    let mut guard = sessions().lock().unwrap();
+    let mut guard = sessions_lock()?;
     let session = guard
         .get_mut(id)
         .ok_or_else(|| AppError::NotFound(format!("terminal session not found: {id}")))?;
@@ -294,7 +304,7 @@ pub fn write(id: &str, data: &str) -> AppResult<()> {
 
 /// 调整会话 PTY 的窗口大小（前端容器尺寸变化时调用）。找不到会话时报错。
 pub fn resize(id: &str, cols: u16, rows: u16) -> AppResult<()> {
-    let guard = sessions().lock().unwrap();
+    let guard = sessions_lock()?;
     let session = guard
         .get(id)
         .ok_or_else(|| AppError::NotFound(format!("terminal session not found: {id}")))?;
@@ -314,10 +324,80 @@ pub fn resize(id: &str, cols: u16, rows: u16) -> AppResult<()> {
 /// writer / master 释放、临时密钥文件被删除、读线程因 master 关闭而读到 EOF/出错后退出。
 /// 找不到会话时静默忽略（幂等关闭）。
 pub fn close(id: &str) -> AppResult<()> {
-    let session = sessions().lock().unwrap().remove(id);
+    let session = sessions_lock()?.remove(id);
     if let Some(mut session) = session {
         // best-effort kill；即便失败也照常 drop 释放资源。
         let _ = session.child.kill();
     }
     Ok(())
+}
+
+fn session_ids_for_server(
+    sessions: &HashMap<String, Session>,
+    server_id: &str,
+) -> Vec<String> {
+    matching_session_ids(
+        sessions
+            .iter()
+            .map(|(id, session)| (id.as_str(), session.server_id.as_str())),
+        server_id,
+    )
+}
+
+fn matching_session_ids<'a>(
+    entries: impl IntoIterator<Item = (&'a str, &'a str)>,
+    server_id: &str,
+) -> Vec<String> {
+    entries
+        .into_iter()
+        .filter(|(_, session_server_id)| *session_server_id == server_id)
+        .map(|(id, _)| id.to_string())
+        .collect()
+}
+
+/// 关闭某台服务器下的全部活跃终端会话。删除服务器时调用，避免该服务器档案已删除、
+/// 但旧交互式 SSH 仍继续存活。
+pub fn close_for_server(server_id: &str) -> AppResult<usize> {
+    let ids = {
+        let guard = sessions_lock()?;
+        session_ids_for_server(&guard, server_id)
+    };
+    let count = ids.len();
+    for id in ids {
+        close(&id)?;
+    }
+    Ok(count)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_session_operations_return_not_found() {
+        let id = format!("missing-{}", crate::core::types::new_id());
+
+        let write_err = write(&id, "x").unwrap_err();
+        assert_eq!(write_err.code(), "not_found");
+
+        let resize_err = resize(&id, 80, 24).unwrap_err();
+        assert_eq!(resize_err.code(), "not_found");
+
+        assert!(close(&id).is_ok());
+    }
+
+    #[test]
+    fn matching_session_ids_returns_only_target_server_sessions() {
+        let entries = [
+            ("term-1", "server-a"),
+            ("term-2", "server-b"),
+            ("term-3", "server-a"),
+        ];
+
+        assert_eq!(
+            matching_session_ids(entries, "server-a"),
+            vec!["term-1".to_string(), "term-3".to_string()]
+        );
+        assert!(matching_session_ids(entries, "missing").is_empty());
+    }
 }

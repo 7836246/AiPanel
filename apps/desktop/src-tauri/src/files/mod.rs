@@ -34,6 +34,86 @@ fn shell_quote(s: &str) -> String {
     out
 }
 
+fn validate_remote_path(path: &str) -> AppResult<()> {
+    if path.trim().is_empty() {
+        return Err(AppError::Validation("remote path is required".into()));
+    }
+    if path.chars().any(char::is_control) {
+        return Err(AppError::Validation(
+            "remote path must not contain control characters".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_remote_file_write_path(path: &str) -> AppResult<()> {
+    validate_remote_path(path)?;
+    let trimmed = path.trim();
+    if matches!(trimmed, "/" | "." | ".." | "~") {
+        return Err(AppError::Validation(
+            "remote file path must target a file, not a directory root".into(),
+        ));
+    }
+    if trimmed.ends_with('/') {
+        return Err(AppError::Validation(
+            "remote file path must not end with /".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_local_upload_file(path: &str) -> AppResult<()> {
+    if path.trim().is_empty() {
+        return Err(AppError::Validation("local upload path is required".into()));
+    }
+    if path.chars().any(char::is_control) {
+        return Err(AppError::Validation(
+            "local upload path must not contain control characters".into(),
+        ));
+    }
+    let meta = std::fs::metadata(path)
+        .map_err(|e| AppError::Validation(format!("local upload file is not accessible: {e}")))?;
+    if !meta.is_file() {
+        return Err(AppError::Validation(
+            "local upload path must be a regular file".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_local_download_target(path: &str) -> AppResult<()> {
+    if path.trim().is_empty() {
+        return Err(AppError::Validation("local download path is required".into()));
+    }
+    if path.chars().any(char::is_control) {
+        return Err(AppError::Validation(
+            "local download path must not contain control characters".into(),
+        ));
+    }
+    let target = std::path::Path::new(path);
+    if target.is_dir() {
+        return Err(AppError::Validation(
+            "local download path must be a file, not a directory".into(),
+        ));
+    }
+    if let Some(parent) = target.parent() {
+        if !parent.as_os_str().is_empty() && !parent.is_dir() {
+            return Err(AppError::Validation(
+                "local download parent directory does not exist".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn list_find_command(path: &str) -> AppResult<String> {
+    validate_remote_path(path)?;
+    let q = shell_quote(path);
+    Ok(format!(
+        "find -- {q} -maxdepth 1 -mindepth 1 -printf '%y\\t%s\\t%TY-%Tm-%TdT%TH:%TM\\t%f\\n'"
+    ))
+}
+
 /// 把 `find -printf '%y'` 的类型字符映射为 [`FileKind`]：
 /// `d`=目录，`l`=符号链接，其余（普通文件/设备/管道等）一律视为 File。
 fn kind_from_type_char(c: &str) -> FileKind {
@@ -121,18 +201,15 @@ pub async fn list(
     secret: Option<&str>,
     path: &str,
 ) -> AppResult<DirListing> {
-    let q = shell_quote(path);
-
     // 首选：GNU find，maxdepth 1 + mindepth 1 只列出目录下的直接子项（不含目录自身）。
-    let find_cmd = format!(
-        "find {q} -maxdepth 1 -mindepth 1 -printf '%y\\t%s\\t%TY-%Tm-%TdT%TH:%TM\\t%f\\n'"
-    );
+    let find_cmd = list_find_command(path)?;
     let find_exec = run_command(server, secret, &find_cmd, DEFAULT_TIMEOUT).await?;
 
     let mut entries = if find_exec.exit_code == 0 {
         parse_find_output(&find_exec.stdout)
     } else {
         // 回退：ls -la（非 GNU find、BusyBox 等环境）。
+        let q = shell_quote(path);
         let ls_cmd = format!("ls -la -- {q}");
         let ls_exec = run_command(server, secret, &ls_cmd, DEFAULT_TIMEOUT).await?;
         if ls_exec.exit_code != 0 {
@@ -160,6 +237,7 @@ pub async fn read(
     secret: Option<&str>,
     path: &str,
 ) -> AppResult<FileContent> {
+    validate_remote_path(path)?;
     let q = shell_quote(path);
     let cmd = format!("head -c {READ_PROBE} -- {q}");
     let exec = run_command(server, secret, &cmd, DEFAULT_TIMEOUT).await?;
@@ -196,6 +274,7 @@ pub async fn write(
     path: &str,
     content: &str,
 ) -> AppResult<()> {
+    validate_remote_file_write_path(path)?;
     let q = shell_quote(path);
     let cmd = format!("cat > {q}");
     let exec = run_command_with_input(server, secret, &cmd, content, DEFAULT_TIMEOUT).await?;
@@ -222,6 +301,8 @@ pub async fn upload(
     local_path: &str,
     remote_dir: &str,
 ) -> AppResult<()> {
+    validate_remote_path(remote_dir)?;
+    validate_local_upload_file(local_path)?;
     // 远端路径经远端 shell 解析，单引号包裹做最小转义。
     let dest = format!(
         "{}@{}:{}",
@@ -248,6 +329,8 @@ pub async fn download(
     remote_path: &str,
     local_path: &str,
 ) -> AppResult<()> {
+    validate_remote_path(remote_path)?;
+    validate_local_download_target(local_path)?;
     let src = format!(
         "{}@{}:{}",
         server.username,
@@ -274,6 +357,88 @@ mod tests {
         assert_eq!(shell_quote("/a b/c"), "'/a b/c'");
         // 含单引号：闭合 -> 转义单引号 -> 重开
         assert_eq!(shell_quote("a'b"), "'a'\\''b'");
+    }
+
+    #[test]
+    fn remote_path_validation_rejects_empty_and_control_chars() {
+        assert!(validate_remote_path("/etc/nginx").is_ok());
+        assert!(validate_remote_path(".").is_ok());
+        assert_eq!(validate_remote_path("  ").unwrap_err().code(), "validation");
+        assert_eq!(validate_remote_path("/tmp/a\nb").unwrap_err().code(), "validation");
+        assert_eq!(validate_remote_path("/tmp/a\0b").unwrap_err().code(), "validation");
+    }
+
+    #[test]
+    fn file_write_path_validation_rejects_directory_targets() {
+        assert!(validate_remote_file_write_path("/tmp/app.conf").is_ok());
+        assert!(validate_remote_file_write_path("relative/file.txt").is_ok());
+
+        for path in ["/", ".", "..", "~", "/etc/nginx/"] {
+            let err = validate_remote_file_write_path(path).unwrap_err();
+            assert_eq!(err.code(), "validation", "{path}");
+        }
+    }
+
+    #[test]
+    fn local_upload_validation_requires_existing_regular_file() {
+        let dir = std::env::temp_dir().join(format!(
+            "aipanel-files-test-{}",
+            crate::core::types::new_id()
+        ));
+        std::fs::create_dir(&dir).unwrap();
+        let file = dir.join("app.conf");
+        std::fs::write(&file, "ok").unwrap();
+
+        assert!(validate_local_upload_file(file.to_str().unwrap()).is_ok());
+
+        let err = validate_local_upload_file(dir.to_str().unwrap()).unwrap_err();
+        assert_eq!(err.code(), "validation");
+        assert!(err.to_string().contains("regular file"));
+
+        let missing = dir.join("missing.txt");
+        let err = validate_local_upload_file(missing.to_str().unwrap()).unwrap_err();
+        assert_eq!(err.code(), "validation");
+
+        assert_eq!(validate_local_upload_file("  ").unwrap_err().code(), "validation");
+        assert_eq!(
+            validate_local_upload_file("/tmp/a\nb").unwrap_err().code(),
+            "validation"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn local_download_validation_requires_file_target_with_existing_parent() {
+        let dir = std::env::temp_dir().join(format!(
+            "aipanel-files-test-{}",
+            crate::core::types::new_id()
+        ));
+        std::fs::create_dir(&dir).unwrap();
+        let file = dir.join("download.txt");
+
+        assert!(validate_local_download_target(file.to_str().unwrap()).is_ok());
+
+        let err = validate_local_download_target(dir.to_str().unwrap()).unwrap_err();
+        assert_eq!(err.code(), "validation");
+        assert!(err.to_string().contains("not a directory"));
+
+        let missing_parent = dir.join("missing").join("download.txt");
+        let err = validate_local_download_target(missing_parent.to_str().unwrap()).unwrap_err();
+        assert_eq!(err.code(), "validation");
+        assert!(err.to_string().contains("parent directory"));
+
+        assert_eq!(validate_local_download_target("  ").unwrap_err().code(), "validation");
+        assert_eq!(
+            validate_local_download_target("/tmp/a\nb").unwrap_err().code(),
+            "validation"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn list_find_command_uses_option_separator_before_path() {
+        let cmd = list_find_command("-looks-like-option").unwrap();
+        assert!(cmd.starts_with("find -- '-looks-like-option' "), "{cmd}");
     }
 
     #[test]

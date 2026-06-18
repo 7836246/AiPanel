@@ -38,6 +38,9 @@ pub fn docker_deploy_plan(
     state.store.get_server(&server_id)?;
     let app = AppTemplate::parse(&app)
         .ok_or_else(|| AppError::Validation(format!("未知应用模板: {app}")))?;
-    let opts = DeployOptions { domain, reverse_proxy: ReverseProxy::parse(&reverse_proxy) };
-    Ok(docker::deploy_plan(&server_id, app, &opts))
+    let opts = DeployOptions {
+        domain: docker::normalize_domain(domain)?,
+        reverse_proxy: ReverseProxy::parse(&reverse_proxy)?,
+    };
+    docker::deploy_plan(&server_id, app, &opts)
 }

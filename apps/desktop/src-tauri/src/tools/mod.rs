@@ -128,6 +128,9 @@ pub async fn dispatch(state: &AppState, name: &str, args: Value) -> AppResult<Va
                 .server_id
                 .clone()
                 .ok_or_else(|| AppError::Validation("plan has no target server".into()))?;
+            if plan.steps.is_empty() {
+                return Err(AppError::Validation("plan has no steps".into()));
+            }
             let server = state.store.get_server(&server_id)?;
             let secret = server_secret(state, &server)?;
             let review = crate::risk::review_plan(&plan, false);
@@ -140,8 +143,8 @@ pub async fn dispatch(state: &AppState, name: &str, args: Value) -> AppResult<Va
             }
             let mut executions = Vec::new();
             let mut failed = false;
-            for step in &plan.steps {
-                let res = if step.read_only {
+            for (index, step) in plan.steps.iter().enumerate() {
+                let res = if review.step_levels[index] == crate::core::types::RiskLevel::Low {
                     crate::ssh::run_readonly(&server, secret.as_deref(), &step.command, crate::ssh::DEFAULT_TIMEOUT).await
                 } else {
                     crate::ssh::run_command(&server, secret.as_deref(), &step.command, crate::ssh::DEFAULT_TIMEOUT).await
@@ -152,7 +155,11 @@ pub async fn dispatch(state: &AppState, name: &str, args: Value) -> AppResult<Va
                         executions.push(e);
                         if bad { failed = true; break; }
                     }
-                    Err(_) => { failed = true; break; }
+                    Err(e) => {
+                        executions.push(crate::audit::record_failed_command(&step.command, &e.to_string()));
+                        failed = true;
+                        break;
+                    }
                 }
             }
             let status = if failed { TaskStatus::Failed } else { TaskStatus::Completed };
@@ -216,6 +223,131 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err.code(), "blocked");
+    }
+
+    #[tokio::test]
+    async fn execute_rejects_empty_plan() {
+        let state = AppState {
+            store: crate::store::Store::open_in_memory().unwrap(),
+            credentials: Box::new(crate::credentials::LocalMockCredentialStore::default()),
+            plan_engine: Box::new(crate::plan::MockPlanEngine),
+        };
+        let server = state
+            .store
+            .create_server(crate::core::types::ServerInput {
+                name: "web".into(),
+                host: "127.0.0.1".into(),
+                port: 22,
+                username: "root".into(),
+                auth_kind: crate::core::types::AuthKind::Agent,
+            })
+            .unwrap();
+        let plan = crate::core::types::Plan {
+            id: crate::core::types::new_id(),
+            server_id: Some(server.id),
+            goal: "空计划".into(),
+            steps: vec![],
+            created_at: crate::core::types::now(),
+        };
+
+        let err = dispatch(
+            &state,
+            "task.execute_confirmed",
+            json!({ "plan": plan, "confirmed": true }),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.code(), "validation");
+        assert!(err.to_string().contains("no steps"));
+    }
+
+    #[tokio::test]
+    async fn execute_uses_server_risk_review_not_client_read_only_flag() {
+        let state = AppState {
+            store: crate::store::Store::open_in_memory().unwrap(),
+            credentials: Box::new(crate::credentials::LocalMockCredentialStore::default()),
+            plan_engine: Box::new(crate::plan::MockPlanEngine),
+        };
+        let server = state
+            .store
+            .create_server(crate::core::types::ServerInput {
+                name: "web".into(),
+                host: "127.0.0.1".into(),
+                port: 22,
+                username: "root".into(),
+                auth_kind: crate::core::types::AuthKind::Agent,
+            })
+            .unwrap();
+        let plan = crate::core::types::Plan {
+            id: crate::core::types::new_id(),
+            server_id: Some(server.id),
+            goal: "伪造只读".into(),
+            steps: vec![crate::core::types::PlanStep {
+                summary: "delete files".into(),
+                command: "rm -rf /var/www/old".into(),
+                risk: crate::core::types::RiskLevel::Low,
+                read_only: true,
+                tool: None,
+            }],
+            created_at: crate::core::types::now(),
+        };
+
+        let err = dispatch(
+            &state,
+            "task.execute_confirmed",
+            json!({ "plan": plan, "confirmed": true }),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.code(), "blocked");
+        assert!(err.to_string().contains("second confirmation"));
+    }
+
+    #[tokio::test]
+    async fn execute_records_failed_command_when_ssh_call_errors() {
+        let state = AppState {
+            store: crate::store::Store::open_in_memory().unwrap(),
+            credentials: Box::new(crate::credentials::LocalMockCredentialStore::default()),
+            plan_engine: Box::new(crate::plan::MockPlanEngine),
+        };
+        let server = state
+            .store
+            .create_server(crate::core::types::ServerInput {
+                name: "web".into(),
+                host: "127.0.0.1".into(),
+                port: 22,
+                username: "root".into(),
+                auth_kind: crate::core::types::AuthKind::Password,
+            })
+            .unwrap();
+        let plan = crate::core::types::Plan {
+            id: crate::core::types::new_id(),
+            server_id: Some(server.id),
+            goal: "失败审计".into(),
+            steps: vec![crate::core::types::PlanStep {
+                summary: "执行检查".into(),
+                command: "uptime".into(),
+                risk: crate::core::types::RiskLevel::Low,
+                read_only: true,
+                tool: None,
+            }],
+            created_at: crate::core::types::now(),
+        };
+
+        let value = dispatch(
+            &state,
+            "task.execute_confirmed",
+            json!({ "plan": plan, "confirmed": true }),
+        )
+        .await
+        .unwrap();
+        let record: crate::core::types::AuditRecord = serde_json::from_value(value).unwrap();
+
+        assert_eq!(record.status, crate::core::types::TaskStatus::Failed);
+        assert_eq!(record.executions.len(), 1);
+        assert_eq!(record.executions[0].command, "uptime");
+        assert_eq!(record.executions[0].exit_code, -1);
+        assert!(record.executions[0].stderr.contains("no SSH password stored"));
     }
 
     #[tokio::test]

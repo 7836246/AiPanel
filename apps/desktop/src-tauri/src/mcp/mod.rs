@@ -30,11 +30,21 @@ fn is_read_only(name: &str) -> bool {
 /// 把某工具的入参约束表达成 JSON Schema(供 MCP `tools/list`)。
 fn input_schema(name: &str) -> Value {
     match name {
-        "server.info" => json!({"type":"object","properties":{"id":{"type":"string"}},"required":["id"]}),
-        "server.doctor.readonly" => json!({"type":"object","properties":{"serverId":{"type":"string"}},"required":["serverId"]}),
-        "ssh.run_readonly" => json!({"type":"object","properties":{"serverId":{"type":"string"},"command":{"type":"string"}},"required":["serverId","command"]}),
-        "task.plan" => json!({"type":"object","properties":{"intent":{"type":"string"},"serverId":{"type":"string"}},"required":["intent"]}),
-        "task.review" => json!({"type":"object","properties":{"plan":{"type":"object"},"readOnlyMode":{"type":"boolean"}},"required":["plan"]}),
+        "server.info" => {
+            json!({"type":"object","properties":{"id":{"type":"string"}},"required":["id"]})
+        }
+        "server.doctor.readonly" => {
+            json!({"type":"object","properties":{"serverId":{"type":"string"}},"required":["serverId"]})
+        }
+        "ssh.run_readonly" => {
+            json!({"type":"object","properties":{"serverId":{"type":"string"},"command":{"type":"string"}},"required":["serverId","command"]})
+        }
+        "task.plan" => {
+            json!({"type":"object","properties":{"intent":{"type":"string"},"serverId":{"type":"string"}},"required":["intent"]})
+        }
+        "task.review" => {
+            json!({"type":"object","properties":{"plan":{"type":"object"},"readOnlyMode":{"type":"boolean"}},"required":["plan"]})
+        }
         // server.list(无参数)
         _ => json!({"type":"object","properties":{}}),
     }
@@ -53,6 +63,49 @@ fn ok_result(id: Value, result: Value) -> Value {
     json!({ "jsonrpc": "2.0", "id": id, "result": result })
 }
 
+fn truncate(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        s.to_string()
+    } else {
+        s.chars().take(max).collect::<String>() + "...(truncated)"
+    }
+}
+
+fn trace_item(name: &str, args: &Value, ok: bool, text: &str) -> Value {
+    let args_summary = truncate(&crate::core::sanitize::sanitize(&args.to_string()), 120);
+    let sanitized_text = crate::core::sanitize::sanitize(text);
+    if ok {
+        json!({
+            "name": name,
+            "ok": true,
+            "argsSummary": args_summary,
+            "resultPreview": truncate(&sanitized_text, 200),
+        })
+    } else {
+        json!({
+            "name": name,
+            "ok": false,
+            "argsSummary": args_summary,
+            "error": truncate(&sanitized_text, 200),
+        })
+    }
+}
+
+fn append_trace(name: &str, args: &Value, ok: bool, text: &str) {
+    let Ok(path) = std::env::var("AIPANEL_TRACE_PATH") else {
+        return;
+    };
+    let item = trace_item(name, args, ok, text);
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
+        use std::io::Write;
+        let _ = writeln!(file, "{item}");
+    }
+}
+
 /// 处理一条 MCP JSON-RPC 消息。请求返回响应;通知(无 id / 非处理方法)返回 None。
 pub async fn handle_message(state: &AppState, msg: &Value) -> Option<Value> {
     let method = msg.get("method").and_then(|m| m.as_str())?;
@@ -69,25 +122,31 @@ pub async fn handle_message(state: &AppState, msg: &Value) -> Option<Value> {
         "tools/list" => Some(ok_result(id, json!({ "tools": mcp_tool_specs() }))),
         "tools/call" => {
             let params = msg.get("params");
-            let name = params.and_then(|p| p.get("name")).and_then(|v| v.as_str()).unwrap_or("");
+            let name = params
+                .and_then(|p| p.get("name"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             let args = params
                 .and_then(|p| p.get("arguments"))
                 .cloned()
                 .unwrap_or_else(|| json!({}));
             // 只放行只读工具——写/执行类绝不在此执行。
             if !is_read_only(name) {
+                let text = format!("工具 `{name}` 不对自动回路开放(写操作需用户确认)");
+                append_trace(name, &args, false, &text);
                 return Some(ok_result(
                     id,
                     json!({
-                        "content": [{ "type": "text", "text": format!("工具 `{name}` 不对自动回路开放(写操作需用户确认)") }],
+                        "content": [{ "type": "text", "text": text }],
                         "isError": true,
                     }),
                 ));
             }
-            let (text, is_error) = match crate::tools::dispatch(state, name, args).await {
+            let (text, is_error) = match crate::tools::dispatch(state, name, args.clone()).await {
                 Ok(v) => (crate::core::sanitize::sanitize(&v.to_string()), false),
                 Err(e) => (crate::core::sanitize::sanitize(&e.to_string()), true),
             };
+            append_trace(name, &args, !is_error, &text);
             Some(ok_result(
                 id,
                 json!({ "content": [{ "type": "text", "text": text }], "isError": is_error }),
@@ -107,7 +166,8 @@ pub fn serve() -> AppResult<()> {
     let data_dir = std::env::var("AIPANEL_DATA_DIR")
         .map_err(|_| AppError::Provider("mcp-server 需要 AIPANEL_DATA_DIR 环境变量".into()))?;
     std::fs::create_dir_all(&data_dir).ok();
-    let store = crate::store::Store::open(&std::path::Path::new(&data_dir).join("aipanel.sqlite3"))?;
+    let store =
+        crate::store::Store::open(&std::path::Path::new(&data_dir).join("aipanel.sqlite3"))?;
     let state = AppState {
         store,
         credentials: crate::credentials::default_credential_store(),
@@ -136,7 +196,11 @@ pub fn serve() -> AppResult<()> {
         if let Some(resp) = rt.block_on(handle_message(&state, &msg)) {
             let mut s = resp.to_string();
             s.push('\n');
-            if out.write_all(s.as_bytes()).and_then(|_| out.flush()).is_err() {
+            if out
+                .write_all(s.as_bytes())
+                .and_then(|_| out.flush())
+                .is_err()
+            {
                 break; // 对端关闭
             }
         }
@@ -173,9 +237,12 @@ mod tests {
     #[tokio::test]
     async fn initialize_reports_server_info() {
         let st = mem_state();
-        let resp = handle_message(&st, &json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}))
-            .await
-            .unwrap();
+        let resp = handle_message(
+            &st,
+            &json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}),
+        )
+        .await
+        .unwrap();
         assert_eq!(resp["id"], 1);
         assert_eq!(resp["result"]["serverInfo"]["name"], "aipanel");
         assert!(resp["result"]["capabilities"]["tools"].is_object());
@@ -203,7 +270,18 @@ mod tests {
         .unwrap();
         assert_eq!(resp["result"]["isError"], false);
         // server.list 在空 store 上返回 "[]"(脱敏后不变)。
-        assert!(resp["result"]["content"][0]["text"].as_str().unwrap().starts_with('['));
+        assert!(resp["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .starts_with('['));
+    }
+
+    #[test]
+    fn trace_item_matches_frontend_shape() {
+        let trace = trace_item("server.list", &json!({}), true, "[]");
+        assert_eq!(trace["name"], "server.list");
+        assert_eq!(trace["ok"], true);
+        assert!(trace["resultPreview"].as_str().unwrap().starts_with('['));
     }
 
     #[tokio::test]
@@ -222,8 +300,11 @@ mod tests {
     #[tokio::test]
     async fn notifications_get_no_response() {
         let st = mem_state();
-        assert!(handle_message(&st, &json!({"jsonrpc":"2.0","method":"notifications/initialized"}))
-            .await
-            .is_none());
+        assert!(handle_message(
+            &st,
+            &json!({"jsonrpc":"2.0","method":"notifications/initialized"})
+        )
+        .await
+        .is_none());
     }
 }
