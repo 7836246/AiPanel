@@ -4,6 +4,7 @@ import {
   Check as CheckIcon,
   ChevronDown,
   ChevronUp,
+  Boxes,
   ClipboardList,
   Copy as CopyIcon,
   FolderTree,
@@ -45,6 +46,7 @@ import AuditView from "./AuditView";
 import Dashboard from "./Dashboard";
 import ServerOverview from "./ServerOverview";
 import FileBrowser from "./FileBrowser";
+import DockerDeployPanel from "./DockerDeployPanel";
 import TerminalSession from "./TerminalSession";
 import CommandPalette, { type PaletteCommand } from "./CommandPalette";
 import {
@@ -382,7 +384,7 @@ function StepRow({ summary, command, risk, status, edit }: {
 // 主控制台：左侧服务器/历史导航，右侧计划生成、执行、体检、诊断与终端输出。
 export default function CodexConsole() {
   const [theme, toggleTheme] = useTheme();
-  const [view, setView] = useState<"console" | "audit" | "settings" | "dashboard">("console");
+  const [view, setView] = useState<"console" | "audit" | "settings" | "dashboard" | "deploy">("console");
   const [refreshing, setRefreshing] = useState(false);
   // 计划编辑态：draftSteps 非 null 即处于编辑;draftReview 为草稿的服务端重判结果。
   const [draftSteps, setDraftSteps] = useState<PlanStep[] | null>(null);
@@ -559,6 +561,22 @@ export default function CodexConsole() {
   }
 
   // ----- 操作 -----
+  // 把一个已生成的计划纳入「待确认任务」(用于 Docker 部署等直接产出 Plan 的入口),
+  // 复用与 generatePlan 一致的 可编辑 → 审查 → 确认 → 执行 流程。
+  async function adoptPlan(plan: Plan, title: string) {
+    const serverId = selectedServerId ?? plan.serverId ?? undefined;
+    const task: TaskRecord = {
+      id: newId(), serverId, title, intent: title, kind: "plan",
+      plan, executions: [], status: "awaiting_confirmation", createdAt: nowIso(), updatedAt: nowIso(),
+    };
+    await saveTask(task);
+    setCurrent(task);
+    setStepStatus(plan.steps.map(() => "pending"));
+    setTermLines([]);
+    setView("console");
+    await refreshTasks();
+  }
+
   // 根据输入意图生成计划，保存为待确认任务（不会自动执行）。
   async function generatePlan() {
     const intent = intentValue.trim();
@@ -959,6 +977,7 @@ export default function CodexConsole() {
           <NavItem icon={<LayoutGrid size={16} />} label="概览" active={view === "dashboard"} onClick={() => setView("dashboard")} badge={alertCount} />
           <NavItem icon={<PanelBottom size={16} />} label="终端" active={view === "console" && shellOpen} onClick={() => { setShellOpen((o) => (view === "console" ? !o : true)); setView("console"); }} />
           <NavItem icon={<FolderTree size={16} />} label="文件" active={view === "console" && filesOpen} onClick={() => { setFilesOpen((o) => (view === "console" ? !o : true)); setView("console"); }} />
+          <NavItem icon={<Boxes size={16} />} label="部署" active={view === "deploy"} onClick={() => setView("deploy")} />
           <NavItem icon={<ScrollText size={16} />} label="审计" active={view === "audit"} onClick={openAudit} />
         </div>
 
@@ -1070,6 +1089,14 @@ export default function CodexConsole() {
           <AuditView onNotify={push} />
         ) : view === "settings" ? (
           <SettingsPanel />
+        ) : view === "deploy" ? (
+          selected ? (
+            <DockerDeployPanel serverId={selected.id} onPlan={(plan, title) => adoptPlan(plan, title)} />
+          ) : (
+            <div className="flex min-h-0 flex-1 items-center justify-center text-[13px] text-fg-subtle">
+              先在左侧选择一台服务器,再进行 Docker 部署
+            </div>
+          )
         ) : view === "dashboard" ? (
           servers.length === 0 ? (
             <FirstRun onAdd={() => setAddOpen(true)} />
