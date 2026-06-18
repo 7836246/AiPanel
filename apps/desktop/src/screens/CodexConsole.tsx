@@ -1239,6 +1239,54 @@ export default function CodexConsole() {
             <IconButton aria-label="切换主题" onClick={toggleTheme} size="lg" title={theme === "light" ? "切到深色" : "切到浅色"}>
               {theme === "light" ? <Moon size={16} /> : <Sun size={16} />}
             </IconButton>
+            {/* 实时监控:Codex 式从顶栏按钮下拉的「图层」面板(系统信息 + 资源仪表 + 流量) */}
+            {selected && (
+              <div className="relative">
+                <IconButton
+                  aria-label="实时监控"
+                  size="lg"
+                  title="实时监控(系统信息 + 资源)"
+                  className={monitorOpen ? "text-brand" : "text-fg-muted"}
+                  onClick={() => setMonitorOpen((o) => !o)}
+                >
+                  <Activity size={16} />
+                </IconButton>
+                {monitorOpen && (
+                  <>
+                    <div className="fixed inset-0 z-40" onClick={() => setMonitorOpen(false)} />
+                    <div className="absolute right-0 top-full z-50 mt-1.5 flex max-h-[82vh] w-[min(92vw,560px)] flex-col overflow-hidden rounded-xl border border-border bg-bg shadow-2xl">
+                      <div className="flex flex-none items-center justify-between border-b border-border px-4 py-2.5">
+                        <div className="flex min-w-0 items-center gap-2">
+                          <Activity size={15} className="flex-none text-fg-muted" />
+                          <span className="truncate text-[13px] font-semibold">实时监控 · {selected.name}</span>
+                        </div>
+                        <IconButton aria-label="关闭" size="sm" title="关闭 (Esc)" onClick={() => setMonitorOpen(false)}>
+                          <XIcon size={14} />
+                        </IconButton>
+                      </div>
+                      <div className="cx-scroll min-h-0 flex-1 overflow-y-auto px-4 py-3">
+                        {/* 系统信息(来自只读体检的 facts):KERNEL / OS / CPU 等 */}
+                        {selected.facts && Object.keys(selected.facts).length > 0 ? (
+                          <div className="mb-3 grid grid-cols-2 gap-2">
+                            {Object.entries(selected.facts).map(([k, v]) => (
+                              <div key={k} className="min-w-0 rounded-md border border-border bg-surface-1 px-2.5 py-1.5">
+                                <div className="truncate text-[10px] uppercase tracking-wide text-fg-subtle">{k}</div>
+                                <div className="truncate font-mono text-[12px] text-fg" title={v}>{v}</div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="mb-3 rounded-md border border-dashed border-border px-3 py-2 text-[12px] text-fg-subtle">
+                            点「只读体检」可采集系统信息(内核 / 发行版 / CPU 等)。
+                          </div>
+                        )}
+                        <ServerMonitor key={`mon-${selected.id}`} serverId={selected.id} />
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
             {view === "console" && (
               <>
                 <span className="mx-1 h-4 w-px bg-border" />
@@ -1412,7 +1460,6 @@ export default function CodexConsole() {
                     server={selected}
                     running={running}
                     onDoctor={runDoctor}
-                    onMonitor={() => setMonitorOpen(true)}
                     onStatus={(online) => {
                       if (!selected) return;
                       setServers((prev) =>
@@ -1556,29 +1603,6 @@ export default function CodexConsole() {
       {/* 命令面板（⌘K）：可搜索/键盘可达的快捷操作 */}
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} commands={paletteCommands} />
       {ctxMenu && <ContextMenu x={ctxMenu.x} y={ctxMenu.y} items={ctxMenu.items} onClose={() => setCtxMenu(null)} />}
-      {/* 实时监控浮层:从对话布局独立,点「实时监控」按钮才开;点遮罩/Esc 关闭 */}
-      {monitorOpen && selected && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6" onClick={() => setMonitorOpen(false)}>
-          <div
-            className="flex max-h-[88vh] w-full max-w-[960px] flex-col overflow-hidden rounded-xl border border-border bg-bg shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex flex-none items-center justify-between border-b border-border px-5 py-3">
-              <div className="flex min-w-0 items-center gap-2">
-                <Activity size={16} className="flex-none text-fg-muted" />
-                <span className="truncate text-sm font-semibold">实时监控 · {selected.name}</span>
-                <span className="hidden truncate font-mono text-[12px] text-fg-subtle sm:inline">{selected.username}@{selected.host}</span>
-              </div>
-              <IconButton aria-label="关闭监控" size="lg" title="关闭 (Esc)" onClick={() => setMonitorOpen(false)}>
-                <XIcon size={16} />
-              </IconButton>
-            </div>
-            <div className="cx-scroll min-h-0 flex-1 overflow-y-auto px-5 py-4">
-              <ServerMonitor key={`mon-${selected.id}`} serverId={selected.id} />
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* 全局通知层（错误/成功提示），固定在右下角 */}
       <ToastViewport toasts={toasts} onDismiss={dismiss} />
