@@ -23,11 +23,6 @@ pub mod codex;
 use crate::core::error::{AppError, AppResult};
 use crate::core::types::{Plan, ProviderConfig, ProviderKind, ProviderTestResult};
 
-/// 在 `initialize` 时向 Codex agent 声明的 AiPanel Tools 能力清单。
-fn tools_surface() -> serde_json::Value {
-    serde_json::to_value(crate::tools::registry()).unwrap_or(serde_json::Value::Null)
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ChatMessage {
@@ -291,7 +286,7 @@ impl CodexAppServerProvider {
     /// 回灌给它——服务器能力只在带状态的自动诊断回路里开放(接入 run_agent_turn)。
     fn run_text_turn(&self, user_msg: &str) -> AppResult<String> {
         let mut client = codex::CodexClient::start(&self.codex_path)?;
-        client.initialize(tools_surface())?;
+        client.initialize()?;
         client.run_turn(
             user_msg,
             |name, _args| Err(AppError::Provider(format!("此上下文未启用工具调用：{name}"))),
@@ -363,7 +358,7 @@ impl AgentProvider for CodexAppServerProvider {
         // 不止确认「二进制存在」：真正启动 app-server 并完成 initialize 握手，
         // 同时声明 AiPanel Tools 能力清单。
         match codex::CodexClient::start(&self.codex_path)
-            .and_then(|mut c| c.initialize(tools_surface()))
+            .and_then(|mut c| c.initialize())
         {
             Ok(_) => ProviderTestResult {
                 ok: true,
