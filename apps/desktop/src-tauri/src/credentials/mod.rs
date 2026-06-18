@@ -6,6 +6,7 @@
 //! SQLite 或审计记录。
 
 use std::collections::HashMap;
+use std::env;
 use std::sync::Mutex;
 
 use crate::core::error::{AppError, AppResult};
@@ -13,6 +14,7 @@ use crate::core::types::CredentialRef;
 
 /// AiPanel 在系统 Keychain 中为其条目所用的服务名（命名空间）。
 const SERVICE: &str = "com.aipanel.app";
+const BACKEND_ENV: &str = "AIPANEL_CREDENTIAL_BACKEND";
 
 /// 凭据存储的抽象接口：写入/读取/删除密钥，并报告后端名称。
 pub trait CredentialStore: Send + Sync {
@@ -90,20 +92,21 @@ impl CredentialStore for LocalMockCredentialStore {
     }
 }
 
-/// 选择当前最合适的后端：若一次写入-读取的探测成功则用系统 Keychain，否则
-/// 退回内存 mock（开发兜底）。
+/// 选择当前最合适的后端。
+///
+/// 默认直接使用系统 Keychain，不做启动时写入-读取探测：macOS 对每个新建
+/// Keychain 条目单独授权，临时 probe 会导致开发期每次启动都弹授权提示。需要
+/// 完全绕开系统 Keychain 时，可显式设置 `AIPANEL_CREDENTIAL_BACKEND=mock`。
 pub fn default_credential_store() -> Box<dyn CredentialStore> {
-    let keyring = KeyringCredentialStore;
-    let probe = CredentialRef("__aipanel_probe__".into());
-    let ok = keyring.put_secret(&probe, "probe").is_ok()
-        && keyring.get_secret(&probe).map(|v| v.as_deref() == Some("probe")).unwrap_or(false);
-    let _ = keyring.delete_secret(&probe);
-    if ok {
-        Box::new(keyring)
-    } else {
-        eprintln!("[credentials] system Keychain unavailable — using in-memory mock (dev only)");
-        Box::new(LocalMockCredentialStore::default())
+    let requested_backend = env::var(BACKEND_ENV)
+        .ok()
+        .map(|v| v.trim().to_ascii_lowercase());
+    if requested_backend.as_deref() == Some("mock") {
+        eprintln!("[credentials] using in-memory mock because {BACKEND_ENV}=mock");
+        return Box::new(LocalMockCredentialStore::default());
     }
+
+    Box::new(KeyringCredentialStore)
 }
 
 #[cfg(test)]

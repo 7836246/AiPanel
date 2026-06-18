@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import {
   ArrowUp,
   Check as CheckIcon,
@@ -8,6 +8,8 @@ import {
   Copy as CopyIcon,
   FolderTree,
   LayoutGrid,
+  PanelBottom,
+  PanelRight,
   Lock,
   LockOpen,
   Moon,
@@ -246,7 +248,7 @@ function StepRow({ summary, command, risk, status, edit }: {
 // 主控制台：左侧服务器/历史导航，右侧计划生成、执行、体检、诊断与终端输出。
 export default function CodexConsole() {
   const [theme, toggleTheme] = useTheme();
-  const [view, setView] = useState<"console" | "audit" | "settings" | "dashboard" | "terminal" | "files">("console");
+  const [view, setView] = useState<"console" | "audit" | "settings" | "dashboard">("console");
   const [refreshing, setRefreshing] = useState(false);
   // 计划编辑态：draftSteps 非 null 即处于编辑;draftReview 为草稿的服务端重判结果。
   const [draftSteps, setDraftSteps] = useState<PlanStep[] | null>(null);
@@ -260,6 +262,11 @@ export default function CodexConsole() {
   const [stepStatus, setStepStatus] = useState<StepStatus[]>([]);
   const [termLines, setTermLines] = useState<TerminalLine[]>([]);
   const [terminalOpen, setTerminalOpen] = useState(true);
+  // Codex 式三栏停靠面板:右侧文件树、底部交互终端(各自可开关、可拖拽改尺寸)。
+  const [filesOpen, setFilesOpen] = useState(false);
+  const [shellOpen, setShellOpen] = useState(false);
+  const [filesW, setFilesW] = useState(380);
+  const [shellH, setShellH] = useState(280);
   const [running, setRunning] = useState(false);
   // 默认只读优先：从设置写入的 localStorage 读取初始值（缺省安全地为开）。
   const [readOnlyMode, setReadOnlyMode] = useState(
@@ -746,6 +753,20 @@ export default function CodexConsole() {
     }
   }
 
+  // 拖拽改尺寸:按下分隔条后跟随鼠标移动调整面板宽/高;松开移除监听。
+  const startDrag = (onDelta: (dx: number, dy: number) => void) => (e: ReactMouseEvent) => {
+    e.preventDefault();
+    const move = (ev: MouseEvent) => onDelta(ev.movementX, ev.movementY);
+    const up = () => {
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", up);
+      document.body.style.userSelect = "";
+    };
+    document.body.style.userSelect = "none";
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
+  };
+
   // 命令面板的动作集合：把主界面的关键操作集中为可搜索/键盘可达的快捷入口。
   const paletteCommands: PaletteCommand[] = [
     { id: "ask", label: "新建提问", hint: "聚焦输入框", group: "操作", run: () => { setView("console"); inputRef.current?.focus(); } },
@@ -801,8 +822,8 @@ export default function CodexConsole() {
         <div className="flex flex-col gap-px px-2 pb-1">
           <NavItem icon={<PencilIcon size={16} />} label="提问" active={view === "console"} onClick={() => setView("console")} />
           <NavItem icon={<LayoutGrid size={16} />} label="概览" active={view === "dashboard"} onClick={() => setView("dashboard")} badge={alertCount} />
-          <NavItem icon={<TerminalIconLucide size={16} />} label="终端" active={view === "terminal"} onClick={() => setView("terminal")} />
-          <NavItem icon={<FolderTree size={16} />} label="文件" active={view === "files"} onClick={() => setView("files")} />
+          <NavItem icon={<TerminalIconLucide size={16} />} label="终端" active={view === "console" && shellOpen} onClick={() => { setView("console"); setShellOpen(true); }} />
+          <NavItem icon={<FolderTree size={16} />} label="文件" active={view === "console" && filesOpen} onClick={() => { setView("console"); setFilesOpen(true); }} />
           <NavItem icon={<ScrollText size={16} />} label="审计" active={view === "audit"} onClick={openAudit} />
         </div>
 
@@ -893,9 +914,20 @@ export default function CodexConsole() {
             <IconButton aria-label="切换主题" onClick={toggleTheme} size="lg" title={theme === "light" ? "切到深色" : "切到浅色"}>
               {theme === "light" ? <Moon size={16} /> : <Sun size={16} />}
             </IconButton>
-            <IconButton aria-label="切换终端" onClick={() => setTerminalOpen((o) => !o)} size="lg">
-              <TerminalIconLucide size={16} />
-            </IconButton>
+            {view === "console" && (
+              <>
+                {/* 工作区面板开关:右侧文件树 / 底部终端 / 中部输出 */}
+                <IconButton aria-label="文件面板" onClick={() => setFilesOpen((o) => !o)} size="lg" title="文件面板" className={filesOpen ? "text-brand" : undefined}>
+                  <PanelRight size={16} />
+                </IconButton>
+                <IconButton aria-label="终端面板" onClick={() => setShellOpen((o) => !o)} size="lg" title="终端面板" className={shellOpen ? "text-brand" : undefined}>
+                  <PanelBottom size={16} />
+                </IconButton>
+                <IconButton aria-label="切换输出" onClick={() => setTerminalOpen((o) => !o)} size="lg" title="运行输出" className={terminalOpen ? "text-brand" : undefined}>
+                  <TerminalIconLucide size={16} />
+                </IconButton>
+              </>
+            )}
           </div>
         </div>
 
@@ -903,28 +935,6 @@ export default function CodexConsole() {
           <AuditView onNotify={push} />
         ) : view === "settings" ? (
           <SettingsPanel />
-        ) : view === "terminal" ? (
-          selected ? (
-            <div className="flex min-h-0 flex-1 flex-col">
-              {/* 交互式终端:用户自己操作所选服务器的 SSH 终端(不暴露给 AI) */}
-              <TerminalSession key={selected.id} serverId={selected.id} serverName={selected.name} connLabel={`${selected.username}@${selected.host}`} />
-            </div>
-          ) : (
-            <div className="flex min-h-0 flex-1 items-center justify-center text-[13px] text-fg-subtle">
-              先在左侧选择一台服务器,再打开终端
-            </div>
-          )
-        ) : view === "files" ? (
-          selected ? (
-            <div className="flex min-h-0 flex-1 flex-col">
-              {/* 文件管理:浏览/查看/编辑所选服务器文件(SFTP over SSH,不暴露给 AI) */}
-              <FileBrowser key={selected.id} serverId={selected.id} serverName={selected.name} />
-            </div>
-          ) : (
-            <div className="flex min-h-0 flex-1 items-center justify-center text-[13px] text-fg-subtle">
-              先在左侧选择一台服务器,再打开文件管理
-            </div>
-          )
         ) : view === "dashboard" ? (
           servers.length === 0 ? (
             <FirstRun onAdd={() => setAddOpen(true)} />
@@ -941,7 +951,10 @@ export default function CodexConsole() {
         ) : servers.length === 0 ? (
           <FirstRun onAdd={() => setAddOpen(true)} />
         ) : (
-          <>
+          // 工作区:中部控制台 + 右侧文件树 + 底部终端(三栏同屏,Codex 式)
+          <div className="flex min-h-0 flex-1 flex-col">
+            <div className="flex min-h-0 flex-1">
+              <div className="flex min-w-0 min-h-0 flex-1 flex-col">
             <section className="cx-scroll min-h-0 flex-1 overflow-y-auto">
               <div className="mx-auto max-w-[680px] px-6 pb-3 pt-5">
                 {!aiProvider && (
@@ -1123,7 +1136,45 @@ export default function CodexConsole() {
                 cursor={running}
               />
             )}
-          </>
+              </div>
+              {/* 右侧文件树面板(可拖拽改宽) */}
+              {filesOpen && (
+                <>
+                  <div
+                    onMouseDown={startDrag((dx) => setFilesW((w) => Math.min(760, Math.max(260, w - dx))))}
+                    className="w-1 flex-none cursor-col-resize bg-border transition-colors hover:bg-brand/40"
+                  />
+                  <aside className="flex min-h-0 flex-none flex-col border-l border-border" style={{ width: filesW }}>
+                    {selected ? (
+                      <FileBrowser key={selected.id} serverId={selected.id} serverName={selected.name} />
+                    ) : (
+                      <div className="flex flex-1 items-center justify-center px-4 text-center text-[12.5px] text-fg-subtle">
+                        选择左侧服务器后查看文件
+                      </div>
+                    )}
+                  </aside>
+                </>
+              )}
+            </div>
+            {/* 底部交互终端面板(可拖拽改高) */}
+            {shellOpen && (
+              <>
+                <div
+                  onMouseDown={startDrag((_dx, dy) => setShellH((h) => Math.min(640, Math.max(140, h - dy))))}
+                  className="h-1 flex-none cursor-row-resize bg-border transition-colors hover:bg-brand/40"
+                />
+                <div className="flex min-h-0 flex-none flex-col" style={{ height: shellH }}>
+                  {selected ? (
+                    <TerminalSession key={selected.id} serverId={selected.id} serverName={selected.name} connLabel={`${selected.username}@${selected.host}`} />
+                  ) : (
+                    <div className="flex flex-1 items-center justify-center text-[12.5px] text-fg-subtle">
+                      选择左侧服务器后打开终端
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
         )}
       </main>
 

@@ -42,9 +42,12 @@ pnpm tauri:dev        # launch the desktop app (needs the Rust toolchain)
 # or `pnpm dev` for the frontend only, in a browser (backend calls fall back to mocks)
 ```
 
-In the app you can add a server (credentials go to the system Keychain), test SSH
-connectivity, run a read-only health check, turn a request into a reviewable plan,
-approve and execute it, and review the local audit trail.
+Credentials use the system Keychain by default, including in `tauri:dev`.
+For mock-only development, set `AIPANEL_CREDENTIAL_BACKEND=mock`.
+
+In the app you can add a server, test SSH connectivity, run a read-only health
+check, turn a request into a reviewable plan, approve and execute it, and review
+the local audit trail.
 
 ## Roadmap
 
