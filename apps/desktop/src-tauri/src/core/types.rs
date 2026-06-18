@@ -610,9 +610,12 @@ mod tests {
     }
 
     #[test]
-    // CredentialRef 只是引用，不是密钥本身
+    // CredentialRef 只是引用，不是密钥本身;格式是跨边界契约(Keychain 键 + 前端 mock 都依赖)。
     fn credential_ref_is_a_reference_not_a_secret() {
-        let r = CredentialRef::for_server("abc");
-        assert_eq!(r.0, "server:abc");
+        assert_eq!(CredentialRef::for_server("abc").0, "server:abc");
+        // provider: 前缀须与前端 saveProvider mock 的 `provider:${id}` 及后端保存逻辑一致。
+        assert_eq!(CredentialRef::for_provider("openai").0, "provider:openai");
+        // 两个命名空间不会因相同 id 冲突。
+        assert_ne!(CredentialRef::for_server("x").0, CredentialRef::for_provider("x").0);
     }
 }
