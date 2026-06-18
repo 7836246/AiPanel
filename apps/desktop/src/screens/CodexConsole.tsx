@@ -202,11 +202,11 @@ function NavItem({ icon, label, kbd, active, onClick, badge }: {
   return (
     <div
       onClick={onClick}
-      className={`flex cursor-pointer items-center gap-2.5 rounded-md px-2.5 py-1.5 text-[13.5px] transition-colors ${
-        active ? "bg-selected text-fg" : "text-fg-muted hover:bg-hover"
+      className={`flex cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[13.5px] transition-colors ${
+        active ? "bg-selected font-medium text-fg" : "text-fg-muted hover:bg-hover hover:text-fg"
       }`}
     >
-      {icon}
+      <span className={`flex-none ${active ? "text-brand" : ""}`}>{icon}</span>
       <span className="flex-1">{label}</span>
       {badge && badge > 0 ? (
         <span className="flex-none rounded-full bg-risk-blocked px-1.5 text-[10px] font-semibold leading-[1.4] text-white" title={`${badge} 台需关注`}>
@@ -1329,7 +1329,7 @@ export default function CodexConsole() {
                         } },
                       ])
                     }
-                    className={`group flex cursor-pointer items-center gap-2.5 rounded-md px-2.5 py-1.5 text-[13.5px] transition-colors ${isSel ? "bg-selected text-fg" : "text-fg-muted hover:bg-hover"}`}
+                    className={`group flex cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[13.5px] transition-colors ${isSel ? "bg-selected font-medium text-fg" : "text-fg-muted hover:bg-hover hover:text-fg"}`}
                   >
                     <ServerIconLucide size={15} strokeWidth={1.75} className="flex-none text-fg-subtle" />
                     <span className="flex-1 truncate">{srv.name}</span>
