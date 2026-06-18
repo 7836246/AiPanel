@@ -129,7 +129,7 @@ impl OpenAiCompatibleProvider {
     fn base(&self) -> AppResult<String> {
         match &self.config.base_url {
             Some(u) if u.starts_with("http://") || u.starts_with("https://") => {
-                Ok(u.trim_end_matches('/').to_string())
+                Ok(normalize_openai_base(u))
             }
             _ => Err(AppError::Provider("base_url 缺失或不是 http(s) URL".into())),
         }
@@ -175,6 +175,19 @@ impl OpenAiCompatibleProvider {
             .map(|s| s.to_string())
             .ok_or_else(|| AppError::Provider("响应缺少 message.content".into()))
     }
+}
+
+/// 智能规整 OpenAI 兼容的 base URL:**只有 `scheme://host[:port]` 而无路径段时**,
+/// 按约定补 `/v1`(用户常只填 `https://host`)。已带路径(如 `…/v1` 或自定义前缀)则原样保留。
+/// 探测 / chat / codex 三处共用此规整,确保「探测成功」与「实际对话」用的是同一地址。
+pub(crate) fn normalize_openai_base(raw: &str) -> String {
+    let b = raw.trim().trim_end_matches('/');
+    if let Some((_, rest)) = b.split_once("://") {
+        if !rest.contains('/') {
+            return format!("{b}/v1");
+        }
+    }
+    b.to_string()
 }
 
 /// 若模型把 JSON 包在 ```json … ``` 代码围栏里，去掉围栏。
@@ -517,6 +530,15 @@ mod tests {
             api_key: None,
         };
         assert_eq!(p.plan("检查磁盘", None).unwrap_err().code(), "provider");
+    }
+
+    #[test]
+    fn normalize_base_appends_v1_only_when_no_path() {
+        assert_eq!(normalize_openai_base("https://www.anthropic.mom"), "https://www.anthropic.mom/v1");
+        assert_eq!(normalize_openai_base("https://host:8080/"), "https://host:8080/v1");
+        assert_eq!(normalize_openai_base("https://api.openai.com/v1"), "https://api.openai.com/v1");
+        assert_eq!(normalize_openai_base("https://api.openai.com/v1/"), "https://api.openai.com/v1");
+        assert_eq!(normalize_openai_base("https://gw.example.com/openai"), "https://gw.example.com/openai");
     }
 
     #[test]

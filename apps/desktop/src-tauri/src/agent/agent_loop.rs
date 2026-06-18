@@ -79,7 +79,8 @@ fn params_schema(name: &str) -> Value {
 
 fn base_url(provider: &ProviderConfig) -> AppResult<String> {
     match &provider.base_url {
-        Some(u) if u.starts_with("http") => Ok(u.trim_end_matches('/').to_string()),
+        // 与规划/探测共用同一套智能 /v1 规整,保证地址一致。
+        Some(u) if u.starts_with("http") => Ok(super::normalize_openai_base(u)),
         _ => Err(AppError::Provider("base_url 缺失或不是 http(s) URL".into())),
     }
 }

@@ -297,6 +297,8 @@ impl CodexClient {
         let mut cmd = Command::new(&cfg.program);
         cmd.env("CODEX_HOME", isolated_codex_home());
         if let Some(base) = &cfg.base_url {
+            // 与探测/chat 共用同一套智能 /v1 规整(用户只填 host 时自动补 /v1)。
+            let base = super::normalize_openai_base(base);
             cmd.arg("-c").arg("model_providers.aipanel.name=\"AiPanel\"");
             cmd.arg("-c").arg(format!("model_providers.aipanel.base_url=\"{base}\""));
             cmd.arg("-c").arg(format!("model_providers.aipanel.env_key=\"{KEY_ENV}\""));
