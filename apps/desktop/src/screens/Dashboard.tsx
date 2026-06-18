@@ -2,6 +2,7 @@ import type { JSX } from "react";
 import { RefreshCw, Server, Star, Stethoscope } from "lucide-react";
 import { Button, IconButton, Spinner } from "@aipanel/ui";
 import type { ServerProfile, ServerStatus } from "../lib/api";
+import { formatRelativeTime } from "../lib/time";
 
 // 状态点颜色：在线=安全绿、离线=阻断红、未知=次要灰（与 ServerOverview 保持一致）。
 const statusText = (s: ServerStatus): string =>
@@ -172,8 +173,8 @@ function ServerTile({
 
       {/* 末行:仅在有体检数据时展示更新时间(避免对未体检卡片显示误导性时间) */}
       {metrics.length > 0 && (
-        <div className="text-[10px] text-fg-subtle">
-          更新于 {new Date(server.updatedAt).toLocaleString()}
+        <div className="text-[10px] text-fg-subtle" title={new Date(server.updatedAt).toLocaleString()}>
+          更新于 {formatRelativeTime(server.updatedAt)}
         </div>
       )}
     </div>

@@ -7,6 +7,7 @@ import {
   exportAuditJson,
   type AuditRecord,
 } from "../lib/api";
+import { formatRelativeTime } from "../lib/time";
 
 // 任务状态到中文标签的映射（与控制台保持一致）。
 const STATUS_LABEL: Record<string, string> = {
@@ -211,8 +212,11 @@ export default function AuditView({
                       <span className="flex-none text-[11.5px] text-fg-subtle">
                         {STATUS_LABEL[r.status] ?? r.status}
                       </span>
-                      <time className="flex-none font-mono text-[11px] text-fg-subtle">
-                        {new Date(r.createdAt).toLocaleString()}
+                      <time
+                        className="flex-none font-mono text-[11px] text-fg-subtle"
+                        title={new Date(r.createdAt).toLocaleString()}
+                      >
+                        {formatRelativeTime(r.createdAt)}
                       </time>
                       {/* 展开/收起指示图标 */}
                       {open ? (
