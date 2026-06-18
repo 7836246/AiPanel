@@ -4,7 +4,7 @@
 
 ## 当前状态
 
-AiPanel 已是一个**可运行的 Desktop MVP，真实 AI 已接通，主界面无任何 mock**：桌面端能启动，左侧服务器列表来自持久化数据，可添加/编辑/删除服务器（凭据进 Keychain）、做 SSH 连通性测试、执行**流式**只读体检（终端逐行刷新）、用自然语言生成结构化计划（配置 OpenAI 兼容供应商后是**真实 LLM 规划**，否则按 provider 回退链直至本地 Mock）、执行前可**逐步编辑计划**（改命令/摘要、增删、上移下移，编辑后由风险闸门**重判**、Blocked/空计划禁止执行）、经风险审查弹**确认/二次确认**对话框、**流式执行**计划（按服务端重判等级路由每步），让 AI 用只读工具**自动诊断**并总结。每次运行（计划/诊断/体检）都作为 **TaskRecord 持久化**，左侧按服务器列出运行历史、可点开恢复或删除；首屏在无服务器/无供应商时给真实引导。还提供**多服务器概览**（卡片+结构化指标+收藏置顶+前台健康轮询与告警角标）、所选服务器的**交互式 SSH 终端**(xterm.js + 本地 PTY)与**文件管理**(SFTP:列目录/查看/编辑/上传下载;终端与文件均为用户操作、不暴露给 AI)、可见的**连接/重连**流程、**Docker 应用部署工作流**（检测/安装、Compose 部署、Caddy/Nginx 反代 + HTTPS、部署后健康检查,模板 Uptime Kuma/n8n/WordPress/PostgreSQL/Redis;均生成结构化 Plan 走风险审查 + 确认 + 执行）,以及查看本地审计、配置模型供应商（只需 base URL + API Key,模型自动探测 `/v1/models`、首页可选)。Codex app-server 走 JSON-RPC/stdio 桥接：transport + initialize 之上**turn / 工具调用回路已接通**（`thread/start`→`turn/start`→事件流→工具分发回灌,以模拟 JSON-RPC 事件流单测覆盖,待对真实 `codex` 二进制端到端验证），Codex 为首选 Agent Runtime、OpenAI 兼容为回退,失败按 provider 链回退。还支持**应用内在线更新**(Tauri updater 插件 + GitHub Releases `latest.json` + minisign 签名;`vX.Y.Z` tag 管理版本,`scripts/bump-version.sh` 同步各处版本,`release.yml` 多平台构建签名发布;设置「在线更新」可检查/下载/安装/重启 + 启动静默检查;公钥入库、私钥只在本地与 GitHub Secret;详见 `docs/RELEASE.zh-Hans.md`)。下面记录的架构和技术选型都是**已经定下的决策**——直接遵循，不要重新推导。
+AiPanel 已是一个**可运行的 Desktop MVP，真实 AI 已接通，主界面无任何 mock**：桌面端能启动，左侧服务器列表来自持久化数据，可添加/编辑/删除服务器（凭据进 Keychain）、做 SSH 连通性测试、执行**流式**只读体检（终端逐行刷新）、用自然语言生成结构化计划（配置 OpenAI 兼容供应商后是**真实 LLM 规划**，否则按 provider 回退链直至本地 Mock）、执行前可**逐步编辑计划**（改命令/摘要、增删、上移下移，编辑后由风险闸门**重判**、Blocked/空计划禁止执行）、经风险审查弹**确认/二次确认**对话框、**流式执行**计划（按服务端重判等级路由每步），让 AI 用只读工具**自动诊断**并总结。每次运行（计划/诊断/体检）都作为 **TaskRecord 持久化**，左侧按服务器列出运行历史、可点开恢复或删除；首屏在无服务器/无供应商时给真实引导。还提供**多服务器概览**（卡片+结构化指标+收藏置顶+前台健康轮询与告警角标）、所选服务器的**实时监控**（顶栏按钮下拉的「图层」面板:系统信息 facts + CPU/内存/磁盘/负载环形仪表 + 容器/服务/端口/进程计数 + 流量曲线,每 3s 走 SSH 只读采集、服务器零常驻 agent,鼠标悬停看详情）、所选服务器的**交互式 SSH 终端**(xterm.js + 本地 PTY)与**文件管理**(SFTP:列目录/查看/编辑/上传下载;终端与文件均为用户操作、不暴露给 AI)、可见的**连接/重连**流程、**Docker 应用部署工作流**（检测/安装、Compose 部署、Caddy/Nginx 反代 + HTTPS、部署后健康检查,模板 Uptime Kuma/n8n/WordPress/PostgreSQL/Redis;均生成结构化 Plan 走风险审查 + 确认 + 执行）,以及查看本地审计、配置模型供应商（只需 base URL + API Key,模型自动探测 `/v1/models`、首页可选)。Codex app-server 走 JSON-RPC/stdio 桥接：transport + initialize 之上**turn / 工具调用回路已接通**（`thread/start`→`turn/start`→事件流→工具分发回灌,以模拟 JSON-RPC 事件流单测覆盖,待对真实 `codex` 二进制端到端验证），Codex 为首选 Agent Runtime、OpenAI 兼容为回退,失败按 provider 链回退。还支持**应用内在线更新**(Tauri updater 插件 + GitHub Releases `latest.json` + minisign 签名;`vX.Y.Z` tag 管理版本,`scripts/bump-version.sh` 同步各处版本,`release.yml` 多平台构建签名发布;设置「在线更新」可检查/下载/安装/重启 + 启动静默检查;公钥入库、私钥只在本地与 GitHub Secret;详见 `docs/RELEASE.zh-Hans.md`)。下面记录的架构和技术选型都是**已经定下的决策**——直接遵循，不要重新推导。
 
 Rust 后端按模块实现在 `apps/desktop/src-tauri/src/`（不拆独立 crate），边界见下方「后端结构」。所有涉及 SSH / 凭据 / 远程命令的改动必须符合 `docs/SECURITY_MODEL.zh-Hans.md`。
 
@@ -27,6 +27,7 @@ pnpm workspace 单仓库（`pnpm-workspace.yaml`）：
 - `risk/` —— Risk Reviewer：把命令分级 Low/Medium/High/Blocked；只读模式把非检查命令升级为 Blocked。
 - `ssh/` —— 用系统 OpenSSH 执行；超时、脱敏、临时密钥文件 0600；`run_readonly` 受风险审查门控（仅 Low）。`build_invocation`/`spawn_child` 为阻塞版 `run_command`/`run_readonly` 与流式版 `run_readonly_streamed`/`run_command_streamed` 共用；流式版有 `*_cancellable` 变体 + 模块级取消注册表（`register`/`cancel`/`unregister`），并加 `-tt` 使远端命令随客户端断开收 SIGHUP（真正中断）。
 - `doctor/` —— 只读体检（多条探测命令）生成 `DoctorReport`，并解析出**结构化指标**（内存 used/total、根分区 %、负载、服务/容器/端口数）与友好 facts；`run_doctor_streamed` + `DoctorStreamEvent` 提供流式版本（与阻塞版共用 `build_report`/`record_probe`）。
+- `metrics/` —— **实时监控采集（SSH 只读、服务器零 agent）**：`collect` 用一条复合只读命令一次性取 CPU(前后两帧 /proc/stat 增量)/负载/内存/磁盘/网络累计/uptime/容器·服务·端口·进程计数,纯函数 `parse_metrics` 解析为 `ServerMetrics`,任何字段缺失安全降级 0 不 panic;输出缺分段标记时报错而非静默全 0。网络/磁盘速率由前端跨样本求差。
 - `terminal/` —— **交互式 SSH 终端**（用户操作,不暴露给 AI）：portable-pty 在本地 PTY 内 spawn 交互式 `ssh`（复用三种认证),会话注册表 + `open`/`write`/`resize`/`close`,读线程把输出回调出来并在 EOF/通道断开时自我回收会话。
 - `files/` —— **文件管理（SFTP over SSH,用户操作,不暴露给 AI）**：`list`（`find -printf`,回退 `ls`)/`read`（`head -c` 256K 截断)/`write`（`cat>` 经 stdin)/`upload`/`download`（`ssh::run_scp`）。
 - `audit/` —— 从体检/计划执行构建审计记录（持久化在 store）。
@@ -49,6 +50,8 @@ pnpm workspace 单仓库（`pnpm-workspace.yaml`）：
 - `pnpm tauri:dev` —— 启动完整 Tauri 桌面应用（需要 Rust 工具链）。
 - `pnpm build` —— 先构建组件库，再构建桌面端前端。
 - `pnpm typecheck` —— 全仓库 TS 类型检查。
+- `pnpm --filter @aipanel/desktop test` —— 前端 vitest 单测（纯逻辑:格式化、风险展示映射、api mock 路径、settingsKeys）。
+- `pnpm ci:check` —— 一站式门禁:typecheck + 前端 vitest + Rust 测试 + Codex sidecar 集成 + Clippy(-D warnings) + 前端构建。**提交前跑这个。**
 - Rust 侧检查：`cd apps/desktop/src-tauri && cargo check`。
 - Rust 测试：`cd apps/desktop/src-tauri && cargo test`（Core/Store/Risk/SSH/Doctor/Audit/Plan/Agent/Tools 单测）。运行单个：`cargo test risk`。
 

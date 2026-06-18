@@ -101,9 +101,14 @@ this gate.
 - [x] Docker app deployment workflows — detect/install, Compose deploy, Caddy/Nginx
       reverse proxy + HTTPS, post-deploy health checks; Uptime Kuma / n8n / WordPress /
       PostgreSQL / Redis templates, each a risk-reviewed Plan
+- [x] Real-time server monitoring — a Codex-style dropdown layer with system facts,
+      CPU/memory/disk/load ring gauges, container/service/port/process counts, and a
+      traffic chart; sampled every 3s over read-only SSH with no resident agent
 - [x] In-app online updates — signed releases via GitHub Releases (Tauri updater +
       minisign); version managed by `vX.Y.Z` tags; check/download/install + relaunch
       from Settings, with an optional silent check on startup
+- [x] Test & CI baseline — Rust unit/integration tests + frontend vitest, Clippy
+      (`-D warnings`), and a one-shot `pnpm ci:check` gate
 
 ## Documentation
 

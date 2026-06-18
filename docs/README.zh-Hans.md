@@ -206,7 +206,9 @@ AiPanel SSH Executor
 - [x] 命令风险审查；
 - [x] 桌面客户端；
 - [x] Docker 应用部署流程；
+- [x] 服务器实时监控（系统信息 + CPU/内存/磁盘/负载仪表 + 流量曲线,SSH 只读、服务器零 agent）；
 - [x] 应用内在线更新（GitHub Releases + minisign 签名,tag vX.Y.Z 管理版本）；
+- [x] 测试与 CI 基线（Rust 单测/集成 + 前端 vitest + Clippy + `pnpm ci:check`）；
 - [ ] Developer ID 签名、公证与可分发发布流程实测;
 - [ ] 带真实供应商 API Key 的完整模型轮次与真实服务器部署验收。
 
