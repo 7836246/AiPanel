@@ -77,6 +77,15 @@ if [[ ! "$BUNDLE_IDENTIFIER" =~ ^[A-Za-z0-9][A-Za-z0-9-]*(\.[A-Za-z0-9][A-Za-z0-
   fail "bundle identifier is invalid: $BUNDLE_IDENTIFIER"
 fi
 
+step "Checking version sources are in sync"
+# 发布前确保 tauri.conf / package.json(根、桌面)/ Cargo.toml 版本一致;
+# 若在 tag 上构建(GITHUB_REF_NAME=v*),还要与 tag 匹配,避免发出版本号错配的更新清单。
+RELEASE_TAG="${GITHUB_REF_NAME:-}"
+if [[ "$RELEASE_TAG" != v* ]]; then
+  RELEASE_TAG="$(git -C "$ROOT" describe --exact-match --tags 2>/dev/null || true)"
+fi
+aipanel_assert_versions_match "$ROOT" "$RELEASE_TAG" || fail "version sources are not in sync"
+
 step "Checking bundled Codex app-server sidecar"
 printf 'Target triple: %s\n' "$TARGET_TRIPLE"
 [[ -f "$SIDE_CAR" ]] || fail "missing $SIDE_CAR; run scripts/fetch-codex.sh $TARGET_TRIPLE before release builds"
