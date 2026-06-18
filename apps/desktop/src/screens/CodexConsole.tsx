@@ -71,6 +71,7 @@ import {
   listTasks,
   saveTask,
   deleteTask,
+  deleteServer,
   RISK_META,
   type AppError,
   type CommandExecution,
@@ -119,6 +120,40 @@ function useTheme(): [("light" | "dark"), () => void] {
 
 /* ---------------- 子组件 ---------------- */
 // 侧栏导航项：图标 + 文案，可选快捷键提示与选中态。
+// 右键菜单的单项。
+type CtxItem = { label: string; onClick: () => void; danger?: boolean };
+
+/** 轻量右键上下文菜单:在光标处弹出,点空白/Esc 关闭。 */
+function ContextMenu({ x, y, items, onClose }: { x: number; y: number; items: CtxItem[]; onClose: () => void }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  // 防止菜单超出视口右/下边界。
+  const left = Math.min(x, window.innerWidth - 200);
+  const top = Math.min(y, window.innerHeight - (items.length * 34 + 12));
+  return (
+    <>
+      <div className="fixed inset-0 z-40" onClick={onClose} onContextMenu={(e) => { e.preventDefault(); onClose(); }} />
+      <div
+        className="fixed z-50 min-w-[176px] rounded-md border border-border bg-surface-1 py-1 shadow-lg"
+        style={{ left, top }}
+      >
+        {items.map((it, i) => (
+          <button
+            key={i}
+            onClick={() => { onClose(); it.onClick(); }}
+            className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-[13px] transition-colors hover:bg-hover ${it.danger ? "text-risk-blocked" : "text-fg-muted hover:text-fg"}`}
+          >
+            {it.label}
+          </button>
+        ))}
+      </div>
+    </>
+  );
+}
+
 function NavItem({ icon, label, kbd, active, onClick, badge }: {
   icon: ReactNode; label: string; kbd?: string; active?: boolean; onClick?: () => void; badge?: number;
 }) {
@@ -404,6 +439,13 @@ export default function CodexConsole() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   // 顶栏标题旁的「···」菜单开关(Codex 式:新建/重命名/删除当前运行)。
   const [titleMenuOpen, setTitleMenuOpen] = useState(false);
+  // 右键上下文菜单(侧栏服务器/运行记录):位置 + 菜单项。
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; items: CtxItem[] } | null>(null);
+  const openCtx = (e: ReactMouseEvent, items: CtxItem[]) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setCtxMenu({ x: e.clientX, y: e.clientY, items });
+  };
   // Codex 式三栏停靠面板:右侧文件树、底部交互终端(各自可开关、可拖拽改尺寸)。
   const [filesOpen, setFilesOpen] = useState(false);
   const [shellOpen, setShellOpen] = useState(false);
@@ -1026,6 +1068,17 @@ export default function CodexConsole() {
                 <div key={srv.id} className="mt-0.5">
                   <div
                     onClick={() => setSelectedServerId(srv.id)}
+                    onContextMenu={(e) =>
+                      openCtx(e, [
+                        { label: "连接 / 重连", onClick: () => { setSelectedServerId(srv.id); checkSshConnection(srv.id).then((r) => { setServers((prev) => prev.map((s) => (s.id === srv.id ? { ...s, status: r.ok ? "online" : "offline" } : s))); push(r.ok ? "success" : "danger", r.ok ? `${srv.name} 连接成功` : `连接失败:${r.message}`); }).catch(() => {}); } },
+                        { label: "打开终端", onClick: () => { setSelectedServerId(srv.id); setView("console"); setShellOpen(true); } },
+                        { label: "打开文件", onClick: () => { setSelectedServerId(srv.id); setView("console"); setFilesOpen(true); } },
+                        { label: "Docker 部署", onClick: () => { setSelectedServerId(srv.id); setView("deploy"); } },
+                        { label: srv.favorite ? "取消收藏" : "收藏置顶", onClick: () => toggleFavorite(srv.id, !srv.favorite) },
+                        { label: "编辑服务器", onClick: () => setEditing(srv) },
+                        { label: "删除服务器", danger: true, onClick: () => { if (window.confirm(`删除服务器「${srv.name}」?`)) void deleteServer(srv.id).then(() => { setServers((prev) => prev.filter((s) => s.id !== srv.id)); if (selectedServerId === srv.id) setSelectedServerId(null); push("success", "服务器已删除"); }).catch((e) => push("danger", errMsg(e))); } },
+                      ])
+                    }
                     className={`group flex cursor-pointer items-center gap-2.5 rounded-md px-2.5 py-1.5 text-[13.5px] transition-colors hover:bg-hover ${isSel ? "" : "text-fg-muted"}`}
                   >
                     <ServerIconLucide size={15} strokeWidth={1.75} className="flex-none text-fg-subtle" />
@@ -1051,6 +1104,13 @@ export default function CodexConsole() {
                           <div
                             key={t.id}
                             onClick={() => openTask(t)}
+                            onContextMenu={(e) =>
+                              openCtx(e, [
+                                { label: "打开", onClick: () => openTask(t) },
+                                { label: "重命名", onClick: () => { const name = window.prompt("重命名此运行", t.title)?.trim(); if (!name) return; const u = { ...t, title: name, updatedAt: nowIso() }; if (currentRef.current?.id === t.id) setCurrent(u); void saveTask(u).then(refreshTasks).catch(() => {}); } },
+                                { label: "删除", danger: true, onClick: () => { void (async () => { if (currentRef.current?.id === t.id) { cancelBackend(); setRunning(false); } await deleteTask(t.id); if (currentRef.current?.id === t.id) setCurrent(null); await refreshTasks(); })(); } },
+                              ])
+                            }
                             className={`group flex cursor-pointer items-center gap-2 rounded-md px-2.5 py-1.5 text-[13px] transition-colors ${current?.id === t.id ? "bg-selected" : "text-fg-muted hover:bg-hover"}`}
                           >
                             <span className="flex-none text-fg-subtle" title={t.kind}>{KIND_GLYPH[t.kind] ?? <ClipboardList size={13} />}</span>
@@ -1463,6 +1523,7 @@ export default function CodexConsole() {
 
       {/* 命令面板（⌘K）：可搜索/键盘可达的快捷操作 */}
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} commands={paletteCommands} />
+      {ctxMenu && <ContextMenu x={ctxMenu.x} y={ctxMenu.y} items={ctxMenu.items} onClose={() => setCtxMenu(null)} />}
 
       {/* 全局通知层（错误/成功提示），固定在右下角 */}
       <ToastViewport toasts={toasts} onDismiss={dismiss} />
