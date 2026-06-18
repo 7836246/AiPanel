@@ -820,10 +820,23 @@ mod tests {
         let result = client
             .initialize()
             .unwrap_or_else(|e| panic!("bundled sidecar initialize failed: {e}"));
-        assert!(result["userAgent"]
-            .as_str()
-            .unwrap_or_default()
-            .contains("Codex"));
+        // 真实 app-server 的 initialize 响应:含我们注入的隔离 CODEX_HOME、平台信息与 userAgent。
+        // 注意 userAgent 反映的是**我们**设置的客户端名(AiPanel/<codex 版本>),不是字面量 "Codex"——
+        // 据此校验握手与 CODEX_HOME 隔离确实生效,而不是断言一个并不存在的子串。
+        let codex_home = result["codexHome"].as_str().unwrap_or_default();
+        assert!(
+            codex_home.contains("aipanel-codex-home"),
+            "codexHome 应为注入的隔离目录,实际: {codex_home}"
+        );
+        assert!(
+            !result["platformOs"].as_str().unwrap_or_default().is_empty(),
+            "缺少 platformOs: {result}"
+        );
+        assert!(
+            result["userAgent"].as_str().unwrap_or_default().contains("AiPanel"),
+            "userAgent 应含注入的客户端名 AiPanel,实际: {}",
+            result["userAgent"]
+        );
     }
 
     #[test]
