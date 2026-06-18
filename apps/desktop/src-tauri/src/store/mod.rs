@@ -808,6 +808,30 @@ mod tests {
     }
 
     #[test]
+    fn favorites_sort_to_top() {
+        let s = Store::open_in_memory().unwrap();
+        let _a = s.create_server(input("a")).unwrap();
+        let b = s.create_server(input("b")).unwrap();
+        let _c = s.create_server(input("c")).unwrap();
+
+        // 初始无收藏。
+        assert!(s.list_servers().unwrap().iter().all(|x| !x.favorite));
+
+        // 收藏 b:返回的 profile 标记为收藏,且列表里被置顶(ORDER BY favorite DESC)。
+        let fav = s.set_server_favorite(&b.id, true).unwrap();
+        assert!(fav.favorite);
+        let list = s.list_servers().unwrap();
+        assert_eq!(list.len(), 3);
+        assert_eq!(list[0].id, b.id, "收藏的服务器应排在最前");
+        assert!(list[0].favorite);
+
+        // 取消收藏:不再被标记,也不再强制置顶。
+        let unfav = s.set_server_favorite(&b.id, false).unwrap();
+        assert!(!unfav.favorite);
+        assert!(s.list_servers().unwrap().iter().all(|x| !x.favorite));
+    }
+
+    #[test]
     fn poisoned_connection_lock_returns_storage_error() {
         let s = Store::open_in_memory().unwrap();
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
