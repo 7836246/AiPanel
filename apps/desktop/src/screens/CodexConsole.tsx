@@ -822,8 +822,8 @@ export default function CodexConsole() {
         <div className="flex flex-col gap-px px-2 pb-1">
           <NavItem icon={<PencilIcon size={16} />} label="提问" active={view === "console"} onClick={() => setView("console")} />
           <NavItem icon={<LayoutGrid size={16} />} label="概览" active={view === "dashboard"} onClick={() => setView("dashboard")} badge={alertCount} />
-          <NavItem icon={<TerminalIconLucide size={16} />} label="终端" active={view === "console" && shellOpen} onClick={() => { setView("console"); setShellOpen(true); }} />
-          <NavItem icon={<FolderTree size={16} />} label="文件" active={view === "console" && filesOpen} onClick={() => { setView("console"); setFilesOpen(true); }} />
+          <NavItem icon={<PanelBottom size={16} />} label="终端" active={view === "console" && shellOpen} onClick={() => { setShellOpen((o) => (view === "console" ? !o : true)); setView("console"); }} />
+          <NavItem icon={<FolderTree size={16} />} label="文件" active={view === "console" && filesOpen} onClick={() => { setFilesOpen((o) => (view === "console" ? !o : true)); setView("console"); }} />
           <NavItem icon={<ScrollText size={16} />} label="审计" active={view === "audit"} onClick={openAudit} />
         </div>
 
@@ -1141,10 +1141,14 @@ export default function CodexConsole() {
               {filesOpen && (
                 <>
                   <div
-                    onMouseDown={startDrag((dx) => setFilesW((w) => Math.min(760, Math.max(260, w - dx))))}
-                    className="w-1 flex-none cursor-col-resize bg-border transition-colors hover:bg-brand/40"
-                  />
-                  <aside className="flex min-h-0 flex-none flex-col border-l border-border" style={{ width: filesW }}>
+                    onMouseDown={startDrag((dx) => setFilesW((w) => Math.min(760, Math.max(360, w - dx))))}
+                    role="separator"
+                    aria-orientation="vertical"
+                    className="group relative w-1.5 flex-none cursor-col-resize bg-border transition-colors hover:bg-brand/40"
+                  >
+                    <span className="pointer-events-none absolute left-1/2 top-1/2 h-7 w-0.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-fg-subtle/40 transition-colors group-hover:bg-brand" />
+                  </div>
+                  <aside className="flex min-h-0 min-w-0 flex-none flex-col overflow-hidden border-l border-border" style={{ width: filesW }}>
                     {selected ? (
                       <FileBrowser key={selected.id} serverId={selected.id} serverName={selected.name} />
                     ) : (
@@ -1161,8 +1165,12 @@ export default function CodexConsole() {
               <>
                 <div
                   onMouseDown={startDrag((_dx, dy) => setShellH((h) => Math.min(640, Math.max(140, h - dy))))}
-                  className="h-1 flex-none cursor-row-resize bg-border transition-colors hover:bg-brand/40"
-                />
+                  role="separator"
+                  aria-orientation="horizontal"
+                  className="group relative h-1.5 flex-none cursor-row-resize bg-border transition-colors hover:bg-brand/40"
+                >
+                  <span className="pointer-events-none absolute left-1/2 top-1/2 h-0.5 w-7 -translate-x-1/2 -translate-y-1/2 rounded-full bg-fg-subtle/40 transition-colors group-hover:bg-brand" />
+                </div>
                 <div className="flex min-h-0 flex-none flex-col" style={{ height: shellH }}>
                   {selected ? (
                     <TerminalSession key={selected.id} serverId={selected.id} serverName={selected.name} connLabel={`${selected.username}@${selected.host}`} />
