@@ -982,6 +982,8 @@ export default function CodexConsole() {
       {/* 侧栏(可由顶栏左侧开关折叠) */}
       {sidebarOpen && (
       <aside className="flex w-64 flex-none flex-col border-r border-border bg-surface-2">
+        {/* 给 macOS 红绿灯(Overlay 标题栏)让出顶部空间,并作为窗口拖拽区 */}
+        <div data-tauri-drag-region className="h-7 flex-none" />
         <div className="flex items-center gap-2.5 px-3.5 py-3">
           <span className="flex h-7 w-7 items-center justify-center rounded-md bg-brand font-mono text-sm text-brand-fg">›_</span>
           <span className="text-[13.5px] font-semibold">AiPanel</span>
@@ -1075,7 +1077,10 @@ export default function CodexConsole() {
 
       {/* 主区 */}
       <main className="flex min-w-0 flex-1 flex-col bg-bg">
-        <div className="flex h-10 flex-none items-center justify-between border-b border-border px-2.5">
+        <div
+          data-tauri-drag-region
+          className={`flex h-10 flex-none items-center justify-between border-b border-border pr-2.5 ${sidebarOpen ? "pl-2.5" : "pl-[78px]"}`}
+        >
           {/* 左侧:折叠侧栏开关 + 标题(与右侧操作组形成「一左一右」,贴近 Codex) */}
           <div className="flex min-w-0 items-center gap-1.5">
             <IconButton
