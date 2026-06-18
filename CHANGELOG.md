@@ -17,8 +17,40 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   copy-to-clipboard only confirms on success; doctor cancel keeps prior facts;
   diagnosis with no result surfaces an error instead of a blank panel.
 
+### Security
+
+- Risk Reviewer firewall fix: `iptables -s <ip> -j DROP` (a write rule) was mis-classified
+  as read-only Low because lowercasing conflated `-S` (list-rules) with `-s` (source match),
+  letting a firewall write bypass confirmation / read-only mode. Now classified case-sensitively
+  on the original command and rejected when any write/action flag is present. Regression-tested.
+- Risk Reviewer `dd` fix: `dd of=/etc/passwd` (overwriting a critical file) was mis-classified as
+  Low; `writes_to` now detects `dd of=<path>` so passwd/shadow → Blocked and `/etc` → High.
+- Docker deploy `.env` files (containing generated DB passwords) are written under `umask 077`
+  (owner-only, no longer world-readable 0644); container-name precheck now fails if the docker
+  query itself errors instead of silently passing.
+
 ### Added
 
+- Real-time server monitoring: a Codex-style dropdown "layer" with system facts and live
+  CPU / memory / disk / load ring gauges (center percentages), container/service/port/process
+  counts, and a network-traffic chart — sampled every 3s over read-only SSH with **no resident
+  agent**; hover for details; explicit error state with retry on collection failure.
+- In-app online updates: signed releases via GitHub Releases (Tauri updater plugin + minisign);
+  versions managed by `vX.Y.Z` tags with `scripts/bump-version.sh`; check / download (progress) /
+  install / relaunch from Settings, plus an optional silent check on startup. See
+  `docs/RELEASE.zh-Hans.md`.
+- Docker app deployment workflows: detect/install Docker, Compose deploy, Caddy/Nginx reverse
+  proxy + HTTPS, post-deploy health checks; Uptime Kuma / n8n / WordPress / PostgreSQL / Redis
+  templates — each a risk-reviewed Plan through confirm + execute.
+- Codex app-server turn/tool loop: `thread/start` → `turn/start` → event stream → tool dispatch
+  and relay (turn-error responses surfaced instead of hanging; tool results sanitized before
+  reaching the AI), atop the JSON-RPC/stdio transport.
+- Test & CI baseline: Rust unit/integration suite + a frontend **vitest** layer (formatting,
+  risk display, api mocks, settings keys, audit output) wired into a one-shot `pnpm ci:check`
+  gate (typecheck + tests + Codex sidecar integration + Clippy `-D warnings` + build).
+- UX polish: command palette shortcuts help + recently-used servers; relative timestamps with
+  exact-time hover; one-click copy of audited commands; a terminal "clear" button; a guided
+  three-step first-run checklist.
 - Simplified provider setup (Codex-style): new providers default to OpenAI-compatible
   — you only configure a base URL + API key. Models are auto-discovered via
   `GET {base}/models` instead of typed by hand: pick from a dropdown in settings, and
