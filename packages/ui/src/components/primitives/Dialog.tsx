@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { cn } from "../../lib/cn";
 import { Button } from "./Button";
 
@@ -22,6 +23,26 @@ export function Dialog({
   footer,
   className,
 }: DialogProps) {
+  // 内层容器引用：用于打开时移入初始焦点（键盘可达）。
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  // 按 Esc 关闭对话框。Hook 必须放在 early-return 之前以遵守 Hooks 规则。
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
+
+  // 打开后把焦点移入对话框，避免 Tab 落在背景内容上（与 CommandPalette 一致）。
+  useEffect(() => {
+    if (!open) return;
+    const id = requestAnimationFrame(() => panelRef.current?.focus());
+    return () => cancelAnimationFrame(id);
+  }, [open]);
+
   if (!open) return null;
   return (
     <div
@@ -32,8 +53,10 @@ export function Dialog({
       onClick={onClose}
     >
       <div
+        ref={panelRef}
+        tabIndex={-1}
         className={cn(
-          "w-full max-w-md rounded-lg border border-border bg-surface-1 shadow-xl",
+          "w-full max-w-md rounded-lg border border-border bg-surface-1 shadow-xl outline-none",
           className
         )}
         onClick={(e) => e.stopPropagation()}

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Save, TriangleAlert, X } from "lucide-react";
-import { Button, Dialog, Input, Textarea } from "@aipanel/ui";
+import { Button, Dialog, Input, Spinner, Textarea } from "@aipanel/ui";
 import { createServer, setServerSecret, type AuthKind, type ServerProfile } from "../lib/api";
 
 // 添加服务器对话框：填写连接信息与凭据，凭据仅写入本地 Keychain。
@@ -87,14 +87,32 @@ export default function AddServerDialog({
             <X size={15} strokeWidth={1.75} />
             取消
           </Button>
-          <Button variant="primary" size="sm" onClick={submit} disabled={busy}>
-            <Save size={15} strokeWidth={1.75} />
-            保存
+          {/* 保存按钮指向字段区的 form，使输入框内回车也能提交；busy 时显示 Spinner + 文案，提示凭据写入 Keychain 可能有延迟 */}
+          <Button variant="primary" size="sm" type="submit" form="add-server-form" disabled={busy}>
+            {busy ? (
+              <>
+                <Spinner size="sm" />
+                保存中…
+              </>
+            ) : (
+              <>
+                <Save size={15} strokeWidth={1.75} />
+                保存
+              </>
+            )}
           </Button>
         </>
       }
     >
-      <div className="flex flex-col gap-3.5">
+      {/* 字段区改为 form：输入框内按回车即可提交，与 footer 槽外的保存按钮通过 form id 关联 */}
+      <form
+        id="add-server-form"
+        onSubmit={(e) => {
+          e.preventDefault();
+          submit();
+        }}
+        className="flex flex-col gap-3.5"
+      >
         <div className={field}>
           <label className={labelCls}>名称</label>
           <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="web-prod-1" />
@@ -155,7 +173,7 @@ export default function AddServerDialog({
             <span>{error}</span>
           </div>
         ) : null}
-      </div>
+      </form>
     </Dialog>
   );
 }

@@ -142,8 +142,11 @@ export default function DockerDeployPanel({
               disabled={!current?.web || proxy === "none"}
             />
             <p className="mt-1.5 text-[11.5px] text-fg-subtle">
+              {/* 说明文案随 proxy 联动,与域名框禁用条件保持一致:proxy="none"(含默认态)时先提示选反代,避免让用户去填一个灰掉的框。 */}
               {current?.web
-                ? "填域名 + Caddy 即自动签发 HTTPS;Nginx 会追加 certbot 步骤。"
+                ? proxy === "none"
+                  ? "选择 Caddy/Nginx 后可填写域名以启用 HTTPS。"
+                  : "填域名 + Caddy 即自动签发 HTTPS;Nginx 会追加 certbot 步骤。"
                 : "数据库类应用不暴露 HTTP,反代/域名不适用。"}
             </p>
           </div>

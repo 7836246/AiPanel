@@ -163,13 +163,20 @@ export default function TerminalSession({
     <div className="flex h-full w-full flex-col bg-surface-1">
       {/* 细标题栏：服务器名 + 重连按钮 */}
       <div className="flex items-center justify-between border-b border-border px-3 py-1.5 text-xs text-fg-muted">
-        <span className="truncate">{serverName}</span>
+        {/* 服务器名截断时用 title 提供完整名悬停提示 */}
+        <span className="truncate" title={serverName}>
+          {serverName}
+        </span>
         <button
           type="button"
+          // 连接中禁止重连：避免对正在建立的会话再次 dispose/重建
           onClick={() => setReconnectKey((k) => k + 1)}
-          className="rounded px-2 py-0.5 text-xs text-fg hover:bg-surface-2"
+          disabled={banner.phase === "connecting"}
+          aria-label={banner.phase === "connecting" ? "正在连接终端会话" : "断开并重新建立终端会话"}
+          title={banner.phase === "connecting" ? "正在连接…" : "断开并重新建立终端会话"}
+          className="rounded px-2 py-0.5 text-xs text-fg hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          重连
+          {banner.phase === "connecting" ? "连接中…" : "重连"}
         </button>
       </div>
 

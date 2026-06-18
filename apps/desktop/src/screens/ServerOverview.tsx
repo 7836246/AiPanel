@@ -1,4 +1,4 @@
-import { useEffect, useState, type JSX } from "react";
+import { useEffect, useRef, useState, type JSX } from "react";
 import { CheckCircle2, PlugZap, Server, Stethoscope, XCircle } from "lucide-react";
 import { Button, Spinner } from "@aipanel/ui";
 import { checkSshConnection, type ServerProfile, type ServerStatus } from "../lib/api";
@@ -66,16 +66,29 @@ export function ServerOverview({
   // 手动连接探测的本地阶段与内联文案；切换服务器时由 key/重渲染重置（见 hooks 写法）。
   const [conn, setConn] = useState<ConnPhase>("idle");
   const [connMsg, setConnMsg] = useState<string | null>(null);
+  // 成功提示自动收起的定时器引用：成功属瞬时反馈、与已变绿的状态点信息冗余，故 ~2.5s 后复位；
+  // 失败原因则常驻供阅读。每次重新探测/切换服务器前清理，避免竞态与泄漏。
+  const successTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clearSuccessTimer = (): void => {
+    if (successTimerRef.current !== null) {
+      clearTimeout(successTimerRef.current);
+      successTimerRef.current = null;
+    }
+  };
 
   // 切换服务器时复位本地连接探测状态，避免上一台的提示串到新选中的服务器上。
   const serverId = server?.id ?? null;
   useEffect(() => {
+    clearSuccessTimer();
     setConn("idle");
     setConnMsg(null);
+    // 卸载时清理定时器。
+    return clearSuccessTimer;
   }, [serverId]);
 
   // 点击「连接/重连」：调用 checkSshConnection，期间 checking，结果落到 online/offline。
   const handleConnect = async (id: string): Promise<void> => {
+    clearSuccessTimer();
     setConn("checking");
     setConnMsg(null);
     try {
@@ -84,6 +97,14 @@ export function ServerOverview({
       // 失败时展示后端归类出的真实原因(认证/超时/连接被拒/host key/未装 sshpass…)。
       setConnMsg(r.ok ? "连接成功" : `连接失败:${r.message}`);
       onStatus?.(r.ok);
+      // 成功提示属瞬时反馈：短暂展示后自动收起为 idle（状态点保持绿色）；失败条则保留。
+      if (r.ok) {
+        successTimerRef.current = setTimeout(() => {
+          setConn("idle");
+          setConnMsg(null);
+          successTimerRef.current = null;
+        }, 2500);
+      }
     } catch (err) {
       // 调用本身抛错（如后端异常）：按离线处理并展示原因。
       setConn("offline");
@@ -110,15 +131,34 @@ export function ServerOverview({
       <div className="rounded-md border border-border bg-surface-1 px-4 py-3.5">
         <div className="flex items-center gap-2">
           {/* 状态点：连接探测有结果时优先反映本地 online/offline，否则回退 server.status */}
-          <span
-            className={`h-1.5 w-1.5 rounded-full ${
+          {(() => {
+            // 计算可读状态名：优先采用本地探测结果，其次回退 server.status；仅靠颜色无法传达三态，
+            // 故补 role/aria-label/title 让色弱用户与读屏可分辨在线/离线/未检测。
+            const statusLabel =
               conn === "online"
-                ? "bg-risk-low"
+                ? "在线"
                 : conn === "offline"
-                  ? "bg-risk-blocked"
-                  : statusDot(server.status)
-            }`}
-          />
+                  ? "离线"
+                  : server.status === "online"
+                    ? "在线"
+                    : server.status === "offline"
+                      ? "离线"
+                      : "未检测";
+            return (
+              <span
+                role="img"
+                aria-label={statusLabel}
+                title={statusLabel}
+                className={`h-1.5 w-1.5 rounded-full ${
+                  conn === "online"
+                    ? "bg-risk-low"
+                    : conn === "offline"
+                      ? "bg-risk-blocked"
+                      : statusDot(server.status)
+                }`}
+              />
+            );
+          })()}
           <span className="text-sm font-semibold">{server.name}</span>
           <span
             className="min-w-0 truncate font-mono text-[12px] text-fg-subtle"
@@ -132,7 +172,8 @@ export function ServerOverview({
             size="sm"
             className="ml-auto"
             onClick={() => void handleConnect(server.id)}
-            disabled={conn === "checking"}
+            // 体检进行中也禁用，避免对同一服务器并发拉起两路 SSH 操作。
+            disabled={conn === "checking" || running}
             title="检测到该服务器的 SSH 连通性"
           >
             {conn === "checking" ? <Spinner size="sm" /> : <PlugZap size={13} />}{" "}
@@ -146,7 +187,8 @@ export function ServerOverview({
             variant="secondary"
             size="sm"
             onClick={onDoctor}
-            disabled={running}
+            // 连通性检测进行中也禁用，二者互斥避免并发 SSH 操作。
+            disabled={running || conn === "checking"}
           >
             {running ? <Spinner size="sm" /> : <Stethoscope size={13} />} 只读体检
           </Button>
@@ -194,7 +236,10 @@ export function ServerOverview({
                 key={key}
                 className="rounded-md border border-border bg-surface-1 px-3.5 py-3"
               >
-                <div className="truncate text-[11px] uppercase tracking-wide text-fg-subtle">
+                <div
+                  className="truncate text-[11px] uppercase tracking-wide text-fg-subtle"
+                  title={key}
+                >
                   {key}
                 </div>
                 <div

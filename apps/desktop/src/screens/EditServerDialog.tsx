@@ -135,7 +135,8 @@ export default function EditServerDialog({
             <X size={15} strokeWidth={1.75} />
             取消
           </Button>
-          <Button variant="primary" size="sm" onClick={submit} disabled={busy}>
+          {/* 删除确认态下禁用保存，使界面只聚焦删除决策，避免与红色「确认删除？」相邻误触 */}
+          <Button variant="primary" size="sm" onClick={submit} disabled={busy || confirmDelete}>
             <Save size={15} strokeWidth={1.75} />
             保存
           </Button>

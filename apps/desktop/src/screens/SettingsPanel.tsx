@@ -282,7 +282,15 @@ export default function SettingsPanel() {
                   <Pencil size={14} />
                   编辑
                 </Button>
-                <Button variant="ghost" size="sm" className="gap-1.5" onClick={() => remove(p.id)}>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="gap-1.5"
+                  onClick={() => {
+                    // 供应商可能含 Keychain 凭据引用，误删代价高，删除前二次确认。
+                    if (window.confirm(`确认删除供应商「${p.name}」？`)) remove(p.id);
+                  }}
+                >
                   <Trash2 size={14} />
                   删除
                 </Button>
@@ -327,7 +335,8 @@ export default function SettingsPanel() {
                   size="sm"
                   className="gap-1.5"
                   onClick={detectModels}
-                  disabled={detecting}
+                  disabled={detecting || !form.baseUrl?.trim()}
+                  title={!form.baseUrl?.trim() ? "请先填写 Base URL" : undefined}
                 >
                   {detecting ? <Spinner size="sm" /> : <RefreshCw size={14} />}
                   {detecting ? "探测中…" : "探测模型"}
@@ -338,7 +347,10 @@ export default function SettingsPanel() {
                   disabled={detecting || models.length === 0}
                   className="h-9 min-w-0 flex-1 rounded-md border border-border bg-surface-2 px-2 text-sm text-fg outline-none focus-visible:border-brand disabled:opacity-60"
                 >
-                  <option value="">{models.length === 0 ? "（请先探测模型）" : "（选择模型）"}</option>
+                  {/* 占位文案三态：探测中 / 探测前或失败 / 已有结果，与按钮状态保持一致 */}
+                  <option value="">
+                    {detecting ? "（探测中…）" : models.length === 0 ? "（请先探测模型）" : "（选择模型）"}
+                  </option>
                   {models.map((m) => (
                     <option key={m} value={m}>
                       {m}
@@ -352,13 +364,15 @@ export default function SettingsPanel() {
                   {detectError}
                 </div>
               ) : null}
-              {/* 手填兜底：探测不可用时仍可直接输入模型名 */}
-              <Input
-                className="mt-1"
-                value={form.model ?? ""}
-                onChange={(e) => setForm({ ...form, model: e.target.value || undefined })}
-                placeholder="或手填模型名，如 gpt-4o-mini"
-              />
+              {/* 手填兜底：仅在探测无结果或探测失败时显示，避免与下拉并列造成「需再填一次」的误解 */}
+              {(!models.length || detectError) && (
+                <Input
+                  className="mt-1"
+                  value={form.model ?? ""}
+                  onChange={(e) => setForm({ ...form, model: e.target.value || undefined })}
+                  placeholder="探测不可用时手填模型名，如 gpt-4o-mini"
+                />
+              )}
             </div>
             <label className="mb-3 flex items-center gap-2 text-[13px] text-fg">
               <input type="checkbox" checked={form.enabled} onChange={(e) => setForm({ ...form, enabled: e.target.checked })} />
@@ -390,7 +404,13 @@ export default function SettingsPanel() {
               <Button variant="primary" size="sm" onClick={save} disabled={busy || !form.name.trim()}>
                 {busy ? "保存中…" : "保存"}
               </Button>
-              <Button variant="secondary" size="sm" onClick={runTest} disabled={testing}>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={runTest}
+                disabled={testing || !form.baseUrl?.trim()}
+                title={!form.baseUrl?.trim() ? "请先填写 Base URL" : undefined}
+              >
                 {testing ? "测试中…" : "测试连接"}
               </Button>
               <Button

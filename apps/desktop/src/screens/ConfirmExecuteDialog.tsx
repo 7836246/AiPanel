@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Play, ShieldAlert, TriangleAlert, X } from "lucide-react";
 import { Button, Dialog } from "@aipanel/ui";
-import { RISK_META, type Plan, type RiskReview, type RiskLevel } from "../lib/api";
+import { RISK_META, type Plan, type RiskFinding, type RiskReview, type RiskLevel } from "../lib/api";
 
 // 风险等级对应图标：高/已阻止用盾牌告警，中风险用三角告警（颜色由 RISK_META.text 提供）
 const RISK_ICON: Record<RiskLevel, typeof ShieldAlert> = {
@@ -37,6 +37,18 @@ export default function ConfirmExecuteDialog({
     if (!open) setAcknowledged(false);
   }, [open, plan]);
 
+  // 按步骤索引归集风险审查发现的原因，便于在每个步骤卡片下展示具体理由。
+  // useMemo 必须在任何 early-return 之前调用，以遵守 Hooks 规则。
+  const findingsByStep = useMemo(() => {
+    const map = new Map<number, RiskFinding[]>();
+    review?.findings.forEach((f) => {
+      const list = map.get(f.stepIndex) ?? [];
+      list.push(f);
+      map.set(f.stepIndex, list);
+    });
+    return map;
+  }, [review]);
+
   if (!plan || !review) {
     return <Dialog open={open} onClose={onClose} title="确认执行计划" />;
   }
@@ -44,6 +56,9 @@ export default function ConfirmExecuteDialog({
   const blocked = review.blocked; // 含被阻止步骤：仅展示，禁止执行
   const needsDouble = review.overall === "high" || review.requiresDoubleConfirmation; // 高风险需勾选二次确认
   const overallMeta = RISK_META[review.overall];
+  // 确认按钮颜色随风险派生：仅高风险/二次确认走 danger 红，可恢复的中风险走 primary 主色，
+  // 与上方风险提示框（high→红、medium→主色）的视觉语言保持一致。
+  const confirmVariant = needsDouble ? "danger" : "primary";
 
   const footer = blocked ? (
     <Button variant="secondary" size="sm" onClick={onClose}>
@@ -57,9 +72,11 @@ export default function ConfirmExecuteDialog({
         取消
       </Button>
       <Button
-        variant="danger"
+        variant={confirmVariant}
         size="sm"
         disabled={needsDouble && !acknowledged}
+        // 二次确认未勾选时解释为何禁用，避免用户以为按钮失效。
+        title={needsDouble && !acknowledged ? "请先勾选下方的高风险确认框" : undefined}
         onClick={() => onConfirm(true, needsDouble)}
       >
         <Play size={15} strokeWidth={1.75} />
@@ -123,6 +140,12 @@ export default function ConfirmExecuteDialog({
                     <span className="text-fg-subtle">$</span>
                     <span className="min-w-0 flex-1 break-all">{step.command}</span>
                   </div>
+                  {/* 展示风险审查针对该步骤给出的具体理由，便于用户充分知情后再确认。 */}
+                  {findingsByStep.get(i)?.map((f, fi) => (
+                    <p key={fi} className="mt-1 text-[11.5px] text-fg-muted">
+                      · {f.message}
+                    </p>
+                  ))}
                 </div>
               );
             })}

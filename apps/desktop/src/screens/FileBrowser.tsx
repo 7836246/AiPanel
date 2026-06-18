@@ -107,6 +107,8 @@ export default function FileBrowser({ serverId, serverName }: { serverId: string
   const [listing, setListing] = useState<DirListing | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // 上传/下载等动作的错误走独立通道，不写入会顶替整个目录列表的 error。
+  const [actionError, setActionError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
 
   // 右侧编辑器状态。
@@ -117,6 +119,8 @@ export default function FileBrowser({ serverId, serverName }: { serverId: string
   const [savedContent, setSavedContent] = useState(""); // 最近一次磁盘内容（用于判断是否脏）
   const [truncated, setTruncated] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [justSaved, setJustSaved] = useState(false); // 保存成功后短暂显示「已保存 ✓」
+  const savedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // 单调递增请求序号：切目录/切文件后丢弃过期的异步结果，避免竞态覆盖。
   const dirReqRef = useRef(0);
@@ -154,6 +158,13 @@ export default function FileBrowser({ serverId, serverName }: { serverId: string
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [serverId]);
 
+  // 卸载时清理「已保存」提示的定时器，避免内存泄漏 / 卸载后 setState。
+  useEffect(() => {
+    return () => {
+      if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
+    };
+  }, []);
+
   // 打开（读取）一个文件到右侧编辑器。
   async function openFileAt(fullPath: string) {
     const reqId = ++fileReqRef.current;
@@ -161,6 +172,7 @@ export default function FileBrowser({ serverId, serverName }: { serverId: string
     setFileLoading(true);
     setFileError(null);
     setTruncated(false);
+    setJustSaved(false); // 切换文件时清掉残留的「已保存」提示
     try {
       const res: FileContent = await fsRead(serverId, fullPath);
       if (fileReqRef.current !== reqId) return;
@@ -179,12 +191,17 @@ export default function FileBrowser({ serverId, serverName }: { serverId: string
 
   // 保存编辑器内容回远端。
   async function save() {
-    if (!openFile || saving || truncated) return;
+    // 无改动也纳入提前返回，避免 ⌘S 触发冗余的远端写。
+    if (!openFile || saving || truncated || content === savedContent) return;
     setSaving(true);
     setFileError(null);
     try {
       await fsWrite(serverId, openFile, content);
       setSavedContent(content); // 标记为已保存（不再脏）
+      // 轻量正反馈：编辑器头部短暂显示「已保存 ✓」，几秒后自动消失。
+      setJustSaved(true);
+      if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
+      savedTimerRef.current = setTimeout(() => setJustSaved(false), 2000);
     } catch (e) {
       setFileError(errMsg(e));
     } finally {
@@ -214,20 +231,23 @@ export default function FileBrowser({ serverId, serverName }: { serverId: string
 
   // 上传:选本地文件 → scp 到当前目录 → 刷新列表。
   async function handleUpload() {
+    setActionError(null);
     try {
       const name = await fsUpload(serverId, path);
       if (name) loadDir(path);
     } catch (e) {
-      setError(`上传失败: ${errMsg(e)}`);
+      // 用独立的 actionError 提示，避免顶替目录列表导致文件看起来全没了。
+      setActionError(`上传失败: ${errMsg(e)}`);
     }
   }
 
   // 下载:把某个远端文件 scp 到本地(弹保存对话框)。
   async function handleDownload(entry: FileEntry) {
+    setActionError(null);
     try {
       await fsDownload(serverId, joinPath(path, entry.name));
     } catch (e) {
-      setError(`下载失败: ${errMsg(e)}`);
+      setActionError(`下载失败: ${errMsg(e)}`);
     }
   }
 
@@ -280,14 +300,19 @@ export default function FileBrowser({ serverId, serverName }: { serverId: string
           {crumbs.map((c, i) => (
             <span key={`${c.target}-${i}`} className="inline-flex items-center gap-0.5">
               {i > 0 && <ChevronRight size={13} className="flex-none text-fg-subtle" />}
-              <button
-                onClick={() => { if (confirmDiscard()) loadDir(c.target); }}
-                className={`rounded px-1.5 py-0.5 transition-colors hover:bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/60 ${
-                  i === crumbs.length - 1 ? "font-semibold text-fg" : "text-fg-muted"
-                }`}
-              >
-                {c.label}
-              </button>
+              {i === crumbs.length - 1 ? (
+                // 当前层：非交互 span，避免点自身触发对当前目录的冗余 loadDir。
+                <span aria-current="page" className="rounded px-1.5 py-0.5 font-semibold text-fg">
+                  {c.label}
+                </span>
+              ) : (
+                <button
+                  onClick={() => { if (confirmDiscard()) loadDir(c.target); }}
+                  className="rounded px-1.5 py-0.5 text-fg-muted transition-colors hover:bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/60"
+                >
+                  {c.label}
+                </button>
+              )}
             </span>
           ))}
         </div>
@@ -297,7 +322,13 @@ export default function FileBrowser({ serverId, serverName }: { serverId: string
         <IconButton aria-label="刷新" size="sm" disabled={loading} onClick={() => loadDir(path)} title="刷新当前目录">
           <RefreshCw size={15} className={loading ? "animate-spin" : undefined} />
         </IconButton>
-        <Button variant="secondary" size="sm" onClick={handleUpload} title="上传本地文件到当前目录">
+        <Button
+          variant="secondary"
+          size="sm"
+          disabled={loading}
+          onClick={handleUpload}
+          title={loading ? "目录加载中…" : "上传本地文件到当前目录"}
+        >
           <Upload size={13} /> 上传
         </Button>
       </div>
@@ -319,6 +350,22 @@ export default function FileBrowser({ serverId, serverName }: { serverId: string
             </div>
           </div>
 
+          {/* 上传/下载等动作的错误：非破坏性内联条，不顶替下方目录列表 */}
+          {actionError && (
+            <div className="m-1.5 flex items-center justify-between gap-2 rounded-md border border-risk-blocked/40 bg-risk-blocked/10 px-3 py-2 text-[12.5px] text-risk-blocked">
+              <span className="min-w-0 flex-1 break-words">{actionError}</span>
+              <button
+                type="button"
+                aria-label="关闭"
+                title="关闭"
+                onClick={() => setActionError(null)}
+                className="flex-none rounded px-1 leading-none hover:opacity-70"
+              >
+                ✕
+              </button>
+            </div>
+          )}
+
           {/* 列表主体 */}
           <div className="cx-scroll min-h-0 flex-1 overflow-y-auto px-1.5 pb-2">
             {loading ? (
@@ -327,7 +374,15 @@ export default function FileBrowser({ serverId, serverName }: { serverId: string
               </div>
             ) : error ? (
               <div className="m-1.5 rounded-md border border-risk-blocked/40 bg-risk-blocked/10 px-3 py-2 text-[12.5px] text-risk-blocked">
-                {error}
+                <div className="break-words">{error}</div>
+                {/* 给目录加载失败一个直接重试入口（重试当前目标目录） */}
+                <button
+                  type="button"
+                  onClick={() => loadDir(path)}
+                  className="mt-2 rounded border border-risk-blocked/40 px-2 py-0.5 text-[11.5px] transition-colors hover:bg-risk-blocked/15"
+                >
+                  重试
+                </button>
               </div>
             ) : visibleEntries.length === 0 ? (
               <div className="flex flex-col items-center gap-1.5 px-3 py-10 text-center">
@@ -397,6 +452,10 @@ export default function FileBrowser({ serverId, serverName }: { serverId: string
                   {openFile}
                   {dirty ? <span className="ml-1 text-risk-medium">●</span> : null}
                 </span>
+                {/* 保存成功后短暂出现的正反馈，不抢占空间（不存在时不渲染） */}
+                {justSaved && !dirty && (
+                  <span className="flex-none text-[11.5px] text-risk-low">已保存 ✓</span>
+                )}
                 <Button
                   variant="primary"
                   size="sm"
@@ -436,10 +495,18 @@ export default function FileBrowser({ serverId, serverName }: { serverId: string
                     spellCheck={false}
                     placeholder="（空文件）"
                     onKeyDown={(e) => {
-                      // ⌘S / Ctrl-S 保存。
+                      // ⌘S / Ctrl-S 保存；对不可保存态给出提示而非完全静默。
                       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") {
                         e.preventDefault();
-                        save();
+                        if (truncated) {
+                          setFileError("文件已截断,无法保存。");
+                        } else if (!dirty) {
+                          setJustSaved(true); // 复用「已保存」反馈表达「无改动」
+                          if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
+                          savedTimerRef.current = setTimeout(() => setJustSaved(false), 1500);
+                        } else {
+                          save();
+                        }
                       }
                     }}
                     className="absolute inset-0 h-full w-full resize-none border-none bg-bg px-4 py-3 font-mono text-[12.5px] leading-relaxed text-fg outline-none placeholder:text-fg-subtle"

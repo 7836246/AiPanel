@@ -81,6 +81,8 @@ function ServerTile({
     <div
       role="button"
       tabIndex={0}
+      // 显式按钮名：避免读屏把卡内名称/连接串/各指标拼成长串，明确卡片用途为「打开控制台」
+      aria-label={`打开 ${server.name} 控制台`}
       onClick={() => onSelect(server.id)}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
@@ -228,7 +230,16 @@ export function Dashboard({
           disabled={refreshing}
           title="仅刷新在线/离线状态;指标(负载/内存/磁盘)请用「只读体检」更新"
         >
-          {refreshing ? <Spinner size="sm" /> : <RefreshCw size={14} />} 刷新状态
+          {/* 刷新进行中：图标与文案同步切换为「刷新中…」，避免只转圈不变文案 */}
+          {refreshing ? (
+            <>
+              <Spinner size="sm" /> 刷新中…
+            </>
+          ) : (
+            <>
+              <RefreshCw size={14} /> 刷新状态
+            </>
+          )}
         </Button>
       </div>
 

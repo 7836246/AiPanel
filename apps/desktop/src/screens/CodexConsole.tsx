@@ -429,6 +429,8 @@ export default function CodexConsole() {
   const [draftReview, setDraftReview] = useState<RiskReview | null>(null);
   const [reviewing, setReviewing] = useState(false);
   const [servers, setServers] = useState<ServerProfile[]>([]);
+  // 正在做 SSH 连通性探测的服务器集合：用于在状态点处显示「检测中」反馈，避免「点了像没反应」。
+  const [probing, setProbing] = useState<Set<string>>(new Set());
   const [selectedServerId, setSelectedServerId] = useState<string | null>(null);
   const [serverQuery, setServerQuery] = useState("");
   const [tasks, setTasks] = useState<TaskRecord[]>([]);
@@ -574,12 +576,8 @@ export default function CodexConsole() {
   // 仅在 Tauri 下为真实探测；浏览器 mock 会返回随机值，故跳过以免误导状态点。
   useEffect(() => {
     if (!selectedServerId || !isTauri()) return;
-    const id = selectedServerId;
-    checkSshConnection(id)
-      .then((r) =>
-        setServers((prev) => prev.map((s) => (s.id === id ? { ...s, status: r.ok ? "online" : "offline" } : s)))
-      )
-      .catch(() => {});
+    void probe(selectedServerId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedServerId]);
 
   async function refreshTasks() {
@@ -955,6 +953,24 @@ export default function CodexConsole() {
     }
   }
 
+  // 对单台服务器做一次 SSH 连通性探测：探测期间把它加入 probing 集合（状态点显示 spinner），
+  // 完成后更新在线/离线状态并移出集合。notify 为 true 时额外弹 toast（用于显式的「检测连通性」动作）。
+  async function probe(id: string, notify = false) {
+    setProbing((p) => new Set(p).add(id));
+    try {
+      const r = await checkSshConnection(id);
+      setServers((prev) => prev.map((s) => (s.id === id ? { ...s, status: r.ok ? "online" : "offline" } : s)));
+      if (notify) {
+        const srv = servers.find((s) => s.id === id);
+        push(r.ok ? "success" : "danger", r.ok ? `${srv?.name ?? "服务器"} 连接成功` : `连接失败:${r.message}`);
+      }
+    } catch {
+      /* 探测失败:静默,状态点保持原值 */
+    } finally {
+      setProbing((p) => { const n = new Set(p); n.delete(id); return n; });
+    }
+  }
+
   // 拖拽改尺寸:按下分隔条后跟随鼠标移动调整面板宽/高;松开移除监听。
   const startDrag = (onDelta: (dx: number, dy: number) => void) => (e: ReactMouseEvent) => {
     e.preventDefault();
@@ -1071,7 +1087,7 @@ export default function CodexConsole() {
                     onClick={() => setSelectedServerId(srv.id)}
                     onContextMenu={(e) =>
                       openCtx(e, [
-                        { label: "连接 / 重连", onClick: () => { setSelectedServerId(srv.id); checkSshConnection(srv.id).then((r) => { setServers((prev) => prev.map((s) => (s.id === srv.id ? { ...s, status: r.ok ? "online" : "offline" } : s))); push(r.ok ? "success" : "danger", r.ok ? `${srv.name} 连接成功` : `连接失败:${r.message}`); }).catch(() => {}); } },
+                        { label: srv.status === "online" ? "重新检测连通性" : "检测连通性", onClick: () => { setSelectedServerId(srv.id); push("info", `正在检测 ${srv.name} 连通性…`); void probe(srv.id, true); } },
                         { label: "打开终端", onClick: () => { setSelectedServerId(srv.id); setView("console"); setShellOpen(true); } },
                         { label: "打开文件", onClick: () => { setSelectedServerId(srv.id); setView("console"); setFilesOpen(true); } },
                         { label: "Docker 部署", onClick: () => { setSelectedServerId(srv.id); setView("deploy"); } },
@@ -1080,7 +1096,7 @@ export default function CodexConsole() {
                         { label: "删除服务器", danger: true, onClick: () => { if (window.confirm(`删除服务器「${srv.name}」?`)) void deleteServer(srv.id).then(() => { setServers((prev) => prev.filter((s) => s.id !== srv.id)); if (selectedServerId === srv.id) setSelectedServerId(null); push("success", "服务器已删除"); }).catch((e) => push("danger", errMsg(e))); } },
                       ])
                     }
-                    className={`group flex cursor-pointer items-center gap-2.5 rounded-md px-2.5 py-1.5 text-[13.5px] transition-colors hover:bg-hover ${isSel ? "" : "text-fg-muted"}`}
+                    className={`group flex cursor-pointer items-center gap-2.5 rounded-md px-2.5 py-1.5 text-[13.5px] transition-colors ${isSel ? "bg-selected text-fg" : "text-fg-muted hover:bg-hover"}`}
                   >
                     <ServerIconLucide size={15} strokeWidth={1.75} className="flex-none text-fg-subtle" />
                     <span className="flex-1 truncate">{srv.name}</span>
@@ -1091,10 +1107,12 @@ export default function CodexConsole() {
                     >
                       <Star size={13} fill={srv.favorite ? "currentColor" : "none"} />
                     </button>
-                    <IconButton aria-label="编辑服务器" size="sm" className="opacity-0 transition-opacity group-hover:opacity-100" onClick={(e) => { e.stopPropagation(); setEditing(srv); }}>
-                      <PencilIcon size={12} />
-                    </IconButton>
-                    <span role="img" aria-label={srv.status === "online" ? "在线" : srv.status === "offline" ? "离线" : "未知/未检测"} title={srv.status === "online" ? "在线" : srv.status === "offline" ? "离线" : "未知/未检测"} className={`h-1.5 w-1.5 rounded-full ${statusDot(srv.status)}`} />
+                    {probing.has(srv.id) ? (
+                      // 探测中:用 spinner 替代静态状态点,给出即时反馈(编辑入口已由右键菜单承担,故此处不再放编辑笔)。
+                      <span className="flex-none" role="img" aria-label="检测中" title="检测连通性中…"><Spinner size="sm" /></span>
+                    ) : (
+                      <span role="img" aria-label={srv.status === "online" ? "在线" : srv.status === "offline" ? "离线" : "未知/未检测"} title={srv.status === "online" ? "在线" : srv.status === "offline" ? "离线" : "未知/未检测"} className={`h-1.5 w-1.5 flex-none rounded-full ${statusDot(srv.status)}`} />
+                    )}
                   </div>
                   {isSel && (
                     <div className="flex flex-col gap-px pl-3.5">
@@ -1149,12 +1167,12 @@ export default function CodexConsole() {
               onClick={() => setSidebarOpen((o) => !o)}
               size="lg"
               title="折叠/展开侧栏"
-              className={sidebarOpen ? "text-fg-muted" : "text-brand"}
+              className={sidebarOpen ? "text-brand" : "text-fg-muted"}
             >
               <PanelLeft size={16} />
             </IconButton>
             <span className="truncate text-[13.5px] font-semibold">{topTitle}</span>
-            {view === "console" && (
+            {view === "console" && current && (
               <div className="relative flex-none">
                 <IconButton aria-label="更多" size="lg" title="更多" className="text-fg-muted" onClick={() => setTitleMenuOpen((o) => !o)}>
                   <MoreHorizontal size={16} />
@@ -1426,7 +1444,12 @@ export default function CodexConsole() {
                       {readOnlyMode ? <Lock size={14} /> : <LockOpen size={14} />}
                       {readOnlyMode ? "只读优先 · 开" : "只读优先 · 关"}
                     </button>
-                    <button onClick={diagnose} disabled={!intentValue.trim() || !selectedServerId || running} className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[13px] text-fg-muted transition-colors hover:bg-hover hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/60 disabled:opacity-40">
+                    <button
+                      onClick={diagnose}
+                      disabled={!intentValue.trim() || !selectedServerId || running || !aiProvider}
+                      title={!aiProvider ? "AI 诊断需先配置模型供应商" : !selectedServerId ? "先选择左侧服务器" : !intentValue.trim() ? "请输入运维任务描述" : running ? "运行中…" : "让 AI 用只读工具自动诊断"}
+                      className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[13px] text-fg-muted transition-colors hover:bg-hover hover:text-fg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/60 disabled:opacity-40"
+                    >
                       <Sparkles size={14} /> AI 诊断
                     </button>
                   </div>
@@ -1437,7 +1460,7 @@ export default function CodexConsole() {
                       onChanged={() => listProviders().then(setProviders).catch(() => {})}
                       onConfigure={() => setView("settings")}
                     />
-                    <button aria-label="发送" onClick={generatePlan} className="flex h-[30px] w-[30px] flex-none items-center justify-center rounded-full bg-brand text-brand-fg transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/60 disabled:opacity-40" disabled={!intentValue.trim() || !selectedServerId || running}>
+                    <button aria-label="发送" title={!selectedServerId ? "先选择左侧服务器" : !intentValue.trim() ? "请输入运维任务描述" : running ? "运行中…" : "生成计划"} onClick={generatePlan} className="flex h-[30px] w-[30px] flex-none items-center justify-center rounded-full bg-brand text-brand-fg transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/60 disabled:opacity-40" disabled={!intentValue.trim() || !selectedServerId || running}>
                       <ArrowUp size={16} strokeWidth={2} />
                     </button>
                   </div>
@@ -1462,7 +1485,9 @@ export default function CodexConsole() {
               <Terminal
                 host={selected?.name ?? "—"}
                 live={running}
-                lines={termLines.length ? termLines : [{ text: "终端输出会显示在这里。", tone: "muted" }]}
+                // 区分「未运行」与「已完成无输出」两种空态:已完成的运行明确提示「本次运行无输出」,
+                // 避免与指向未来的占位「终端输出会显示在这里」混淆。
+                lines={termLines.length ? termLines : [{ text: current && current.status !== "awaiting_confirmation" ? "本次运行无输出" : "终端输出会显示在这里。", tone: "muted" }]}
                 cursor={running}
               />
             )}
