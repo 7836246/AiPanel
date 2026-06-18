@@ -1243,10 +1243,14 @@ export default function CodexConsole() {
               </button>
             </div>
           ) : servers.length === 0 ? (
-            <div className="flex flex-col items-center gap-1.5 px-2.5 py-6 text-center">
+            <button
+              type="button"
+              onClick={() => setAddOpen(true)}
+              className="flex w-full flex-col items-center gap-1.5 rounded-md border border-dashed border-border px-2.5 py-6 text-center transition-colors hover:border-border-strong hover:bg-hover"
+            >
               <ServerIconLucide size={22} className="text-fg-subtle" strokeWidth={1.75} />
-              <div className="text-[12.5px] text-fg-subtle">还没有服务器,点 ＋ 添加</div>
-            </div>
+              <div className="text-[12.5px] text-fg-subtle">还没有服务器,点此添加</div>
+            </button>
           ) : (
             filteredServers.map((srv) => {
               const isSel = srv.id === selectedServerId;
@@ -1496,7 +1500,7 @@ export default function CodexConsole() {
           <ServersLoadState loading={serversLoading} error={serversError} onRetry={() => void loadServers()} />
         ) : view === "dashboard" ? (
           servers.length === 0 ? (
-            <FirstRun onAdd={() => setAddOpen(true)} />
+            <FirstRun onAdd={() => setAddOpen(true)} hasProvider={!!aiProvider} onSettings={() => setView("settings")} />
           ) : (
             <Suspense fallback={<PanelLoading label="加载概览" />}>
               <Dashboard
@@ -1510,7 +1514,7 @@ export default function CodexConsole() {
             </Suspense>
           )
         ) : servers.length === 0 ? (
-          <FirstRun onAdd={() => setAddOpen(true)} />
+          <FirstRun onAdd={() => setAddOpen(true)} hasProvider={!!aiProvider} onSettings={() => setView("settings")} />
         ) : (
           // 工作区:中部控制台 + 右侧文件树 + 底部终端(三栏同屏,Codex 式)
           <div className="flex min-h-0 flex-1 flex-col">
@@ -1815,17 +1819,98 @@ export default function CodexConsole() {
 }
 
 /* ---------------- 空态 / 首页 ---------------- */
-// 首次使用引导：尚未添加任何服务器时的空状态。
-function FirstRun({ onAdd }: { onAdd: () => void }) {
+// 单条引导步骤：左侧序号/对勾,中间标题+说明,右侧可选操作按钮。
+function OnboardStep({
+  n,
+  title,
+  desc,
+  done = false,
+  dim = false,
+  action,
+}: {
+  n: number;
+  title: string;
+  desc: string;
+  done?: boolean;
+  dim?: boolean;
+  action?: ReactNode;
+}) {
   return (
-    <div className="flex min-h-0 flex-1 items-center justify-center p-8">
-      <div className="max-w-md text-center">
-        <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-surface-2 text-fg-muted"><ServerIconLucide size={24} strokeWidth={1.75} /></div>
-        <h2 className="text-base font-semibold">还没有连接任何服务器</h2>
-        <p className="mt-2 text-[13px] leading-relaxed text-fg-muted">
-          AiPanel 在本地运行、通过 SSH 管理服务器,不在服务器上常驻。添加一台服务器即可开始只读体检与 AI 运维。凭据只存本地 Keychain。
-        </p>
-        <div className="mt-5"><Button variant="primary" size="md" onClick={onAdd}><PlusIcon size={16} /> 添加第一台服务器</Button></div>
+    <li className={`flex items-start gap-3 rounded-lg border border-border bg-surface-1 px-3.5 py-3 ${dim ? "opacity-60" : ""}`}>
+      <span
+        className={`mt-0.5 flex h-6 w-6 flex-none items-center justify-center rounded-full text-[12px] font-semibold ${
+          done ? "bg-risk-low-soft text-risk-low" : "bg-surface-2 text-fg-muted"
+        }`}
+        aria-hidden
+      >
+        {done ? <CheckIcon size={14} strokeWidth={2.5} /> : n}
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="text-[13px] font-semibold text-fg">{title}</div>
+        <div className="mt-0.5 text-[12px] leading-relaxed text-fg-muted">{desc}</div>
+      </div>
+      {action && <div className="flex-none self-center">{action}</div>}
+    </li>
+  );
+}
+
+// 首次使用引导：尚未添加任何服务器时的三步上手清单(服务器→供应商→只读体检)。
+function FirstRun({
+  onAdd,
+  hasProvider,
+  onSettings,
+}: {
+  onAdd: () => void;
+  hasProvider: boolean;
+  onSettings: () => void;
+}) {
+  return (
+    <div className="cx-scroll flex min-h-0 flex-1 items-center justify-center overflow-y-auto p-8">
+      <div className="w-full max-w-md">
+        <div className="text-center">
+          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-surface-2 text-fg-muted">
+            <ServerIconLucide size={24} strokeWidth={1.75} />
+          </div>
+          <h2 className="text-base font-semibold">欢迎使用 AiPanel</h2>
+          <p className="mt-2 text-[13px] leading-relaxed text-fg-muted">
+            本地运行、通过 SSH 管理服务器,服务器上不常驻进程。凭据只存本地 Keychain。三步即可开始:
+          </p>
+        </div>
+        <ol className="mt-5 space-y-2.5">
+          <OnboardStep
+            n={1}
+            title="添加一台服务器"
+            desc="填 host / 用户 / 认证方式,凭据写入系统 Keychain,不进数据库或日志。"
+            action={
+              <Button variant="primary" size="sm" onClick={onAdd}>
+                <PlusIcon size={14} /> 添加服务器
+              </Button>
+            }
+          />
+          <OnboardStep
+            n={2}
+            title="配置 AI 供应商（可选）"
+            desc={
+              hasProvider
+                ? "已配置,可用真实 LLM 生成计划。"
+                : "填 OpenAI 兼容的 Base URL + API Key,自动探测模型;不配置则用本地兜底规划。"
+            }
+            done={hasProvider}
+            action={
+              hasProvider ? undefined : (
+                <Button variant="secondary" size="sm" onClick={onSettings}>
+                  <SettingsIcon size={14} /> 去设置
+                </Button>
+              )
+            }
+          />
+          <OnboardStep
+            n={3}
+            title="只读体检 + 自然语言运维"
+            desc="选中服务器后测连通、跑安全的只读体检,再用自然语言生成可审查的执行计划。"
+            dim
+          />
+        </ol>
       </div>
     </div>
   );
