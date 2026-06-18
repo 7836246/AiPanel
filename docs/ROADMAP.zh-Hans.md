@@ -75,6 +75,14 @@ AiPanel 的目标不是复刻传统服务器面板，而是做一个本地运行
 
 > 以上均生成**结构化 Plan**，经现有 Risk Reviewer 与确认流程后执行（写步骤判为 Medium/High，触发确认/二次确认）。
 
+## M6：发布与在线更新
+
+- [x] 应用内在线更新（Tauri updater 插件 + GitHub Releases `latest.json` + minisign 签名校验）；
+- [x] 版本管理:`vX.Y.Z` tag 驱动,`scripts/bump-version.sh` 统一同步各处版本;
+- [x] 发布工作流 `release.yml`:tag 触发多平台(macOS arm64/x64、Linux、Windows)构建+签名+发布;
+- [x] 设置「在线更新」:检查/下载(进度)/安装/重启 + 启动静默检查(可关);
+- [ ] 配置签名私钥 Secret 并推首个 tag,完成端到端发布与更新实测(见 [发布文档](./RELEASE.zh-Hans.md))。
+
 ## 暂不做
 
 - 不做云端托管控制台；

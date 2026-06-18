@@ -137,3 +137,14 @@ AiPanel Core
         v
 Remote Server
 ```
+
+## 在线更新
+
+- **方案**:Tauri v2 官方 `updater` 插件 + GitHub Releases,**不自造**下载/校验逻辑。
+- **版本管理**:`vX.Y.Z` git tag 驱动;`tauri.conf.json` 的 `version` 为权威,`scripts/bump-version.sh`
+  同步根/桌面 `package.json`、`Cargo.toml`、`Cargo.lock`;`release-check.sh` 校验一致且与 tag 匹配。
+- **分发**:`.github/workflows/release.yml` 在 tag 上多平台(macOS arm64/x64、Linux、Windows)构建,经
+  `tauri-action` 用 minisign 私钥签名并发布 Release,生成 `latest.json` 更新清单。
+- **安全**:客户端内置**公钥**(`plugins.updater.pubkey`)校验更新包签名,签名不符拒绝安装;**私钥**
+  只在本地与 GitHub Secret(`TAURI_SIGNING_PRIVATE_KEY`),绝不入库。检查失败/无网络优雅降级,不影响使用。
+- 细节见 [发布与在线更新](./RELEASE.zh-Hans.md)。

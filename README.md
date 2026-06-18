@@ -101,11 +101,15 @@ this gate.
 - [x] Docker app deployment workflows — detect/install, Compose deploy, Caddy/Nginx
       reverse proxy + HTTPS, post-deploy health checks; Uptime Kuma / n8n / WordPress /
       PostgreSQL / Redis templates, each a risk-reviewed Plan
+- [x] In-app online updates — signed releases via GitHub Releases (Tauri updater +
+      minisign); version managed by `vX.Y.Z` tags; check/download/install + relaunch
+      from Settings, with an optional silent check on startup
 
 ## Documentation
 
 - [中文文档](./docs/README.zh-Hans.md)
 - [Roadmap](./docs/ROADMAP.zh-Hans.md)
+- [Release & online updates](./docs/RELEASE.zh-Hans.md)
 - [Architecture](./docs/ARCHITECTURE.zh-Hans.md)
 - [Tech Stack](./docs/TECH_STACK.zh-Hans.md)
 - [Security Model](./docs/SECURITY_MODEL.zh-Hans.md)

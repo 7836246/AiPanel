@@ -206,12 +206,14 @@ AiPanel SSH Executor
 - [x] 命令风险审查；
 - [x] 桌面客户端；
 - [x] Docker 应用部署流程；
-- [ ] Developer ID 签名、公证与可分发发布流程实测；
+- [x] 应用内在线更新（GitHub Releases + minisign 签名,tag vX.Y.Z 管理版本）；
+- [ ] Developer ID 签名、公证与可分发发布流程实测;
 - [ ] 带真实供应商 API Key 的完整模型轮次与真实服务器部署验收。
 
 ## 项目文档
 
 - [路线图](./ROADMAP.zh-Hans.md)
+- [发布与在线更新](./RELEASE.zh-Hans.md)
 - [架构设计](./ARCHITECTURE.zh-Hans.md)
 - [技术选型](./TECH_STACK.zh-Hans.md)
 - [安全模型](./SECURITY_MODEL.zh-Hans.md)
