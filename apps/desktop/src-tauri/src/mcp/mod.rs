@@ -318,4 +318,16 @@ mod tests {
         .await
         .is_none());
     }
+
+    #[tokio::test]
+    async fn unknown_request_method_returns_method_not_found() {
+        // 带 id 的未知方法是**请求**:必须回 JSON-RPC -32601 错误,否则对端会一直等待挂起。
+        let st = mem_state();
+        let resp = handle_message(&st, &json!({"jsonrpc":"2.0","id":7,"method":"no/such/method"}))
+            .await
+            .expect("带 id 的未知请求必须返回响应");
+        assert_eq!(resp["id"], 7);
+        assert_eq!(resp["error"]["code"], -32601);
+        assert!(resp.get("result").is_none(), "错误响应不应同时带 result");
+    }
 }
