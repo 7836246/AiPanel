@@ -154,8 +154,12 @@ fn redact_live_line(line: &str, in_key_block: &mut bool) -> Option<String> {
 /// ssh 会把这类提示写到合并的 tty 流里——它不属于远端命令的真实输出，
 /// 既不应回调给 `on_line`，也不应计入累积缓冲区/审计。
 fn is_ssh_noise_line(line: &str) -> bool {
+    // 收紧匹配:必须精确符合 ssh 客户端关闭提示的形态(以 "Connection to "/"Shared connection to "
+    // 开头、以 " closed." 结尾),而非宽松的 contains("closed")——后者会把诸如程序输出
+    // "Connection to database closed" 这类合法行从审计/缓冲区里静默丢弃。
     let trimmed = line.trim();
-    trimmed.starts_with("Connection to ") && trimmed.contains("closed")
+    (trimmed.starts_with("Connection to ") || trimmed.starts_with("Shared connection to "))
+        && trimmed.ends_with(" closed.")
 }
 
 /// 临时私钥文件，在 drop 时删除。

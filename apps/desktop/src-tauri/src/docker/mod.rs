@@ -74,7 +74,7 @@ fn container_name_check_step(name: &str) -> PlanStep {
     step(
         format!("预检 Docker 容器名 {name} 是否已存在（不存在才可继续部署）"),
         format!(
-            "existing=$(docker ps -a --filter name=^{name}$ --format '{{{{.Names}}}}'); if [ -n \"$existing\" ]; then echo \"container name {name} already exists:\"; echo \"$existing\"; exit 1; fi"
+            "existing=$(docker ps -a --filter name=^{name}$ --format '{{{{.Names}}}}') || {{ echo '无法查询 docker(未安装/daemon 未运行/无权限),无法预检容器名'; exit 1; }}; if [ -n \"$existing\" ]; then echo \"container name {name} already exists:\"; echo \"$existing\"; exit 1; fi"
         ),
     )
 }
@@ -345,7 +345,7 @@ volumes:
         let path = self.env_path();
         match self {
             AppTemplate::WordPress => Some(format!(
-                "mkdir -p {dir} && mysql_root_password=$(openssl rand -base64 24) || exit 1; mysql_password=$(openssl rand -base64 24) || exit 1; [ -n \"$mysql_root_password\" ] && [ -n \"$mysql_password\" ] || exit 1; cat > {path} <<EOF\n\
+                "umask 077; mkdir -p {dir} && mysql_root_password=$(openssl rand -base64 24) || exit 1; mysql_password=$(openssl rand -base64 24) || exit 1; [ -n \"$mysql_root_password\" ] && [ -n \"$mysql_password\" ] || exit 1; cat > {path} <<EOF\n\
                  MYSQL_ROOT_PASSWORD=$mysql_root_password\n\
                  MYSQL_DATABASE=wordpress\n\
                  MYSQL_USER=wordpress\n\
@@ -355,7 +355,7 @@ volumes:
                 path = path,
             )),
             AppTemplate::Postgres => Some(format!(
-                "mkdir -p {dir} && postgres_password=$(openssl rand -base64 24) || exit 1; [ -n \"$postgres_password\" ] || exit 1; cat > {path} <<EOF\n\
+                "umask 077; mkdir -p {dir} && postgres_password=$(openssl rand -base64 24) || exit 1; [ -n \"$postgres_password\" ] || exit 1; cat > {path} <<EOF\n\
                  POSTGRES_PASSWORD=$postgres_password\n\
                  EOF",
                 dir = self.dir(),

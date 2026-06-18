@@ -152,8 +152,19 @@ pub async fn handle_message(state: &AppState, msg: &Value) -> Option<Value> {
                 json!({ "content": [{ "type": "text", "text": text }], "isError": is_error }),
             ))
         }
-        // notifications/initialized 等通知:不回。
-        _ => None,
+        // 未知方法:带 id 的是**请求**,须回 method-not-found 错误,否则对端会一直等待(挂起);
+        // 无 id 的是通知(如 notifications/initialized),按 JSON-RPC 不回。
+        _ => {
+            if msg.get("id").is_some() {
+                Some(json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "error": { "code": -32601, "message": format!("method not found: {method}") },
+                }))
+            } else {
+                None
+            }
+        }
     }
 }
 

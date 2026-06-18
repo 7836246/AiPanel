@@ -781,6 +781,9 @@ export async function saveProvider(
 ): Promise<ProviderConfig> {
   if (!isTauri()) {
     const id = input.id ?? `mock-${Date.now()}`;
+    // 与真实后端 provider_credential_ref_for_save 一致:编辑已有 provider 且本次未传新 Key、
+    // 也未 clearApiKey 时,**保留**既有 credentialRef,否则 UI 上「已配置 Key」会误显为未配置。
+    const existing = mockProviders.find((p) => p.id === id);
     const cfg: ProviderConfig = {
       id,
       name: input.name,
@@ -788,9 +791,9 @@ export async function saveProvider(
       baseUrl: input.baseUrl,
       model: input.model,
       codexPath: input.codexPath,
-      credentialRef: clearApiKey ? undefined : apiKey ? `provider:${id}` : undefined,
+      credentialRef: clearApiKey ? undefined : apiKey ? `provider:${id}` : existing?.credentialRef,
       enabled: input.enabled,
-      createdAt: new Date().toISOString(),
+      createdAt: existing?.createdAt ?? new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
     mockProviders = [...mockProviders.filter((p) => p.id !== cfg.id), cfg];

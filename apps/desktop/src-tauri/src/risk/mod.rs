@@ -171,26 +171,62 @@ fn rm_targets_system_root(cmd: &str) -> bool {
 }
 
 /// 判断是否为只读的防火墙查询命令（不改变防火墙状态）。
+///
+/// **必须传入原始(未小写)命令**:iptables 用大小写区分 `-S`(--list-rules,只读) 与
+/// `-s`(源地址匹配,出现在写规则里),小写化会把二者混为一谈,导致
+/// `iptables -s 1.2.3.4 -j DROP`(封 IP,写) 被误判为只读 → 绕过确认/只读闸门。
+/// 判定原则:含明确的列出/查看/转储子命令,**且**不含任何写/动作选项。
 fn is_firewall_readonly(cmd: &str) -> bool {
-    // 列出/查看状态的子命令不会改变防火墙状态。
-    contains(cmd, "iptables -l")
-        || contains(cmd, "iptables -s")
-        || contains(cmd, "iptables --list")
-        || contains(cmd, "ufw status")
-        || contains(cmd, "firewall-cmd --list")
-        || contains(cmd, "firewall-cmd --state")
-        || contains(cmd, "nft list")
+    let toks: Vec<&str> = cmd.split_whitespace().collect();
+    // 任意写/动作选项出现即非只读(iptables/ip6tables 的 -A/-I/-D/-R/-P/-F/-Z/-N/-X/-j 及长选项)。
+    let has_write_action = toks.iter().any(|t| {
+        matches!(
+            *t,
+            "-A" | "-I" | "-D" | "-R" | "-P" | "-F" | "-Z" | "-N" | "-X" | "-j"
+                | "--append" | "--insert" | "--delete" | "--replace" | "--policy"
+                | "--new-chain" | "--delete-chain" | "--flush" | "--zero" | "--jump"
+        )
+    });
+    if has_write_action {
+        return false;
+    }
+    // iptables/ip6tables 列出规则:-L/--list 或 -S/--list-rules(大小写敏感:仅大写 L/S 为列出)。
+    let iptables_list = toks.iter().any(|t| {
+        matches!(*t, "-L" | "-S" | "--list" | "--list-rules")
+            || (t.starts_with('-') && !t.starts_with("--") && (t.contains('L') || t.contains('S')))
+    });
+    let lower = cmd.to_lowercase();
+    ((contains(&lower, "iptables") || contains(&lower, "ip6tables")) && iptables_list)
+        || contains(&lower, "ufw status")
+        || contains(&lower, "firewall-cmd --list")
+        || contains(&lower, "firewall-cmd --state")
+        || contains(&lower, "nft list")
         // 转储规则属于只读（注意 iptables-restore 是写入，不在此列）。
-        || contains(cmd, "iptables-save")
-        || contains(cmd, "ip6tables-save")
+        || contains(&lower, "iptables-save")
+        || contains(&lower, "ip6tables-save")
 }
 
-/// 判断命令是否通过重定向/tee/sed -i 向给定路径前缀写入。
-/// 注意：tee 必须是「被执行的命令」（段首），不能用裸子串——否则
+/// 取 `dd` 的 `of=<path>` 写目标(若有)。命令已小写化,路径前缀比较时同为小写。
+fn dd_of_target(cmd: &str) -> Option<&str> {
+    cmd.split_whitespace().find_map(|t| t.strip_prefix("of="))
+}
+
+/// 判断命令是否向给定路径前缀写入。覆盖:重定向 `>`、`tee`、`sed -i`,以及
+/// `dd ... of=<path>`(普通文件;直写块设备 `of=/dev/` 另由 Blocked 规则处理)。
+/// 注意：tee/dd 必须是「被执行的命令」（段首），不能用裸子串——否则
 /// `grep tee /etc/profile` 这类把 tee 当参数的只读命令会被误判为写入。
 fn writes_to(cmd: &str, path_prefixes: &[&str]) -> bool {
     let redirect = contains(cmd, ">") || invokes(cmd, "tee") || contains(cmd, "sed -i");
-    redirect && path_prefixes.iter().any(|p| contains(cmd, p))
+    if redirect && path_prefixes.iter().any(|p| contains(cmd, p)) {
+        return true;
+    }
+    // dd if=... of=<普通文件>:覆盖如 /etc/passwd、/etc/cron.d/* 等关键路径。
+    if invokes(cmd, "dd") {
+        if let Some(of) = dd_of_target(cmd) {
+            return path_prefixes.iter().any(|p| of.starts_with(p));
+        }
+    }
+    false
 }
 
 /// 仅就命令本身对其归类。只读模式下的升级由 [`review_plan`] 负责施加。
@@ -316,7 +352,8 @@ pub fn classify_command(command: &str) -> Classification {
         return mk(RiskLevel::High, "disk", "disk partitioning/formatting tool");
     }
     // 修改防火墙规则：必须是 iptables/ip6tables/ufw/firewall-cmd/nft 在执行，且非只读查询。
-    if invokes_any(&c, &["iptables", "ip6tables", "ufw", "firewall-cmd", "nft"]) && !is_firewall_readonly(&c) {
+    // is_firewall_readonly 须用**原始**命令以区分 iptables -S(只读) 与 -s(写规则的源匹配)。
+    if invokes_any(&c, &["iptables", "ip6tables", "ufw", "firewall-cmd", "nft"]) && !is_firewall_readonly(command) {
         return mk(RiskLevel::High, "firewall", "modifies firewall rules");
     }
     // 编辑 SSH 服务端配置：内容型检测（重定向/tee/sed -i），或某段确实在用编辑器打开。
@@ -874,6 +911,31 @@ mod tests {
         assert_eq!(lvl("grep -r reboot /var/log"), RiskLevel::Low);
         assert_eq!(lvl("ssh root@host uptime"), RiskLevel::Low);
         assert_eq!(lvl("timeout 5 systemctl status nginx"), RiskLevel::Low);
+    }
+
+    #[test]
+    // 安全回归(bug 猎杀轮2):防火墙 -s/-S 大小写混淆、dd of= 写关键文件,均不得被漏判为 Low。
+    fn security_round2_firewall_and_dd_writes() {
+        // iptables -s <ip> -j DROP 是封 IP 的写规则(隐式 -A INPUT),曾因小写化与 -S 混淆被判 Low。
+        assert_eq!(lvl("iptables -s 1.2.3.4 -j DROP"), RiskLevel::High);
+        assert_eq!(lvl("iptables -s 10.0.0.0/8 -j REJECT"), RiskLevel::High);
+        assert_eq!(lvl("ip6tables -s ::1 -j DROP"), RiskLevel::High);
+        // iptables -S / --list-rules 是只读列出,必须保持 Low。
+        assert_eq!(lvl("iptables -S"), RiskLevel::Low);
+        assert_eq!(lvl("iptables --list-rules"), RiskLevel::Low);
+        assert_eq!(lvl("iptables -L -n -v"), RiskLevel::Low);
+        assert_eq!(lvl("iptables -nvL"), RiskLevel::Low);
+        // dd 用 of= 覆盖普通关键文件:passwd/shadow → Blocked,其它 /etc → High;/tmp 仍 Low。
+        assert_eq!(lvl("dd if=/dev/zero of=/etc/passwd"), RiskLevel::Blocked);
+        assert_eq!(lvl("dd if=/dev/zero of=/etc/shadow bs=1 count=1"), RiskLevel::Blocked);
+        assert_eq!(lvl("dd if=/tmp/payload of=/etc/cron.d/evil"), RiskLevel::High);
+        assert_eq!(lvl("dd if=/dev/zero of=/tmp/file bs=1M count=10"), RiskLevel::Low);
+        // 直写块设备仍 Blocked(of=/dev/)。
+        assert_eq!(lvl("dd if=/dev/zero of=/dev/sda"), RiskLevel::Blocked);
+        // 普通防火墙写/读回归不变。
+        assert_eq!(lvl("iptables -A INPUT -p tcp --dport 22 -j DROP"), RiskLevel::High);
+        assert_eq!(lvl("iptables -L"), RiskLevel::Low);
+        assert_eq!(lvl("ip6tables-save"), RiskLevel::Low);
     }
 
     /// 测试辅助：用命令列表构造一份计划。
