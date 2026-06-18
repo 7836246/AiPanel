@@ -1230,6 +1230,17 @@ export default function CodexConsole() {
     readOnlyMode && !!current?.plan && current.plan.steps.some((s) => s.risk !== "low" && s.risk !== "blocked");
   const planBlocked = planHardBlocked || planReadonlyBlocked;
 
+  // 设置是**独立整页**(Codex 式):盖住整个 app——不显示主侧栏/顶栏,只有设置自己的分类导航 +「返回应用」。
+  if (view === "settings") {
+    return (
+      <div className="h-screen w-screen overflow-hidden bg-bg text-fg" style={{ fontFamily: "var(--font-sans)" }}>
+        <Suspense fallback={<PanelLoading label="加载设置" />}>
+          <SettingsPanel onBack={() => setView("console")} />
+        </Suspense>
+      </div>
+    );
+  }
+
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-bg text-fg" style={{ fontFamily: "var(--font-sans)" }}>
       {/* 侧栏(可由顶栏左侧开关折叠) */}
@@ -1371,7 +1382,8 @@ export default function CodexConsole() {
         </div>
 
         <div className="border-t border-border px-2 py-1.5">
-          <NavItem icon={<SettingsIcon size={16} />} label="设置" active={view === "settings"} onClick={() => setView("settings")} />
+          {/* 设置是独立整页(见组件顶部 early return),在主 shell 里永不为 active */}
+          <NavItem icon={<SettingsIcon size={16} />} label="设置" active={false} onClick={() => setView("settings")} />
         </div>
       </aside>
       )}
@@ -1519,10 +1531,6 @@ export default function CodexConsole() {
         {view === "audit" ? (
           <Suspense fallback={<PanelLoading label="加载审计" />}>
             <AuditView onNotify={push} />
-          </Suspense>
-        ) : view === "settings" ? (
-          <Suspense fallback={<PanelLoading label="加载设置" />}>
-            <SettingsPanel onBack={() => setView("console")} />
           </Suspense>
         ) : view === "deploy" ? (
           selected ? (
