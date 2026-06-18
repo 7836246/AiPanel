@@ -8,6 +8,7 @@ import {
   type AuditRecord,
 } from "../lib/api";
 import { formatRelativeTime } from "../lib/time";
+import { executionOutput, executionStatusLabel } from "../lib/auditFormat";
 
 // 复制按钮:点击把文本写入剪贴板,短暂显示对勾反馈。用于审计里快速复制命令。
 function CopyBtn({ text, className = "" }: { text: string; className?: string }): JSX.Element {
@@ -57,31 +58,6 @@ const FILTERS: { key: StatusFilter; label: string }[] = [
 // 从后端错误或任意异常中提取可展示的错误文本。
 const errMsg = (e: unknown): string =>
   e && typeof e === "object" && "message" in e ? String((e as { message: unknown }).message) : String(e);
-
-function firstOutputLine(text: string): string | null {
-  return text
-    .split("\n")
-    .map((line) => line.trim())
-    .find((line) => line.length > 0) ?? null;
-}
-
-function executionStatusLabel(ex: AuditRecord["executions"][number]): string {
-  if (ex.exitCode !== -1) return `exit ${ex.exitCode}`;
-  const reason = firstOutputLine(ex.stderr) ?? firstOutputLine(ex.stdout);
-  if (!reason) return "未获得退出码";
-  return `未获得退出码 · ${reason.slice(0, 48)}${reason.length > 48 ? "…" : ""}`;
-}
-
-function executionOutput(ex: AuditRecord["executions"][number]): { text: string; stderr: boolean }[] {
-  const lines: { text: string; stderr: boolean }[] = [];
-  for (const line of ex.stdout.split("\n")) {
-    if (line.trim()) lines.push({ text: line, stderr: false });
-  }
-  for (const line of ex.stderr.split("\n")) {
-    if (line.trim()) lines.push({ text: line, stderr: true });
-  }
-  return lines;
-}
 
 // 独立审计视图：自加载审计记录,支持搜索、状态筛选与导出 JSON 文件。
 export default function AuditView({
