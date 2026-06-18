@@ -442,6 +442,29 @@ server.doctor.readonly、ssh.run_readonly、task.plan/review)来收集事实(系
     )
 }
 
+/// 打包的 codex-app-server 二进制是否就绪(决定 OpenAI 供应商能否走 codex 引擎)。
+pub fn codex_binary_available() -> bool {
+    let p = codex::resolve_codex_bin(None);
+    std::path::Path::new(&p).is_file()
+}
+
+/// 用「打包 codex」给某个 **OpenAI 兼容** provider 生成计划(codex 作底层引擎,
+/// base/key/model 复用该 provider)。阻塞调用,放进 spawn_blocking。
+pub fn codex_plan(
+    provider: &ProviderConfig,
+    api_key: Option<String>,
+    intent: &str,
+    server_id: Option<&str>,
+) -> AppResult<Plan> {
+    CodexAppServerProvider {
+        program: codex::resolve_codex_bin(provider.codex_path.as_deref()),
+        base_url: provider.base_url.clone(),
+        api_key,
+        model: provider.model.clone(),
+    }
+    .plan(intent, server_id)
+}
+
 /// 用配置好的 provider 生成计划：构建对应 provider 并调用其 plan。
 pub fn plan_with_provider(
     config: &ProviderConfig,

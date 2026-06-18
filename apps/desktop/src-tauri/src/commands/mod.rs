@@ -172,20 +172,38 @@ fn candidate_providers(state: &AppState) -> AppResult<Vec<ProviderConfig>> {
         .into_iter()
         .filter(|p| p.enabled && !matches!(p.kind, ProviderKind::Custom))
         .collect();
-    // 排序优先级:Codex app-server 作为首选 Agent Runtime 排最前,其次是策略里的
-    // 默认 provider,其余保持原序;失败时由调用方继续沿链回退(最终回退本地 mock)。
-    let default_id = state.store.get_policy()?.default_provider_id;
-    list.sort_by_key(|p| {
-        (
-            !matches!(p.kind, ProviderKind::CodexAppServer),
-            default_id.as_ref().map(|id| &p.id != id).unwrap_or(true),
-        )
-    });
+    // 策略里的默认 provider 排最前,其余保持原序;失败时调用方继续沿链回退(最终回退
+    // 本地 mock)。每个 OpenAI 兼容 provider 内部再「先 codex 引擎、后直连」(见 create_plan)。
+    if let Some(id) = state.store.get_policy()?.default_provider_id {
+        list.sort_by_key(|p| usize::from(p.id != id));
+    }
     Ok(list)
 }
 
-/// 把自然语言意图转成结构化、可审查的计划。依次尝试每个已配置的 AI provider
-/// （默认优先）；若全部失败或一个都没配，就回退到离线 mock 引擎，确保 app 始终可用。
+/// 本会话中「打包 codex 引擎」对某 provider 失败过的集合 → 后续跳过 codex、直接走
+/// AiPanel 直连,避免每次都白试一遍(尤其端点只支持 chat 而不支持 Responses 时)。
+static CODEX_SKIP: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<String>>> =
+    std::sync::OnceLock::new();
+
+fn codex_skip() -> &'static std::sync::Mutex<std::collections::HashSet<String>> {
+    CODEX_SKIP.get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()))
+}
+
+/// 该 provider 是否走 codex 引擎:OpenAI 兼容 + 打包二进制就绪 + 本会话未失败过。
+/// (设置里只暴露 OpenAI 兼容一种类型;codex 是其底层引擎,而非单独的供应商类型。)
+fn codex_engine_usable(p: &ProviderConfig) -> bool {
+    matches!(p.kind, ProviderKind::OpenAiCompatible)
+        && crate::agent::codex_binary_available()
+        && !codex_skip().lock().unwrap().contains(&p.id)
+}
+
+fn mark_codex_failed(id: &str) {
+    codex_skip().lock().unwrap().insert(id.to_string());
+}
+
+/// 把自然语言意图转成结构化、可审查的计划。对每个候选 provider:**优先用打包的 codex
+/// 引擎**(端点支持 Responses 时),失败则回退 AiPanel 直连(chat/completions);全部失败或
+/// 没配则回退离线 mock,确保 app 始终可用。
 #[tauri::command]
 pub async fn create_plan(
     state: State<'_, AppState>,
@@ -197,19 +215,35 @@ pub async fn create_plan(
             .credential_ref
             .as_ref()
             .and_then(|r| state.credentials.get_secret(r).ok().flatten());
+
+        // 1) 优先打包 codex 引擎(OpenAI 兼容 + 二进制就绪 + 本会话未失败过)。
+        if codex_engine_usable(&provider) {
+            let p = provider.clone();
+            let k = key.clone();
+            let i2 = intent.clone();
+            let sid = server_id.clone();
+            match tokio::task::spawn_blocking(move || crate::agent::codex_plan(&p, k, &i2, sid.as_deref())).await {
+                Ok(Ok(plan)) => return Ok(plan),
+                Ok(Err(e)) => {
+                    mark_codex_failed(&provider.id);
+                    eprintln!("[plan] codex 引擎失败({}),回退直连", e.code());
+                }
+                Err(e) => {
+                    mark_codex_failed(&provider.id);
+                    eprintln!("[plan] codex 引擎线程异常({e}),回退直连");
+                }
+            }
+        }
+
+        // 2) AiPanel 直连(/chat/completions),阻塞式 HTTP 放到 UI 线程之外。
         let p = provider.clone();
-        let intent2 = intent.clone();
+        let k = key.clone();
+        let i2 = intent.clone();
         let sid = server_id.clone();
-        // provider 调用是阻塞式 HTTP —— 放到 UI 线程之外跑。任务 panic 不能让
-        // 整个命令崩溃：记录日志后继续尝试下一个候选 / mock。
-        let joined = tokio::task::spawn_blocking(move || {
-            crate::agent::plan_with_provider(&p, key, &intent2, sid.as_deref())
-        })
-        .await;
-        match joined {
+        match tokio::task::spawn_blocking(move || crate::agent::plan_with_provider(&p, k, &i2, sid.as_deref())).await {
             Ok(Ok(plan)) => return Ok(plan),
-            Ok(Err(e)) => eprintln!("[plan] provider '{}' failed ({}); trying next / mock", provider.name, e.code()),
-            Err(e) => eprintln!("[plan] provider '{}' task panicked ({e}); trying next / mock", provider.name),
+            Ok(Err(e)) => eprintln!("[plan] provider '{}' 直连失败({}); 继续下一个/mock", provider.name, e.code()),
+            Err(e) => eprintln!("[plan] provider '{}' 直连线程异常({e})", provider.name),
         }
     }
     state.plan_engine.create_plan(&intent, server_id.as_deref())
@@ -290,20 +324,26 @@ pub async fn run_agent_turn(
     intent: String,
     server_id: Option<String>,
 ) -> AppResult<crate::agent::agent_loop::AgentTurnResult> {
-    let candidates = candidate_providers(&state)?;
+    let provider = candidate_providers(&state)?
+        .into_iter()
+        .find(|p| matches!(p.kind, ProviderKind::OpenAiCompatible))
+        .ok_or_else(|| {
+            AppError::Provider("自动诊断需要一个已启用的 OpenAI 兼容供应商,请在设置中配置".into())
+        })?;
+    let key = provider
+        .credential_ref
+        .as_ref()
+        .and_then(|r| state.credentials.get_secret(r).ok().flatten());
 
-    // 优先用 Codex(经注入的 AiPanel MCP 工具面做带工具的只读诊断);失败则回退 OpenAI 回路。
-    if let Some(p) = candidates.iter().find(|p| matches!(p.kind, ProviderKind::CodexAppServer)).cloned() {
+    // 优先用打包的 codex 引擎(经注入的 AiPanel MCP 工具面做带工具的只读诊断);
+    // 失败则回退 OpenAI function-calling 回路。
+    if codex_engine_usable(&provider) {
         if let Some(bridge) = codex_mcp_bridge(&app) {
-            let key = p
-                .credential_ref
-                .as_ref()
-                .and_then(|r| state.credentials.get_secret(r).ok().flatten());
             let cfg = crate::agent::codex::CodexLaunch {
-                program: crate::agent::codex::resolve_codex_bin(p.codex_path.as_deref()),
-                base_url: p.base_url.clone(),
-                api_key: key,
-                model: p.model.clone(),
+                program: crate::agent::codex::resolve_codex_bin(provider.codex_path.as_deref()),
+                base_url: provider.base_url.clone(),
+                api_key: key.clone(),
+                model: provider.model.clone(),
                 mcp: Some(bridge),
             };
             let intent2 = intent.clone();
@@ -313,24 +353,14 @@ pub async fn run_agent_turn(
                 Ok(Ok(summary)) if !summary.trim().is_empty() => {
                     return Ok(crate::agent::agent_loop::AgentTurnResult { summary, tool_calls: vec![] });
                 }
-                Ok(Ok(_)) => eprintln!("[agent] codex 诊断空结果,回退 OpenAI"),
-                Ok(Err(e)) => eprintln!("[agent] codex 诊断失败({}),回退 OpenAI", e.code()),
-                Err(_) => eprintln!("[agent] codex 诊断线程异常,回退 OpenAI"),
+                Ok(Ok(_)) => { mark_codex_failed(&provider.id); eprintln!("[agent] codex 诊断空结果,回退 OpenAI"); }
+                Ok(Err(e)) => { mark_codex_failed(&provider.id); eprintln!("[agent] codex 诊断失败({}),回退 OpenAI", e.code()); }
+                Err(_) => { mark_codex_failed(&provider.id); eprintln!("[agent] codex 诊断线程异常,回退 OpenAI"); }
             }
         }
     }
 
     // 回退:OpenAI 兼容的 function-calling 只读诊断回路。
-    let provider = candidates
-        .into_iter()
-        .find(|p| matches!(p.kind, ProviderKind::OpenAiCompatible))
-        .ok_or_else(|| {
-            AppError::Provider("自动诊断需要一个已启用的 OpenAI 兼容或 Codex 供应商,请在设置中配置".into())
-        })?;
-    let key = provider
-        .credential_ref
-        .as_ref()
-        .and_then(|r| state.credentials.get_secret(r).ok().flatten());
     crate::agent::agent_loop::run_turn(&state, &provider, key, &intent, server_id.as_deref()).await
 }
 

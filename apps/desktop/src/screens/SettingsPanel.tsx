@@ -302,102 +302,64 @@ export default function SettingsPanel() {
               <label className={labelCls}>名称</label>
               <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="例如 Codex" />
             </div>
+            {/* 只支持 OpenAI 兼容供应商;codex 是其底层运行时(端点支持 Responses 时自动启用),不作为单独类型暴露。 */}
             <div className={field}>
-              <label className={labelCls}>类型</label>
-              <select
-                value={form.kind}
-                onChange={(e) => {
-                  // 切换类型时清空模型探测结果（不同类型字段语义不同）。
-                  setForm({ ...form, kind: e.target.value as ProviderKind });
-                  setModels(form.model ? [form.model] : []);
-                  setDetectError(null);
-                }}
-                className="h-9 rounded-md border border-border bg-surface-2 px-2 text-sm text-fg outline-none focus-visible:border-brand"
-              >
-                {/* OpenAI 兼容为首选/默认，放在第一项 */}
-                <option value="openai_compatible">OpenAI 兼容（推荐）</option>
-                <option value="codex_app_server">Codex app-server</option>
-                <option value="custom">自定义</option>
-              </select>
-              {form.kind === "openai_compatible" ? (
-                <span className="text-[12px] text-fg-subtle">只需填写 Base URL 与 API Key，模型可一键探测后下拉选择。</span>
-              ) : null}
+              <label className={labelCls}>Base URL</label>
+              <Input
+                value={form.baseUrl ?? ""}
+                onChange={(e) => setForm({ ...form, baseUrl: e.target.value })}
+                placeholder="https://api.example.com/v1"
+              />
+              <span className="text-[12px] text-fg-subtle">
+                只需填写 Base URL 与 API Key,模型可一键探测后下拉选择。OpenAI 官方 / 兼容 Responses 的端点会自动用打包的 codex 引擎,否则走直连。
+              </span>
             </div>
-            {form.kind === "codex_app_server" ? (
-              <div className={field}>
-                <label className={labelCls}>codex 可执行文件路径</label>
-                <Input
-                  value={form.codexPath ?? ""}
-                  onChange={(e) => setForm({ ...form, codexPath: e.target.value })}
-                  placeholder="codex"
-                />
-              </div>
-            ) : (
-              <>
-                <div className={field}>
-                  <label className={labelCls}>Base URL</label>
-                  <Input
-                    value={form.baseUrl ?? ""}
-                    onChange={(e) => setForm({ ...form, baseUrl: e.target.value })}
-                    placeholder="https://api.example.com/v1"
-                  />
-                </div>
-                <div className={field}>
-                  <label className={labelCls}>API Key（仅存本地 Keychain，不进数据库）</label>
-                  <Input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="sk-…" />
-                </div>
-              </>
-            )}
-            {form.kind === "openai_compatible" ? (
-              // OpenAI 兼容：探测 + 下拉选择模型（贴近 Codex 体验），并保留手填兜底。
-              <div className={field}>
-                <label className={labelCls}>模型</label>
-                <div className="flex items-center gap-2">
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    className="gap-1.5"
-                    onClick={detectModels}
-                    disabled={detecting}
-                  >
-                    {detecting ? <Spinner size="sm" /> : <RefreshCw size={14} />}
-                    {detecting ? "探测中…" : "探测模型"}
-                  </Button>
-                  <select
-                    value={form.model ?? ""}
-                    onChange={(e) => setForm({ ...form, model: e.target.value || undefined })}
-                    disabled={detecting || models.length === 0}
-                    className="h-9 min-w-0 flex-1 rounded-md border border-border bg-surface-2 px-2 text-sm text-fg outline-none focus-visible:border-brand disabled:opacity-60"
-                  >
-                    <option value="">{models.length === 0 ? "（请先探测模型）" : "（选择模型）"}</option>
-                    {models.map((m) => (
-                      <option key={m} value={m}>
-                        {m}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                {/* 探测失败内联红条提示 */}
-                {detectError ? (
-                  <div className="mt-1 rounded-md border border-risk-blocked/40 bg-risk-blocked-soft px-2.5 py-1.5 text-[12px] text-risk-blocked">
-                    {detectError}
-                  </div>
-                ) : null}
-                {/* 手填兜底：探测不可用时仍可直接输入模型名 */}
-                <Input
-                  className="mt-1"
+            <div className={field}>
+              <label className={labelCls}>API Key（仅存本地 Keychain，不进数据库）</label>
+              <Input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="sk-…" />
+            </div>
+            {/* 探测 + 下拉选择模型（贴近 Codex 体验），并保留手填兜底。 */}
+            <div className={field}>
+              <label className={labelCls}>模型</label>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="gap-1.5"
+                  onClick={detectModels}
+                  disabled={detecting}
+                >
+                  {detecting ? <Spinner size="sm" /> : <RefreshCw size={14} />}
+                  {detecting ? "探测中…" : "探测模型"}
+                </Button>
+                <select
                   value={form.model ?? ""}
                   onChange={(e) => setForm({ ...form, model: e.target.value || undefined })}
-                  placeholder="或手填模型名，如 gpt-5-codex"
-                />
+                  disabled={detecting || models.length === 0}
+                  className="h-9 min-w-0 flex-1 rounded-md border border-border bg-surface-2 px-2 text-sm text-fg outline-none focus-visible:border-brand disabled:opacity-60"
+                >
+                  <option value="">{models.length === 0 ? "（请先探测模型）" : "（选择模型）"}</option>
+                  {models.map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
+                  ))}
+                </select>
               </div>
-            ) : (
-              // Codex / 自定义：保留最简手填模型字段。
-              <div className={field}>
-                <label className={labelCls}>模型</label>
-                <Input value={form.model ?? ""} onChange={(e) => setForm({ ...form, model: e.target.value })} placeholder="gpt-5-codex" />
-              </div>
-            )}
+              {/* 探测失败内联红条提示 */}
+              {detectError ? (
+                <div className="mt-1 rounded-md border border-risk-blocked/40 bg-risk-blocked-soft px-2.5 py-1.5 text-[12px] text-risk-blocked">
+                  {detectError}
+                </div>
+              ) : null}
+              {/* 手填兜底：探测不可用时仍可直接输入模型名 */}
+              <Input
+                className="mt-1"
+                value={form.model ?? ""}
+                onChange={(e) => setForm({ ...form, model: e.target.value || undefined })}
+                placeholder="或手填模型名，如 gpt-4o-mini"
+              />
+            </div>
             <label className="mb-3 flex items-center gap-2 text-[13px] text-fg">
               <input type="checkbox" checked={form.enabled} onChange={(e) => setForm({ ...form, enabled: e.target.checked })} />
               启用
