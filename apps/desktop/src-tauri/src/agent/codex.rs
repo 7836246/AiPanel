@@ -39,6 +39,124 @@ pub fn parse_response(value: &Value, id: u64) -> Option<AppResult<Value>> {
     Some(Ok(value.get("result").cloned().unwrap_or(Value::Null)))
 }
 
+/// 把一个 JSON-RPC 值序列化为单行(带换行)写入子进程 stdin。
+fn write_line(stdin: &mut ChildStdin, v: &Value) -> AppResult<()> {
+    let mut s = v.to_string();
+    s.push('\n');
+    stdin
+        .write_all(s.as_bytes())
+        .and_then(|_| stdin.flush())
+        .map_err(|e| AppError::Provider(format!("写入 codex 失败: {e}")))
+}
+
+/// 一次 turn 中,从 Codex app-server 收到的一个语义事件(从 JSON-RPC 通知里解析)。
+///
+/// Codex 以通知流的形式推进一个 turn:文本增量、工具调用请求、完成、错误。
+/// 这里把原始 JSON 归一化为这几类,真正的协议字段差异都收敛在 [`classify_event`]。
+#[derive(Debug, PartialEq)]
+pub enum TurnEvent {
+    /// agent 想调用一个 AiPanel 工具(我们分发后必须把结果回灌)。
+    ToolCall { call_id: String, name: String, args: Value },
+    /// agent 的文本增量(累计成最终回答)。
+    Text(String),
+    /// 本 turn 结束;可能附带最终消息文本。
+    Complete(Option<String>),
+    /// agent / 服务端报错。
+    Error(String),
+    /// 与本回路无关的通知(忽略)。
+    Other,
+}
+
+/// 把一行 JSON-RPC 通知归一化为 [`TurnEvent`]。事件体可能直接在顶层,也可能在
+/// `params` 下;字段名按常见形态做了容错(arguments/args、text/delta、message.text)。
+pub fn classify_event(v: &Value) -> TurnEvent {
+    let p = v.get("params").unwrap_or(v);
+    let t = p.get("type").and_then(|x| x.as_str()).unwrap_or("");
+    match t {
+        "tool_call" => TurnEvent::ToolCall {
+            call_id: p.get("callId").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+            name: p.get("name").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+            args: p
+                .get("arguments")
+                .cloned()
+                .or_else(|| p.get("args").cloned())
+                .unwrap_or(Value::Null),
+        },
+        "agent_message" | "agent_message_delta" | "message" => TurnEvent::Text(
+            p.get("text")
+                .and_then(|x| x.as_str())
+                .or_else(|| p.get("delta").and_then(|x| x.as_str()))
+                .unwrap_or("")
+                .to_string(),
+        ),
+        "turn_completed" | "turn_complete" => TurnEvent::Complete(
+            p.get("message")
+                .and_then(|m| m.get("text"))
+                .and_then(|x| x.as_str())
+                .or_else(|| p.get("text").and_then(|x| x.as_str()))
+                .map(|s| s.to_string()),
+        ),
+        "error" => TurnEvent::Error(
+            p.get("message").and_then(|x| x.as_str()).unwrap_or("unknown").to_string(),
+        ),
+        _ => TurnEvent::Other,
+    }
+}
+
+/// 事件回路从传输层取到的下一条输入。
+pub enum Incoming {
+    Line(Value),
+    Timeout,
+    Closed,
+}
+
+/// 与传输无关的 **turn 事件回路**——可注入式,因而可对模拟的 JSON-RPC 事件流做单测。
+///
+/// 反复读取事件:文本累计;遇到工具调用就交给 `on_tool` 分发,并把结果(或错误)
+/// 经 `send_tool_result` 回灌给 agent;直到 turn 完成返回最终文本,或报错/超时/连接断开。
+///
+/// 安全:`on_tool` 是唯一的工具入口。写操作的授权完全由 `on_tool` 背后的
+/// `tools::dispatch` 把关(`task.execute_confirmed` 无用户确认即拒绝);本回路只是
+/// 忠实地分发并把结果回灌,绝不替 agent 放宽权限。
+pub fn drive_turn(
+    mut send_tool_result: impl FnMut(&str, &AppResult<Value>) -> AppResult<()>,
+    mut recv: impl FnMut(Duration) -> Incoming,
+    mut on_tool: impl FnMut(&str, &Value) -> AppResult<Value>,
+    timeout: Duration,
+) -> AppResult<String> {
+    let deadline = std::time::Instant::now() + timeout;
+    let mut acc = String::new();
+    loop {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        if remaining.is_zero() {
+            return Err(AppError::Provider("codex turn 响应超时".into()));
+        }
+        match recv(remaining) {
+            Incoming::Closed => {
+                return Err(AppError::Provider("codex app-server 已退出（turn 未完成）".into()))
+            }
+            Incoming::Timeout => return Err(AppError::Provider("codex turn 响应超时".into())),
+            Incoming::Line(v) => match classify_event(&v) {
+                TurnEvent::ToolCall { call_id, name, args } => {
+                    let res = on_tool(&name, &args);
+                    send_tool_result(&call_id, &res)?;
+                }
+                TurnEvent::Text(t) => acc.push_str(&t),
+                TurnEvent::Complete(final_msg) => {
+                    if !acc.is_empty() {
+                        return Ok(acc);
+                    }
+                    return Ok(final_msg.unwrap_or_default());
+                }
+                TurnEvent::Error(m) => {
+                    return Err(AppError::Provider(format!("codex turn 错误: {m}")))
+                }
+                TurnEvent::Other => {}
+            },
+        }
+    }
+}
+
 /// 到 `codex app-server` 子进程的一个活动连接。
 pub struct CodexClient {
     child: Child,
@@ -125,6 +243,51 @@ impl CodexClient {
             Duration::from_secs(15),
         )
     }
+
+    /// 跑完整的一个 turn:开 thread、发 `turn/start`、消费事件流。
+    ///
+    /// `turn/start` **不**走 [`request`](Self::request)(那会丢弃后续以通知形式
+    /// 到达的事件)——而是写出后直接进入 [`drive_turn`] 事件回路:工具调用交给
+    /// `on_tool` 分发并把结果回灌,最终返回 agent 的回答文本。
+    pub fn run_turn(
+        &mut self,
+        user_msg: &str,
+        on_tool: impl FnMut(&str, &Value) -> AppResult<Value>,
+        timeout: Duration,
+    ) -> AppResult<String> {
+        // 1) 开一个会话线程。
+        let thread = self.request("thread/start", json!({}), Duration::from_secs(15))?;
+        let thread_id = thread.get("threadId").and_then(|v| v.as_str()).unwrap_or("").to_string();
+
+        // 2) 发起 turn(写出即可,响应/事件随后以通知形式到来)。
+        let id = self.next_id;
+        self.next_id += 1;
+        let turn = json!({
+            "jsonrpc": "2.0", "id": id, "method": "turn/start",
+            "params": { "threadId": thread_id, "input": user_msg },
+        });
+        write_line(&mut self.stdin, &turn)?;
+
+        // 3) 事件回路。分别借用 stdin / rx(不同字段,借用不冲突)。
+        let stdin = &mut self.stdin;
+        let rx = &self.rx;
+        drive_turn(
+            |call_id, res| {
+                let params = match res {
+                    Ok(v) => json!({ "callId": call_id, "output": v }),
+                    Err(e) => json!({ "callId": call_id, "error": e.to_string() }),
+                };
+                write_line(stdin, &json!({ "jsonrpc": "2.0", "method": "tool/result", "params": params }))
+            },
+            |dur| match rx.recv_timeout(dur) {
+                Ok(line) => Incoming::Line(serde_json::from_str(&line).unwrap_or(Value::Null)),
+                Err(RecvTimeoutError::Timeout) => Incoming::Timeout,
+                Err(RecvTimeoutError::Disconnected) => Incoming::Closed,
+            },
+            on_tool,
+            timeout,
+        )
+    }
 }
 
 impl Drop for CodexClient {
@@ -168,5 +331,123 @@ mod tests {
         let err = parse_response(&v, 1).unwrap().unwrap_err();
         assert_eq!(err.code(), "provider");
         assert!(err.to_string().contains("boom"));
+    }
+
+    // ---- turn / tool-call 事件回路（对模拟 JSON-RPC 事件流的单测）----
+
+    /// 把一串预设事件做成 `recv` 闭包;耗尽后返回 Closed。
+    fn scripted(events: Vec<Incoming>) -> impl FnMut(Duration) -> Incoming {
+        let mut it = events.into_iter();
+        move |_dur| it.next().unwrap_or(Incoming::Closed)
+    }
+
+    #[test]
+    fn classify_event_recognizes_variants() {
+        assert!(matches!(
+            classify_event(&json!({"params":{"type":"tool_call","callId":"c1","name":"server.list","arguments":{"a":1}}})),
+            TurnEvent::ToolCall { .. }
+        ));
+        assert_eq!(
+            classify_event(&json!({"params":{"type":"agent_message","text":"hi"}})),
+            TurnEvent::Text("hi".into())
+        );
+        assert_eq!(classify_event(&json!({"params":{"type":"turn_completed"}})), TurnEvent::Complete(None));
+        assert!(matches!(classify_event(&json!({"params":{"type":"error","message":"boom"}})), TurnEvent::Error(_)));
+        assert_eq!(classify_event(&json!({"params":{"type":"whatever"}})), TurnEvent::Other);
+    }
+
+    #[test]
+    fn drive_turn_dispatches_tool_then_completes() {
+        let events = vec![
+            Incoming::Line(json!({"params":{"type":"tool_call","callId":"c1","name":"server.list","arguments":{}}})),
+            Incoming::Line(json!({"params":{"type":"agent_message","text":"已检查"}})),
+            Incoming::Line(json!({"params":{"type":"turn_completed"}})),
+        ];
+        let mut sent: Vec<(String, bool)> = vec![];
+        let mut tools_called: Vec<String> = vec![];
+        let out = drive_turn(
+            |call_id, res| {
+                sent.push((call_id.to_string(), res.is_ok()));
+                Ok(())
+            },
+            scripted(events),
+            |name, _args| {
+                tools_called.push(name.to_string());
+                Ok(json!({ "ok": true }))
+            },
+            Duration::from_secs(5),
+        )
+        .unwrap();
+        assert_eq!(out, "已检查");
+        assert_eq!(tools_called, vec!["server.list".to_string()]);
+        assert_eq!(sent, vec![("c1".to_string(), true)]);
+    }
+
+    #[test]
+    fn drive_turn_accumulates_text_deltas() {
+        let events = vec![
+            Incoming::Line(json!({"params":{"type":"agent_message_delta","delta":"foo"}})),
+            Incoming::Line(json!({"params":{"type":"agent_message_delta","delta":"bar"}})),
+            Incoming::Line(json!({"params":{"type":"turn_completed","text":"ignored"}})),
+        ];
+        let out = drive_turn(|_, _| Ok(()), scripted(events), |_, _| Ok(json!(null)), Duration::from_secs(5)).unwrap();
+        assert_eq!(out, "foobar");
+    }
+
+    #[test]
+    fn drive_turn_uses_final_message_when_no_stream() {
+        let events = vec![Incoming::Line(json!({"params":{"type":"turn_completed","message":{"text":"final"}}}))];
+        let out = drive_turn(|_, _| Ok(()), scripted(events), |_, _| Ok(json!(null)), Duration::from_secs(5)).unwrap();
+        assert_eq!(out, "final");
+    }
+
+    #[test]
+    fn drive_turn_surfaces_error_event() {
+        let events = vec![Incoming::Line(json!({"params":{"type":"error","message":"boom"}}))];
+        let err = drive_turn(|_, _| Ok(()), scripted(events), |_, _| Ok(json!(null)), Duration::from_secs(5)).unwrap_err();
+        assert_eq!(err.code(), "provider");
+        assert!(err.to_string().contains("boom"));
+    }
+
+    #[test]
+    fn drive_turn_errors_on_closed_and_timeout() {
+        let e1 = drive_turn(|_, _| Ok(()), scripted(vec![Incoming::Closed]), |_, _| Ok(json!(null)), Duration::from_secs(5)).unwrap_err();
+        assert_eq!(e1.code(), "provider");
+        let e2 = drive_turn(|_, _| Ok(()), scripted(vec![Incoming::Timeout]), |_, _| Ok(json!(null)), Duration::from_secs(5)).unwrap_err();
+        assert_eq!(e2.code(), "provider");
+    }
+
+    #[test]
+    fn drive_turn_relays_tool_error_without_crashing() {
+        // 模拟 agent 调用写工具但未带确认:on_tool 返回 Blocked,回路应把错误回灌,turn 仍能完成。
+        // 这验证了「写操作不由 Agent 自行授权」的边界由工具层把关,回路忠实转达拒绝。
+        let events = vec![
+            Incoming::Line(json!({"params":{"type":"tool_call","callId":"w1","name":"task.execute_confirmed","arguments":{"confirmed":false}}})),
+            Incoming::Line(json!({"params":{"type":"agent_message","text":"已被拒绝"}})),
+            Incoming::Line(json!({"params":{"type":"turn_completed"}})),
+        ];
+        let mut relayed_error = false;
+        let out = drive_turn(
+            |_call_id, res| {
+                if res.is_err() {
+                    relayed_error = true;
+                }
+                Ok(())
+            },
+            scripted(events),
+            |name, args| {
+                if name == "task.execute_confirmed"
+                    && !args.get("confirmed").and_then(|v| v.as_bool()).unwrap_or(false)
+                {
+                    Err(AppError::Blocked("需要用户确认".into()))
+                } else {
+                    Ok(json!({ "ok": true }))
+                }
+            },
+            Duration::from_secs(5),
+        )
+        .unwrap();
+        assert!(relayed_error);
+        assert_eq!(out, "已被拒绝");
     }
 }

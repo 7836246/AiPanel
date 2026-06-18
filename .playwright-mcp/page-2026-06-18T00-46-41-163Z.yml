@@ -1,0 +1,114 @@
+- generic [ref=e3]:
+  - complementary [ref=e4]:
+    - generic [ref=e5]:
+      - generic [ref=e6]: ›_
+      - generic [ref=e7]: AiPanel
+    - generic [ref=e8]:
+      - generic [ref=e9] [cursor=pointer]:
+        - img [ref=e10]
+        - generic [ref=e13]: 提问
+      - generic [ref=e14] [cursor=pointer]:
+        - img [ref=e15]
+        - generic [ref=e20]: 概览
+      - generic [ref=e21] [cursor=pointer]:
+        - img [ref=e22]
+        - generic [ref=e24]: 终端
+      - generic [ref=e25] [cursor=pointer]:
+        - img [ref=e26]
+        - generic [ref=e31]: 文件
+      - generic [ref=e32] [cursor=pointer]:
+        - img [ref=e33]
+        - generic [ref=e36]: 审计
+    - generic [ref=e37]:
+      - generic [ref=e38]:
+        - generic [ref=e39]: 服务器
+        - button "添加服务器" [ref=e40]:
+          - img [ref=e41]
+      - textbox "搜索服务器…" [ref=e42]
+      - generic [ref=e43]:
+        - generic [ref=e44] [cursor=pointer]:
+          - img [ref=e45]
+          - generic [ref=e48]: prod-ai-01
+          - button "收藏" [ref=e49]:
+            - img [ref=e50]
+          - button "编辑服务器" [ref=e52]:
+            - img [ref=e53]
+        - generic [ref=e58]: 暂无运行记录
+      - generic [ref=e60] [cursor=pointer]:
+        - img [ref=e61]
+        - generic [ref=e64]: dev-ai-02
+        - button "收藏" [ref=e65]:
+          - img [ref=e66]
+        - button "编辑服务器" [ref=e68]:
+          - img [ref=e69]
+      - generic [ref=e74] [cursor=pointer]:
+        - img [ref=e75]
+        - generic [ref=e78]: edge-node-03
+        - button "收藏" [ref=e79]:
+          - img [ref=e80]
+        - button "编辑服务器" [ref=e82]:
+          - img [ref=e83]
+      - generic [ref=e88] [cursor=pointer]:
+        - img [ref=e89]
+        - generic [ref=e92]: backup-04
+        - button "收藏" [ref=e93]:
+          - img [ref=e94]
+        - button "编辑服务器" [ref=e96]:
+          - img [ref=e97]
+    - generic [ref=e102] [cursor=pointer]:
+      - img [ref=e103]
+      - generic [ref=e106]: 设置
+  - main [ref=e107]:
+    - generic [ref=e108]:
+      - generic [ref=e110]: prod-ai-01
+      - generic [ref=e111]:
+        - button "切换主题" [ref=e112]:
+          - img [ref=e113]
+        - button "文件面板" [ref=e115]:
+          - img [ref=e116]
+        - button "终端面板" [ref=e118]:
+          - img [ref=e119]
+        - button "切换输出" [ref=e121]:
+          - img [ref=e122]
+    - generic [ref=e126]:
+      - generic [ref=e128]:
+        - generic [ref=e129]:
+          - generic [ref=e130]: 未配置 AI 供应商 — 生成计划将使用本地规则引擎,AI 诊断不可用。
+          - button "去配置" [ref=e131]
+        - generic [ref=e132]:
+          - generic [ref=e134]:
+            - generic [ref=e136]: prod-ai-01
+            - generic [ref=e137]: root@10.0.0.4:22
+            - button "连接/重连" [ref=e138]:
+              - img [ref=e139]
+              - text: 连接/重连
+            - button "只读体检" [ref=e145]:
+              - img [ref=e146]
+              - text: 只读体检
+          - generic [ref=e150]:
+            - img [ref=e151]
+            - generic [ref=e155]: 暂无体检指标
+            - generic [ref=e156]: 点上方「只读体检」做一次安全检查以采集结构化指标。
+      - generic [ref=e157]:
+        - generic [ref=e158]:
+          - textbox "描述运维任务,例如「检查网站为什么打不开」" [ref=e159]
+          - generic [ref=e160]:
+            - generic [ref=e161]:
+              - button "只读优先 · 开" [ref=e162]:
+                - img [ref=e163]
+                - text: 只读优先 · 开
+              - button "AI 诊断" [disabled] [ref=e166]:
+                - img [ref=e167]
+                - text: AI 诊断
+            - generic [ref=e170]:
+              - button "未配置模型 · 去设置" [ref=e171]
+              - button "发送" [disabled] [ref=e172]:
+                - img [ref=e173]
+        - generic [ref=e175]:
+          - button "检查磁盘和内存使用情况" [ref=e176]
+          - button "列出正在运行的服务和容器" [ref=e177]
+          - button "看看最近的系统日志有没有报错" [ref=e178]
+          - button "检查网站为什么打不开" [ref=e179]
+      - generic [ref=e180]:
+        - generic [ref=e183]: prod-ai-01
+        - generic [ref=e185]: 终端输出会显示在这里。

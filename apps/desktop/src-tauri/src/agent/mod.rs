@@ -198,35 +198,12 @@ impl AgentProvider for OpenAiCompatibleProvider {
     }
 
     fn plan(&self, intent: &str, server_id: Option<&str>) -> AppResult<Plan> {
-        let system = "你是 Linux 服务器运维规划助手。把用户任务转成一个结构化的诊断/操作计划。\
-默认只读优先：除非用户明确要求修改,只生成检查类命令,绝不包含 rm/格式化/改防火墙/改 SSH 配置等危险命令。\
-只输出 JSON,不要解释,格式:{\"goal\":\"一句话目标\",\"steps\":[{\"summary\":\"这步做什么\",\"command\":\"可直接在服务器执行的命令\"}]}。";
         let messages = vec![
-            ChatMessage { role: "system".into(), content: system.into() },
+            ChatMessage { role: "system".into(), content: PLAN_SYSTEM.into() },
             ChatMessage { role: "user".into(), content: intent.to_string() },
         ];
         let content = self.complete(&messages, true)?;
-        let parsed: LlmPlan = serde_json::from_str(unfence(&content))
-            .map_err(|e| AppError::Provider(format!("计划 JSON 解析失败: {e}")))?;
-        if parsed.steps.is_empty() {
-            return Err(AppError::Provider("模型未返回任何步骤".into()));
-        }
-        // 风险等级由 AiPanel 判定——绝不信任模型自己给的评估。
-        let steps = parsed
-            .steps
-            .into_iter()
-            .map(|s| {
-                let risk = crate::risk::classify_command(&s.command).level;
-                make_step(s.summary, s.command, risk)
-            })
-            .collect();
-        Ok(Plan {
-            id: crate::core::types::new_id(),
-            server_id: server_id.map(|s| s.to_string()),
-            goal: parsed.goal.unwrap_or_else(|| format!("诊断：{intent}")),
-            steps,
-            created_at: crate::core::types::now(),
-        })
+        plan_from_llm_json(&content, intent, server_id)
     }
 
     fn summarize(&self, context: &str) -> AppResult<String> {
@@ -306,35 +283,77 @@ impl CodexAppServerProvider {
         }
     }
 
-    /// 桥接的 plan/chat 通过 app-server 的 JSON-RPC over stdio 完成：
-    ///   1. 启动 `<codex> app-server`，stdin/stdout 走管道；
-    ///   2. 发送 `initialize`，只把 AiPanel Tools 声明为可用工具集；
-    ///   3. `thread/start`，再带上用户意图执行 `turn/start`；
-    ///   4. 流式接收事件；工具调用分发给 `tools`（默认只读，写操作需确认），
-    ///      再把结果回灌给模型。
-    /// 尚未接通——期间返回一个明确、可操作的错误。
-    fn not_wired<T>(&self) -> AppResult<T> {
-        Err(AppError::Provider(
-            "Codex app-server 桥接尚未接通（JSON-RPC 工具回路开发中）；当前可用 mock provider 生成只读计划".into(),
-        ))
+    /// 跑一个**无状态**的 Codex turn 并返回 agent 的文本回答。
+    ///
+    /// 用于 chat/plan/summarize 这类不需要触达服务器的调用:启动 app-server、
+    /// `initialize` 声明 AiPanel Tools、`turn/start` 后消费事件流。本上下文不接
+    /// `tools::dispatch`(没有 `AppState`),因此一旦 agent 试图调用工具,就把错误
+    /// 回灌给它——服务器能力只在带状态的自动诊断回路里开放(接入 run_agent_turn)。
+    fn run_text_turn(&self, user_msg: &str) -> AppResult<String> {
+        let mut client = codex::CodexClient::start(&self.codex_path)?;
+        client.initialize(tools_surface())?;
+        client.run_turn(
+            user_msg,
+            |name, _args| Err(AppError::Provider(format!("此上下文未启用工具调用：{name}"))),
+            Duration::from_secs(120),
+        )
     }
+}
+
+/// 给规划用的系统提示(Codex 与 OpenAI 路径共用):只读优先、只输出结构化 JSON。
+const PLAN_SYSTEM: &str = "你是 Linux 服务器运维规划助手。把用户任务转成一个结构化的诊断/操作计划。\
+默认只读优先：除非用户明确要求修改,只生成检查类命令,绝不包含 rm/格式化/改防火墙/改 SSH 配置等危险命令。\
+只输出 JSON,不要解释,格式:{\"goal\":\"一句话目标\",\"steps\":[{\"summary\":\"这步做什么\",\"command\":\"可直接在服务器执行的命令\"}]}。";
+
+/// 把一份 LLM 产出的计划 JSON 解析为 [`Plan`],并由 AiPanel **重新判定**每步风险
+/// (绝不信任模型自评)。Codex 与 OpenAI 路径共用。
+fn plan_from_llm_json(content: &str, intent: &str, server_id: Option<&str>) -> AppResult<Plan> {
+    let parsed: LlmPlan = serde_json::from_str(unfence(content))
+        .map_err(|e| AppError::Provider(format!("计划 JSON 解析失败: {e}")))?;
+    if parsed.steps.is_empty() {
+        return Err(AppError::Provider("模型未返回任何步骤".into()));
+    }
+    let steps = parsed
+        .steps
+        .into_iter()
+        .map(|s| {
+            let risk = crate::risk::classify_command(&s.command).level;
+            make_step(s.summary, s.command, risk)
+        })
+        .collect();
+    Ok(Plan {
+        id: crate::core::types::new_id(),
+        server_id: server_id.map(|s| s.to_string()),
+        goal: parsed.goal.unwrap_or_else(|| format!("诊断：{intent}")),
+        steps,
+        created_at: crate::core::types::now(),
+    })
 }
 
 impl AgentProvider for CodexAppServerProvider {
     fn name(&self) -> &str {
         "codex-app-server"
     }
-    fn chat(&self, _messages: &[ChatMessage]) -> AppResult<String> {
-        self.not_wired()
+    fn chat(&self, messages: &[ChatMessage]) -> AppResult<String> {
+        let prompt = messages
+            .iter()
+            .map(|m| format!("{}: {}", m.role, m.content))
+            .collect::<Vec<_>>()
+            .join("\n");
+        self.run_text_turn(&prompt)
     }
-    fn plan(&self, _intent: &str, _server_id: Option<&str>) -> AppResult<Plan> {
-        self.not_wired()
+    fn plan(&self, intent: &str, server_id: Option<&str>) -> AppResult<Plan> {
+        let content = self.run_text_turn(&format!("{PLAN_SYSTEM}\n\n用户任务：{intent}"))?;
+        plan_from_llm_json(&content, intent, server_id)
     }
-    fn summarize(&self, _context: &str) -> AppResult<String> {
-        self.not_wired()
+    fn summarize(&self, context: &str) -> AppResult<String> {
+        self.run_text_turn(&format!(
+            "用简体中文简要总结以下运维执行结果,指出关键发现与下一步建议:\n\n{context}"
+        ))
     }
-    fn stream_events(&self, _intent: &str) -> AppResult<Vec<AgentEvent>> {
-        self.not_wired()
+    fn stream_events(&self, intent: &str) -> AppResult<Vec<AgentEvent>> {
+        let reply = self.run_text_turn(intent)?;
+        Ok(vec![AgentEvent::Token { text: reply }, AgentEvent::Done])
     }
     fn test(&self) -> ProviderTestResult {
         let version = match self.version() {
@@ -469,9 +488,11 @@ mod tests {
     }
 
     #[test]
-    fn codex_chat_is_not_wired_yet() {
-        let p = CodexAppServerProvider { codex_path: "codex".into() };
-        assert_eq!(p.chat(&[]).unwrap_err().code(), "provider");
+    fn codex_chat_errors_without_binary() {
+        // 无 codex 二进制的测试环境:run_turn 在启动子进程阶段失败,返回 provider 错误。
+        // (turn / 工具回路本身由 codex.rs 的 drive_turn 单测对模拟事件流覆盖。)
+        let p = CodexAppServerProvider { codex_path: "definitely-not-a-real-codex-binary".into() };
+        assert_eq!(p.chat(&[ChatMessage { role: "user".into(), content: "hi".into() }]).unwrap_err().code(), "provider");
     }
 
     #[test]

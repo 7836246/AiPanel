@@ -171,9 +171,15 @@ fn candidate_providers(state: &AppState) -> AppResult<Vec<ProviderConfig>> {
         .into_iter()
         .filter(|p| p.enabled && !matches!(p.kind, ProviderKind::Custom))
         .collect();
-    if let Some(id) = state.store.get_policy()?.default_provider_id {
-        list.sort_by_key(|p| usize::from(p.id != id)); // 默认 provider 排最前
-    }
+    // 排序优先级:Codex app-server 作为首选 Agent Runtime 排最前,其次是策略里的
+    // 默认 provider,其余保持原序;失败时由调用方继续沿链回退(最终回退本地 mock)。
+    let default_id = state.store.get_policy()?.default_provider_id;
+    list.sort_by_key(|p| {
+        (
+            !matches!(p.kind, ProviderKind::CodexAppServer),
+            default_id.as_ref().map(|id| &p.id != id).unwrap_or(true),
+        )
+    });
     Ok(list)
 }
 
