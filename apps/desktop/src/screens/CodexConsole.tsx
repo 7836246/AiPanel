@@ -1703,7 +1703,7 @@ export default function CodexConsole() {
 
             {/* 输入区 */}
             <div className="flex-none bg-bg px-6 pb-3.5 pt-1.5">
-              <div className="mx-auto max-w-[680px] rounded-lg border border-border-strong bg-surface-1 px-3 pb-2.5 pl-4 pt-3 shadow-sm">
+              <div className="mx-auto max-w-[680px] rounded-2xl border border-border bg-surface-1 px-3 pb-2.5 pl-4 pt-3 shadow-sm transition-colors focus-within:border-brand/50 focus-within:ring-2 focus-within:ring-brand/15">
                 <input
                   ref={inputRef}
                   value={intentValue}
