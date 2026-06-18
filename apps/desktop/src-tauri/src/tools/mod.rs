@@ -203,11 +203,49 @@ mod tests {
     fn registry_lists_all_tools_with_policy() {
         let r = registry();
         assert_eq!(r.len(), 8);
-        let exec = r.iter().find(|t| t.name == "task.execute_confirmed").unwrap();
-        assert!(matches!(exec.permission, ToolPermission::Write));
-        assert!(exec.audited);
-        let list = r.iter().find(|t| t.name == "server.list").unwrap();
-        assert!(matches!(list.permission, ToolPermission::ReadOnly));
+
+        // 安全边界:写工具**有且仅有**这两个;其余皆只读。新增/改动工具若动了这个集合,
+        // 本测试会失败,提醒复核「只读才暴露给自动回路/MCP、写操作必须用户确认」的约束。
+        let write: std::collections::BTreeSet<&str> = r
+            .iter()
+            .filter(|t| matches!(t.permission, ToolPermission::Write))
+            .map(|t| t.name)
+            .collect();
+        assert_eq!(
+            write,
+            ["audit.write", "task.execute_confirmed"].into_iter().collect(),
+            "写工具集合必须精确为 task.execute_confirmed + audit.write"
+        );
+
+        // 所有写工具都必须被审计。
+        for t in r.iter().filter(|t| matches!(t.permission, ToolPermission::Write)) {
+            assert!(t.audited, "写工具 {} 必须审计", t.name);
+        }
+
+        // 只读工具恰为其余 6 个(自动诊断回路 / MCP 只应暴露这些)。
+        let read_only: std::collections::BTreeSet<&str> = r
+            .iter()
+            .filter(|t| matches!(t.permission, ToolPermission::ReadOnly))
+            .map(|t| t.name)
+            .collect();
+        assert_eq!(
+            read_only,
+            [
+                "server.list",
+                "server.info",
+                "server.doctor.readonly",
+                "ssh.run_readonly",
+                "task.plan",
+                "task.review",
+            ]
+            .into_iter()
+            .collect(),
+        );
+
+        // 触达服务器的只读工具(体检 / 只读 SSH)必须审计。
+        for name in ["server.doctor.readonly", "ssh.run_readonly"] {
+            assert!(r.iter().find(|t| t.name == name).unwrap().audited, "{name} 应审计");
+        }
     }
 
     #[tokio::test]
