@@ -14,6 +14,11 @@ fail() {
   exit 1
 }
 
+# 先构建设计系统包(@aipanel/ui),产出 dist + 类型声明。否则后续 typecheck / vitest
+# 解析 `@aipanel/ui` 会失败(CI 全新环境没有预先构建的 dist)。
+step "Building UI design system (@aipanel/ui)"
+pnpm build:ui
+
 step "Typechecking workspace"
 pnpm typecheck
 
