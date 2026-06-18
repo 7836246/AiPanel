@@ -219,6 +219,14 @@ fn isolated_codex_home() -> std::path::PathBuf {
 /// codex 读取 API Key 的环境变量名(配进 model_providers.env_key,密钥经 env 传入、不进 argv)。
 const KEY_ENV: &str = "AIPANEL_OAI_KEY";
 
+/// 把 AiPanel 自己作为 MCP 服务器注入 codex,让 codex 经 MCP 调用 AiPanel 的只读
+/// server-ops 工具。codex 会按此拉起 `<aipanel_exe> mcp-server`(带 `AIPANEL_DATA_DIR`
+/// 复用同一份 SQLite/Keychain)。
+pub struct McpBridge {
+    pub aipanel_exe: String,
+    pub data_dir: String,
+}
+
 /// 启动 codex-app-server 所需的配置。base/key/model 复用用户的 OpenAI 兼容供应商配置。
 pub struct CodexLaunch {
     /// 解析好的二进制路径(见 [`resolve_codex_bin`])。
@@ -226,6 +234,8 @@ pub struct CodexLaunch {
     pub base_url: Option<String>,
     pub api_key: Option<String>,
     pub model: Option<String>,
+    /// 设置后:注入 AiPanel MCP 工具面(用于带工具的自动诊断);None 则纯对话/规划。
+    pub mcp: Option<McpBridge>,
 }
 
 /// 当前运行平台的 target triple(用于定位打包的 sidecar 文件名)。
@@ -299,6 +309,14 @@ impl CodexClient {
         }
         if let Some(key) = &cfg.api_key {
             cmd.env(KEY_ENV, key);
+        }
+        if let Some(b) = &cfg.mcp {
+            // 把 AiPanel 注册成 codex 的 MCP 服务器(路径用 TOML 字面串单引号,避免 Windows 反斜杠转义)。
+            cmd.arg("-c").arg(format!("mcp_servers.aipanel.command='{}'", b.aipanel_exe));
+            cmd.arg("-c").arg("mcp_servers.aipanel.args=[\"mcp-server\"]");
+            cmd.arg("-c").arg(format!("mcp_servers.aipanel.env.AIPANEL_DATA_DIR='{}'", b.data_dir));
+            // 我方工具均为安全只读,自动批准,避免 codex 走审批(审批会被我们拒绝)。
+            cmd.arg("-c").arg("mcp_servers.aipanel.default_tools_approval_mode=\"auto\"");
         }
         let mut child = cmd
             .stdin(Stdio::piped())

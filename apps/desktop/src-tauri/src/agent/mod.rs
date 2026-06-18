@@ -270,13 +270,14 @@ pub struct CodexAppServerProvider {
 }
 
 impl CodexAppServerProvider {
-    /// 用当前配置构造一次启动参数。
+    /// 用当前配置构造一次启动参数(纯对话/规划,不挂 MCP 工具)。
     fn launch_cfg(&self) -> codex::CodexLaunch {
         codex::CodexLaunch {
             program: self.program.clone(),
             base_url: self.base_url.clone(),
             api_key: self.api_key.clone(),
             model: self.model.clone(),
+            mcp: None,
         }
     }
 
@@ -415,6 +416,30 @@ pub fn list_models(config: &ProviderConfig, api_key: Option<String>) -> AppResul
     ids.sort();
     ids.dedup();
     Ok(ids)
+}
+
+/// 用 Codex 跑一次**带工具的只读自动诊断**:codex 经注入的 AiPanel MCP 工具面调用
+/// 只读 server-ops 工具(在独立的 `mcp-server` 进程里执行,复用同一份 Core),收集事实后
+/// 给出诊断总结。返回最终文本(工具活动由 mcp-server 进程审计)。
+///
+/// 这是**阻塞**调用(codex 客户端是阻塞 stdio),应由调用方放进 `spawn_blocking`。
+/// 不需要 `&AppState`——工具不在本进程执行,而是走 codex↔MCP 进程。
+pub fn run_codex_agent(cfg: codex::CodexLaunch, intent: &str, server_id: Option<&str>) -> AppResult<String> {
+    let system = format!(
+        "你是 AiPanel 的 Linux 运维助手。你只能调用提供的【只读】工具(server.list/info、\
+server.doctor.readonly、ssh.run_readonly、task.plan/review)来收集事实(系统信息、端口、服务、\
+日志等),然后用简体中文给出诊断结论和建议。绝不假设、不要编造命令输出。需要修改服务器时只在\
+结论里描述建议操作,由用户在确认流程里执行——你自己不能执行任何写操作。当前目标 serverId={}。",
+        server_id.unwrap_or("(未指定)")
+    );
+    let mut client = codex::CodexClient::launch(&cfg)?;
+    client.initialize()?;
+    // 工具经 MCP(独立进程)执行,不会回到本 app-server 客户端;故 on_tool 不应被触发。
+    client.run_turn(
+        &format!("{system}\n\n{intent}"),
+        |name, _args| Err(AppError::Provider(format!("工具应经 MCP 调用,而非 app-server 客户端:{name}"))),
+        Duration::from_secs(180),
+    )
 }
 
 /// 用配置好的 provider 生成计划：构建对应 provider 并调用其 plan。

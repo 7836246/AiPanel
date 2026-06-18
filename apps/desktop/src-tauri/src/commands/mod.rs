@@ -286,20 +286,61 @@ pub async fn execute_confirmed_plan(
 #[tauri::command]
 pub async fn run_agent_turn(
     state: State<'_, AppState>,
+    app: tauri::AppHandle,
     intent: String,
     server_id: Option<String>,
 ) -> AppResult<crate::agent::agent_loop::AgentTurnResult> {
-    let provider = candidate_providers(&state)?
+    let candidates = candidate_providers(&state)?;
+
+    // 优先用 Codex(经注入的 AiPanel MCP 工具面做带工具的只读诊断);失败则回退 OpenAI 回路。
+    if let Some(p) = candidates.iter().find(|p| matches!(p.kind, ProviderKind::CodexAppServer)).cloned() {
+        if let Some(bridge) = codex_mcp_bridge(&app) {
+            let key = p
+                .credential_ref
+                .as_ref()
+                .and_then(|r| state.credentials.get_secret(r).ok().flatten());
+            let cfg = crate::agent::codex::CodexLaunch {
+                program: crate::agent::codex::resolve_codex_bin(p.codex_path.as_deref()),
+                base_url: p.base_url.clone(),
+                api_key: key,
+                model: p.model.clone(),
+                mcp: Some(bridge),
+            };
+            let intent2 = intent.clone();
+            let sid = server_id.clone();
+            // codex 客户端是阻塞 stdio,放到阻塞线程池。工具在独立 mcp-server 进程执行,无需 &AppState。
+            match tokio::task::spawn_blocking(move || crate::agent::run_codex_agent(cfg, &intent2, sid.as_deref())).await {
+                Ok(Ok(summary)) if !summary.trim().is_empty() => {
+                    return Ok(crate::agent::agent_loop::AgentTurnResult { summary, tool_calls: vec![] });
+                }
+                Ok(Ok(_)) => eprintln!("[agent] codex 诊断空结果,回退 OpenAI"),
+                Ok(Err(e)) => eprintln!("[agent] codex 诊断失败({}),回退 OpenAI", e.code()),
+                Err(_) => eprintln!("[agent] codex 诊断线程异常,回退 OpenAI"),
+            }
+        }
+    }
+
+    // 回退:OpenAI 兼容的 function-calling 只读诊断回路。
+    let provider = candidates
         .into_iter()
         .find(|p| matches!(p.kind, ProviderKind::OpenAiCompatible))
         .ok_or_else(|| {
-            AppError::Provider("自动诊断需要一个已启用的 OpenAI 兼容供应商,请在设置中配置".into())
+            AppError::Provider("自动诊断需要一个已启用的 OpenAI 兼容或 Codex 供应商,请在设置中配置".into())
         })?;
     let key = provider
         .credential_ref
         .as_ref()
         .and_then(|r| state.credentials.get_secret(r).ok().flatten());
     crate::agent::agent_loop::run_turn(&state, &provider, key, &intent, server_id.as_deref()).await
+}
+
+/// 构造把 AiPanel 自身注入 codex 的 MCP 桥(当前可执行文件 + 应用数据目录,后者让
+/// mcp-server 子进程复用同一份 SQLite/Keychain)。
+fn codex_mcp_bridge(app: &tauri::AppHandle) -> Option<crate::agent::codex::McpBridge> {
+    use tauri::Manager;
+    let exe = std::env::current_exe().ok()?.to_string_lossy().to_string();
+    let data_dir = app.path().app_data_dir().ok()?.to_string_lossy().to_string();
+    Some(crate::agent::codex::McpBridge { aipanel_exe: exe, data_dir })
 }
 
 /// 测试一份 agent provider 配置（合法性 / 可达性），但不保存。API Key 来自本次
