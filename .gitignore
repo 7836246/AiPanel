@@ -63,3 +63,6 @@ ds-bundle/
 
 # local goal/scratch
 goal.txt
+
+# 打包的 codex-app-server 二进制(由 scripts/fetch-codex.sh 取得,不进仓库,见 docs/CODEX.zh-Hans.md)
+apps/desktop/src-tauri/binaries/

@@ -207,16 +207,26 @@ pub struct CodexClient {
     next_id: u64,
 }
 
+/// codex 的私有 `CODEX_HOME`——把 codex 的会话/配置隔离到 AiPanel 专属目录,
+/// **绝不读取用户的 `~/.codex`**(否则会加载用户个人的 MCP 服务器等,既污染又有
+/// 安全风险;已对真实二进制验证:设了它就不会启动用户的 MCP)。
+fn isolated_codex_home() -> std::path::PathBuf {
+    let home = std::env::temp_dir().join("aipanel-codex-home");
+    let _ = std::fs::create_dir_all(&home);
+    home
+}
+
 impl CodexClient {
-    /// 启动 `<codex_path> app-server` 并开始读取其 stdout。
+    /// 启动打包的 `codex-app-server` 二进制(它**直接**就是 app-server,无需子命令),
+    /// 并开始读取其 stdout。用隔离的 `CODEX_HOME` 防止加载用户 `~/.codex` 配置/MCP。
     pub fn start(codex_path: &str) -> AppResult<Self> {
         let mut child = Command::new(codex_path)
-            .arg("app-server")
+            .env("CODEX_HOME", isolated_codex_home())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn()
-            .map_err(|e| AppError::Provider(format!("无法启动 codex app-server（{codex_path}）: {e}")))?;
+            .map_err(|e| AppError::Provider(format!("无法启动 codex-app-server（{codex_path}）: {e}")))?;
 
         let stdin = child.stdin.take().ok_or_else(|| AppError::Provider("no stdin".into()))?;
         let stdout = child.stdout.take().ok_or_else(|| AppError::Provider("no stdout".into()))?;
