@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Save, Trash2, TriangleAlert, X } from "lucide-react";
-import { Button, Dialog, Input, Textarea } from "@aipanel/ui";
+import { Button, Dialog, Input, Select, Textarea } from "@aipanel/ui";
 import {
   deleteServer,
   setServerSecret,
@@ -98,9 +98,6 @@ export default function EditServerDialog({
 
   const field = "flex flex-col gap-1.5";
   const labelCls = "text-[12px] font-medium tracking-wide text-fg-muted";
-  // 原生 select 对齐设计 token，补齐过渡与焦点环
-  const selectCls =
-    "h-9 rounded-md border border-border bg-surface-2 px-2.5 text-sm text-fg outline-none transition-colors focus-visible:border-brand focus-visible:ring-2 focus-visible:ring-brand/60";
 
   return (
     <Dialog
@@ -181,18 +178,19 @@ export default function EditServerDialog({
         </div>
         <div className={field}>
           <label className={labelCls}>认证方式</label>
-          <select
+          <Select
             value={authKind}
-            onChange={(e) => {
-              setAuthKind(e.target.value as AuthKind);
+            onChange={(v) => {
+              setAuthKind(v as AuthKind);
               setSecret(""); // 切换认证方式后不保留已输入的凭据
             }}
-            className={selectCls}
-          >
-            <option value="password">密码</option>
-            <option value="key">私钥</option>
-            <option value="agent">ssh-agent</option>
-          </select>
+            aria-label="认证方式"
+            options={[
+              { value: "password", label: "密码" },
+              { value: "key", label: "私钥" },
+              { value: "agent", label: "ssh-agent" },
+            ]}
+          />
         </div>
         {authKind === "password" && (
           <div className={field}>
