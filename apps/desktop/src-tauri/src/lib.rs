@@ -13,6 +13,7 @@ pub mod credentials;
 pub mod docker;
 pub mod doctor;
 pub mod files;
+pub mod mcp;
 pub mod plan;
 pub mod risk;
 pub mod ssh;
@@ -40,6 +41,15 @@ fn app_version() -> String {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // 以 `aipanel mcp-server` 子命令运行时:不启动 GUI,而是作为 stdio MCP 服务器,
+    // 把只读 server-ops 工具暴露给 codex(由 codex 按注入的 mcp_servers 配置拉起)。
+    if std::env::args().any(|a| a == "mcp-server") {
+        if let Err(e) = mcp::serve() {
+            eprintln!("aipanel mcp-server 退出: {e}");
+        }
+        return;
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
