@@ -9,6 +9,7 @@ import {
   Copy as CopyIcon,
   FolderTree,
   LayoutGrid,
+  MoreHorizontal,
   PanelBottom,
   PanelLeft,
   PanelRight,
@@ -401,6 +402,8 @@ export default function CodexConsole() {
   const [terminalOpen, setTerminalOpen] = useState(true);
   // Codex 式可折叠左侧栏(顶栏左侧的开关控制),配合右侧停靠面板形成「一左一右」操作。
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  // 顶栏标题旁的「···」菜单开关(Codex 式:新建/重命名/删除当前运行)。
+  const [titleMenuOpen, setTitleMenuOpen] = useState(false);
   // Codex 式三栏停靠面板:右侧文件树、底部交互终端(各自可开关、可拖拽改尺寸)。
   const [filesOpen, setFilesOpen] = useState(false);
   const [shellOpen, setShellOpen] = useState(false);
@@ -953,7 +956,14 @@ export default function CodexConsole() {
   // 需关注(离线/资源紧张)的服务器数,用于概览导航角标。
   const alertCount = servers.filter((s) => serverAlert(s) !== null).length;
   const planExecuted = !!current && current.kind === "plan" && current.executions.length > 0;
-  const topTitle = current ? current.title : selected ? selected.name : "AiPanel";
+  // 顶栏标题:各功能视图显示其名称;控制台显示当前任务标题,无任务时显示「新提问」(贴近 Codex 的对话标题)。
+  const topTitle =
+    view === "audit" ? "审计"
+    : view === "settings" ? "设置"
+    : view === "dashboard" ? "概览"
+    : view === "deploy" ? "Docker 部署"
+    : current ? current.title
+    : "新提问";
   // 计划编辑态派生值。
   const planEditing = draftSteps !== null;
   const canEditPlan = !!current?.plan && current.kind === "plan" && current.executions.length === 0 && !running;
@@ -1078,6 +1088,62 @@ export default function CodexConsole() {
               <PanelLeft size={16} />
             </IconButton>
             <span className="truncate text-[13.5px] font-semibold">{topTitle}</span>
+            {view === "console" && (
+              <div className="relative flex-none">
+                <IconButton aria-label="更多" size="lg" title="更多" className="text-fg-muted" onClick={() => setTitleMenuOpen((o) => !o)}>
+                  <MoreHorizontal size={16} />
+                </IconButton>
+                {titleMenuOpen && (
+                  <>
+                    <div className="fixed inset-0 z-10" onClick={() => setTitleMenuOpen(false)} />
+                    <div className="absolute left-0 top-full z-20 mt-1 w-44 rounded-md border border-border bg-surface-1 py-1 shadow-lg">
+                      <button
+                        className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[13px] text-fg-muted transition-colors hover:bg-hover hover:text-fg"
+                        onClick={() => {
+                          setTitleMenuOpen(false);
+                          setCurrent(null);
+                          setStepStatus([]);
+                          setTermLines([]);
+                          setView("console");
+                          setTimeout(() => inputRef.current?.focus(), 0);
+                        }}
+                      >
+                        新建提问
+                      </button>
+                      {current && (
+                        <>
+                          <button
+                            className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[13px] text-fg-muted transition-colors hover:bg-hover hover:text-fg"
+                            onClick={() => {
+                              setTitleMenuOpen(false);
+                              const name = window.prompt("重命名此运行", current.title)?.trim();
+                              if (!name) return;
+                              const updated = { ...current, title: name, updatedAt: nowIso() };
+                              setCurrent(updated);
+                              void saveTask(updated).then(refreshTasks).catch(() => {});
+                            }}
+                          >
+                            重命名
+                          </button>
+                          <button
+                            className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[13px] text-risk-blocked transition-colors hover:bg-hover"
+                            onClick={() => {
+                              setTitleMenuOpen(false);
+                              if (!window.confirm("删除此运行记录?")) return;
+                              const id = current.id;
+                              setCurrent(null);
+                              void deleteTask(id).then(refreshTasks).catch(() => {});
+                            }}
+                          >
+                            删除此运行
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
           </div>
           {/* 右侧:主题 + 工作区面板开关(分组,贴近 Codex 右侧操作区) */}
           <div className="flex flex-none items-center gap-0.5">
