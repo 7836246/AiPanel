@@ -154,6 +154,29 @@ function ModelPicker({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // 首次激活某供应商且尚未设过模型时,自动探测并选中首个模型——配置完 base+key 即可用,无需手点。
+  useEffect(() => {
+    if (!provider || provider.model) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const list = await listModels(provider);
+        if (cancelled) return;
+        setModels(list);
+        if (list.length) {
+          await setProviderModel(provider.id, list[0]);
+          if (!cancelled) onChanged();
+        }
+      } catch {
+        /* 自动探测失败:忽略,用户可手动点开探测 */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [provider?.id]);
+
   if (!provider) {
     return (
       <button onClick={onConfigure} className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[12.5px] text-fg-muted transition-colors hover:bg-hover" title="模型供应商设置">
