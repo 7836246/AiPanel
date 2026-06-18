@@ -102,7 +102,7 @@ export function ToastViewport({
           role="status"
           className={cn(
             // 卡片基底：表层背景 + 细边框 + 圆角 + 阴影；左侧用强调色作语气标识。
-            "pointer-events-auto flex items-start gap-3 rounded-md border border-l-4 border-border bg-surface-1 px-3 py-2 text-sm text-fg shadow-lg",
+            "pointer-events-auto flex items-start gap-3 rounded-xl border border-l-4 border-border bg-bg px-3.5 py-2.5 text-[13px] text-fg shadow-xl",
             "w-72 max-w-[calc(100vw-2rem)]",
             TONE_ACCENT[t.tone]
           )}
