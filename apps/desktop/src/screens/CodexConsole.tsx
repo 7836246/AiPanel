@@ -10,6 +10,7 @@ import {
   FolderTree,
   LayoutGrid,
   PanelBottom,
+  PanelLeft,
   PanelRight,
   Lock,
   LockOpen,
@@ -398,6 +399,8 @@ export default function CodexConsole() {
   const [stepStatus, setStepStatus] = useState<StepStatus[]>([]);
   const [termLines, setTermLines] = useState<TerminalLine[]>([]);
   const [terminalOpen, setTerminalOpen] = useState(true);
+  // Codex 式可折叠左侧栏(顶栏左侧的开关控制),配合右侧停靠面板形成「一左一右」操作。
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   // Codex 式三栏停靠面板:右侧文件树、底部交互终端(各自可开关、可拖拽改尺寸)。
   const [filesOpen, setFilesOpen] = useState(false);
   const [shellOpen, setShellOpen] = useState(false);
@@ -966,7 +969,8 @@ export default function CodexConsole() {
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-bg text-fg" style={{ fontFamily: "var(--font-sans)" }}>
-      {/* 侧栏 */}
+      {/* 侧栏(可由顶栏左侧开关折叠) */}
+      {sidebarOpen && (
       <aside className="flex w-64 flex-none flex-col border-r border-border bg-surface-2">
         <div className="flex items-center gap-2.5 px-3.5 py-3">
           <span className="flex h-7 w-7 items-center justify-center rounded-md bg-brand font-mono text-sm text-brand-fg">›_</span>
@@ -1057,27 +1061,39 @@ export default function CodexConsole() {
           <NavItem icon={<SettingsIcon size={16} />} label="设置" active={view === "settings"} onClick={() => setView("settings")} />
         </div>
       </aside>
+      )}
 
       {/* 主区 */}
       <main className="flex min-w-0 flex-1 flex-col bg-bg">
-        <div className="flex h-10 flex-none items-center justify-between border-b border-border px-3.5">
-          <div className="flex min-w-0 items-center gap-2">
+        <div className="flex h-10 flex-none items-center justify-between border-b border-border px-2.5">
+          {/* 左侧:折叠侧栏开关 + 标题(与右侧操作组形成「一左一右」,贴近 Codex) */}
+          <div className="flex min-w-0 items-center gap-1.5">
+            <IconButton
+              aria-label="折叠/展开侧栏"
+              onClick={() => setSidebarOpen((o) => !o)}
+              size="lg"
+              title="折叠/展开侧栏"
+              className={sidebarOpen ? "text-fg-muted" : "text-brand"}
+            >
+              <PanelLeft size={16} />
+            </IconButton>
             <span className="truncate text-[13.5px] font-semibold">{topTitle}</span>
           </div>
-          <div className="flex items-center gap-0.5">
+          {/* 右侧:主题 + 工作区面板开关(分组,贴近 Codex 右侧操作区) */}
+          <div className="flex flex-none items-center gap-0.5">
             <IconButton aria-label="切换主题" onClick={toggleTheme} size="lg" title={theme === "light" ? "切到深色" : "切到浅色"}>
               {theme === "light" ? <Moon size={16} /> : <Sun size={16} />}
             </IconButton>
             {view === "console" && (
               <>
-                {/* 工作区面板开关:右侧文件树 / 底部终端 / 中部输出 */}
-                <IconButton aria-label="文件面板" onClick={() => setFilesOpen((o) => !o)} size="lg" title="文件面板" className={filesOpen ? "text-brand" : undefined}>
+                <span className="mx-1 h-4 w-px bg-border" />
+                <IconButton aria-label="文件面板" onClick={() => setFilesOpen((o) => !o)} size="lg" title="文件面板" className={filesOpen ? "text-brand" : "text-fg-muted"}>
                   <PanelRight size={16} />
                 </IconButton>
-                <IconButton aria-label="终端面板" onClick={() => setShellOpen((o) => !o)} size="lg" title="终端面板" className={shellOpen ? "text-brand" : undefined}>
+                <IconButton aria-label="终端面板" onClick={() => setShellOpen((o) => !o)} size="lg" title="终端面板" className={shellOpen ? "text-brand" : "text-fg-muted"}>
                   <PanelBottom size={16} />
                 </IconButton>
-                <IconButton aria-label="切换输出" onClick={() => setTerminalOpen((o) => !o)} size="lg" title="运行输出" className={terminalOpen ? "text-brand" : undefined}>
+                <IconButton aria-label="切换输出" onClick={() => setTerminalOpen((o) => !o)} size="lg" title="运行输出" className={terminalOpen ? "text-brand" : "text-fg-muted"}>
                   <TerminalIconLucide size={16} />
                 </IconButton>
               </>
