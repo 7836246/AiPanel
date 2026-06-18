@@ -55,7 +55,7 @@ import EditServerDialog from "./EditServerDialog";
 import ServerOverview from "./ServerOverview";
 import ServerMonitor from "./ServerMonitor";
 import CommandPalette, { type PaletteCommand } from "./CommandPalette";
-import { READONLY_DEFAULT_KEY, readUpdateAutoCheck } from "./settingsKeys";
+import { READONLY_DEFAULT_KEY, readUpdateAutoCheck, readRecentServers, recordRecentServer } from "./settingsKeys";
 import {
   isTauri,
   cancelRun,
@@ -498,6 +498,8 @@ export default function CodexConsole() {
   const [titleMenuOpen, setTitleMenuOpen] = useState(false);
   // 实时监控浮层开关(从对话布局里独立出来,点按钮才开)。
   const [monitorOpen, setMonitorOpen] = useState(false);
+  // 最近访问的服务器 id(最近在前),供命令面板置顶。
+  const [recentServers, setRecentServers] = useState<string[]>(() => readRecentServers());
   // 右键上下文菜单(侧栏服务器/运行记录):位置 + 菜单项。
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; items: CtxItem[] } | null>(null);
   const openCtx = (e: ReactMouseEvent, items: CtxItem[]) => {
@@ -667,6 +669,11 @@ export default function CodexConsole() {
     if (!selectedServerId || !isTauri()) return;
     void probe(selectedServerId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedServerId]);
+
+  // 记录最近访问的服务器(置顶去重,持久化),供命令面板「最近」分组。
+  useEffect(() => {
+    if (selectedServerId) setRecentServers(recordRecentServer(selectedServerId));
   }, [selectedServerId]);
 
   async function refreshTasks() {
@@ -1152,6 +1159,12 @@ export default function CodexConsole() {
     { id: "terminal", label: "切换终端", group: "界面", run: () => setTerminalOpen((o) => !o) },
     { id: "readonly", label: readOnlyMode ? "关闭只读优先" : "开启只读优先", group: "界面", run: () => setReadOnly((v) => !v) },
     { id: "shortcuts", label: "快捷键说明", hint: "⌘K / Esc / ↵", group: "界面", run: () => push("info", "⌘K / Ctrl-K 打开命令面板 · Esc 关闭浮层与对话框 · 回车提交表单") },
+    // 最近访问过的服务器置顶(排除当前选中、且仍存在的);最近在前。
+    ...recentServers
+      .filter((id) => id !== selectedServerId)
+      .map((id) => servers.find((s) => s.id === id))
+      .filter((s): s is ServerProfile => !!s)
+      .map((s) => ({ id: `recent-${s.id}`, label: `切换到 ${s.name}`, hint: s.host, group: "最近", run: () => setSelectedServerId(s.id) })),
     ...servers.map((s) => ({ id: `srv-${s.id}`, label: `切换到 ${s.name}`, hint: s.host, group: "服务器", run: () => setSelectedServerId(s.id) })),
   ];
 
