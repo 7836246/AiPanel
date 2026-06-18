@@ -1225,4 +1225,25 @@ mod tests {
             assert_eq!(validate_provider_input(input).unwrap_err().code(), "validation");
         }
     }
+
+    #[test]
+    fn provider_credential_ref_for_save_rules() {
+        let existing = Some(CredentialRef::for_provider("p1"));
+        // 传了新 Key:无论是否有旧引用 / 是否 clear,都用新的 provider 引用。
+        assert_eq!(
+            provider_credential_ref_for_save("p1", existing.clone(), true, false),
+            Some(CredentialRef::for_provider("p1"))
+        );
+        assert_eq!(
+            provider_credential_ref_for_save("p1", None, true, true),
+            Some(CredentialRef::for_provider("p1")),
+            "传新 Key 优先于 clear"
+        );
+        // 显式清除(无新 Key)→ 不引用任何凭据。
+        assert_eq!(provider_credential_ref_for_save("p1", existing.clone(), false, true), None);
+        // 编辑保存(不传新 Key、不清除)→ 保留既有引用,避免误把已配置 Key 抹掉。
+        assert_eq!(provider_credential_ref_for_save("p1", existing.clone(), false, false), existing);
+        // 既无既有引用、也不传不清 → None。
+        assert_eq!(provider_credential_ref_for_save("p1", None, false, false), None);
+    }
 }
