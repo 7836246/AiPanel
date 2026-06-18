@@ -929,4 +929,50 @@ mod tests {
             .expect("登记前到达的取消应在登记后立即生效,而不是丢失");
         unregister(id);
     }
+
+    #[test]
+    fn build_invocation_agent_uses_safe_ssh_opts() {
+        let s = server(AuthKind::Agent);
+        let inv = build_invocation(&s, None, "uname -a", false).unwrap();
+        assert_eq!(inv.program, "ssh");
+        assert!(inv.env.is_none());
+        let joined = inv.args.join(" ");
+        assert!(joined.contains("BatchMode=yes"), "agent 认证应 BatchMode=yes(不交互): {joined}");
+        assert!(joined.contains("StrictHostKeyChecking=accept-new"), "应带 host key 策略: {joined}");
+        assert!(joined.contains("ServerAliveInterval=5"), "应带保活: {joined}");
+        assert!(inv.args.iter().any(|a| a == "-p") && inv.args.iter().any(|a| a == "22"));
+        assert!(inv.args.iter().any(|a| a == "nobody@127.0.0.1"), "应含 user@host");
+        assert_eq!(inv.args.last().unwrap(), "uname -a", "远端命令必须是最后一个参数");
+        assert!(!inv.args.iter().any(|a| a == "-tt"), "非流式不应强制分配 tty");
+    }
+
+    #[test]
+    fn build_invocation_force_tty_adds_tt() {
+        let s = server(AuthKind::Agent);
+        let inv = build_invocation(&s, None, "true", true).unwrap();
+        assert!(inv.args.iter().any(|a| a == "-tt"), "force_tty 应追加 -tt 以便远端随断开收 SIGHUP");
+    }
+
+    #[test]
+    fn build_invocation_key_uses_temp_identity_file_0600_and_cleans_up() {
+        let s = server(AuthKind::Key);
+        let keypath;
+        {
+            let inv = build_invocation(&s, Some("FAKE-KEY-MATERIAL"), "true", false).unwrap();
+            assert_eq!(inv.program, "ssh");
+            let joined = inv.args.join(" ");
+            assert!(joined.contains("IdentitiesOnly=yes"), "key 认证应只用指定密钥: {joined}");
+            let idx = inv.args.iter().position(|a| a == "-i").expect("key 认证应带 -i");
+            keypath = std::path::PathBuf::from(&inv.args[idx + 1]);
+            assert!(keypath.exists(), "临时密钥文件在调用存活期间应存在");
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let mode = std::fs::metadata(&keypath).unwrap().permissions().mode();
+                assert_eq!(mode & 0o777, 0o600, "临时密钥文件必须 0600");
+            }
+        }
+        // Invocation(含 KeyFile)离开作用域后,临时密钥应被删除。
+        assert!(!keypath.exists(), "drop 后临时密钥文件应被清理");
+    }
 }
