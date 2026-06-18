@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type JSX } from "react";
 import { Badge, Button, Input, Spinner, ToastViewport, useToasts } from "@aipanel/ui";
 import {
   Check,
   Cpu,
   DownloadCloud,
+  Palette,
   Pencil,
   Plus,
   RefreshCw,
@@ -37,6 +38,170 @@ import {
   readUpdateAutoCheck,
   writeUpdateAutoCheck,
 } from "./settingsKeys";
+import {
+  ACCENT_PRESETS,
+  readAppearance,
+  setAppearance,
+  normalizeHex,
+  type AppearancePrefs,
+  type ThemeMode,
+  type MotionPref,
+} from "../lib/appearance";
+
+// 主题模式预览小卡:用固定的浅/深底色画一个迷你窗口(侧栏 + 内容条),不随当前主题变化。
+function ThemePreview({ mode }: { mode: ThemeMode }): JSX.Element {
+  const light = { bg: "#ffffff", side: "#f1f2f4", bar: "#d6d8dc" };
+  const dark = { bg: "#1a1a1c", side: "#242427", bar: "#3a3a3e" };
+  const Mini = ({ c }: { c: typeof light }) => (
+    <div className="flex h-full w-full overflow-hidden" style={{ background: c.bg }}>
+      <div className="h-full w-1/3" style={{ background: c.side }} />
+      <div className="flex flex-1 flex-col gap-1 p-1.5">
+        <div className="h-1 w-3/4 rounded-full" style={{ background: c.bar }} />
+        <div className="h-1 w-1/2 rounded-full" style={{ background: c.bar }} />
+        <div className="h-1 w-2/3 rounded-full" style={{ background: c.bar }} />
+      </div>
+    </div>
+  );
+  if (mode === "light") return <Mini c={light} />;
+  if (mode === "dark") return <Mini c={dark} />;
+  // 系统:左浅右深,斜分。
+  return (
+    <div className="flex h-full w-full overflow-hidden">
+      <div className="h-full w-1/2">
+        <Mini c={light} />
+      </div>
+      <div className="h-full w-1/2">
+        <Mini c={dark} />
+      </div>
+    </div>
+  );
+}
+
+// 外观设置:主题模式 / 强调色 / 减少动态效果 / 指针光标。即时应用 + 持久化(localStorage)。
+function AppearanceSection({ cardCls }: { cardCls: string }): JSX.Element {
+  const [prefs, setPrefs] = useState<AppearancePrefs>(() => readAppearance());
+  const [hex, setHex] = useState(prefs.accent ?? "");
+  const update = (patch: Partial<AppearancePrefs>) => {
+    const next = { ...prefs, ...patch };
+    setPrefs(next);
+    setAppearance(next); // 应用到 <html> + 持久化 + 派发同步事件
+  };
+  const MODES: { id: ThemeMode; label: string }[] = [
+    { id: "system", label: "系统" },
+    { id: "light", label: "浅色" },
+    { id: "dark", label: "深色" },
+  ];
+  const MOTIONS: { id: MotionPref; label: string }[] = [
+    { id: "system", label: "系统" },
+    { id: "on", label: "开启" },
+    { id: "off", label: "关闭" },
+  ];
+  return (
+    <>
+      <h2 className="mb-3 mt-8 flex items-center gap-1.5 text-sm font-semibold">
+        <Palette size={15} strokeWidth={1.75} className="text-fg-muted" />
+        外观
+      </h2>
+
+      {/* 主题模式:三张预览卡 */}
+      <div className="mb-3 grid grid-cols-3 gap-2.5">
+        {MODES.map((m) => (
+          <button
+            key={m.id}
+            type="button"
+            onClick={() => update({ mode: m.id })}
+            aria-pressed={prefs.mode === m.id}
+            className={`overflow-hidden rounded-lg border text-left transition-colors ${
+              prefs.mode === m.id ? "border-brand ring-1 ring-brand" : "border-border hover:border-border-strong"
+            }`}
+          >
+            <div className="h-16 w-full border-b border-border">
+              <ThemePreview mode={m.id} />
+            </div>
+            <div className="flex items-center justify-between px-2.5 py-1.5 text-[12.5px]">
+              <span>{m.label}</span>
+              {prefs.mode === m.id && <Check size={13} className="text-brand" />}
+            </div>
+          </button>
+        ))}
+      </div>
+
+      <div className={cardCls}>
+        {/* 强调色 */}
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="mr-1 text-[13px] text-fg">强调色</span>
+          {ACCENT_PRESETS.map((a) => {
+            const active = (prefs.accent ?? null) === a.value;
+            return (
+              <button
+                key={a.id}
+                type="button"
+                onClick={() => {
+                  update({ accent: a.value });
+                  setHex(a.value ?? "");
+                }}
+                title={a.label}
+                aria-label={`强调色 ${a.label}`}
+                className={`flex h-6 w-6 items-center justify-center rounded-full border transition-transform hover:scale-110 ${
+                  active ? "ring-2 ring-offset-1 ring-offset-surface-1 ring-fg" : "border-border"
+                }`}
+                style={{
+                  // 默认色用「跟随主题」的渐变示意;预设用其颜色。
+                  background: a.value ?? "linear-gradient(135deg,#1a1a1c 50%,#ededf0 50%)",
+                }}
+              >
+                {active && a.value && <Check size={12} className="text-white" />}
+              </button>
+            );
+          })}
+          {/* 自定义 hex */}
+          <input
+            value={hex}
+            onChange={(e) => setHex(e.target.value)}
+            onBlur={() => {
+              const n = normalizeHex(hex);
+              if (n) update({ accent: n });
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                const n = normalizeHex(hex);
+                if (n) update({ accent: n });
+              }
+            }}
+            placeholder="#自定义"
+            className="h-7 w-24 rounded-md border border-border bg-surface-2 px-2 font-mono text-[12px] outline-none focus:border-brand"
+          />
+        </div>
+        <p className="mt-1.5 text-[12px] text-fg-subtle">应用于按钮、链接与高亮;「默认」跟随主题(近黑 / 近白)。</p>
+
+        {/* 减少动态效果 */}
+        <div className="mt-4 flex items-center gap-2">
+          <span className="text-[13px] text-fg">减少动态效果</span>
+          <div className="ml-auto inline-flex rounded-md border border-border p-0.5">
+            {MOTIONS.map((m) => (
+              <button
+                key={m.id}
+                type="button"
+                onClick={() => update({ motion: m.id })}
+                className={`rounded px-2.5 py-0.5 text-[12px] transition-colors ${
+                  prefs.motion === m.id ? "bg-surface-2 text-fg shadow-sm" : "text-fg-muted hover:text-fg"
+                }`}
+              >
+                {m.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* 指针光标 */}
+        <label className="mt-3 flex items-center gap-2 text-[13px] text-fg">
+          <input type="checkbox" checked={prefs.pointer} onChange={(e) => update({ pointer: e.target.checked })} />
+          悬停可交互元素时使用指针光标
+        </label>
+      </div>
+    </>
+  );
+}
 
 // 从后端错误或任意异常中提取可展示的错误文本。
 const errMsg = (e: unknown): string =>
@@ -565,6 +730,9 @@ export default function SettingsPanel() {
             </div>
           )}
         </div>
+
+        {/* 外观 */}
+        <AppearanceSection cardCls={cardCls} />
 
         {/* 通用偏好 */}
         <h2 className="mb-3 mt-8 flex items-center gap-1.5 text-sm font-semibold">

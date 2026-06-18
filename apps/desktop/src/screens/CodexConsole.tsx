@@ -56,6 +56,7 @@ import ServerOverview from "./ServerOverview";
 import ServerMonitor from "./ServerMonitor";
 import CommandPalette, { type PaletteCommand } from "./CommandPalette";
 import { READONLY_DEFAULT_KEY, readUpdateAutoCheck, readRecentServers, recordRecentServer } from "./settingsKeys";
+import { readAppearance, applyAppearance, resolveDark, setAppearance, APPEARANCE_EVENT } from "../lib/appearance";
 import {
   isTauri,
   cancelRun,
@@ -128,14 +129,35 @@ type StepStatus = "pending" | "running" | "done" | "failed";
 /* ---------------- 主题 ---------------- */
 // 主题钩子：持久化到 localStorage，并切换 <html> 的 dark 类；返回 [当前主题, 切换函数]。
 function useTheme(): [("light" | "dark"), () => void] {
-  const [theme, setTheme] = useState<"light" | "dark">(
-    () => (localStorage.getItem("aipanel-theme") as "light" | "dark") ?? "light"
-  );
+  // 主题/强调色/动效/光标统一由 lib/appearance 管理。首次渲染即应用以避免闪烁。
+  const [dark, setDark] = useState<boolean>(() => {
+    const p = readAppearance();
+    applyAppearance(p);
+    return resolveDark(p.mode);
+  });
   useEffect(() => {
-    document.documentElement.classList.toggle("dark", theme === "dark");
-    localStorage.setItem("aipanel-theme", theme);
-  }, [theme]);
-  return [theme, () => setTheme((t) => (t === "light" ? "dark" : "light"))];
+    // 设置面板改动外观 → 事件同步;系统主题变化(mode=system 时)→ 重新应用。
+    const sync = () => setDark(resolveDark(readAppearance().mode));
+    window.addEventListener(APPEARANCE_EVENT, sync);
+    const mq = window.matchMedia?.("(prefers-color-scheme: dark)");
+    const onMq = () => {
+      applyAppearance(readAppearance());
+      sync();
+    };
+    mq?.addEventListener?.("change", onMq);
+    return () => {
+      window.removeEventListener(APPEARANCE_EVENT, sync);
+      mq?.removeEventListener?.("change", onMq);
+    };
+  }, []);
+  // 顶栏图标:在浅/深之间显式切换(写入 mode=light/dark)。
+  const toggle = () => {
+    const p = readAppearance();
+    const next = resolveDark(p.mode) ? "light" : "dark";
+    setAppearance({ ...p, mode: next });
+    setDark(next === "dark");
+  };
+  return [dark ? "dark" : "light", toggle];
 }
 
 /* ---------------- 子组件 ---------------- */

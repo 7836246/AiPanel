@@ -23,3 +23,22 @@
     -webkit-font-smoothing: antialiased;
   }
 }
+
+/* 外观设置:减少动态效果(把过渡/动画压到几乎瞬时,尊重无障碍偏好)。 */
+.reduce-motion *,
+.reduce-motion *::before,
+.reduce-motion *::after {
+  transition-duration: 0.01ms !important;
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  scroll-behavior: auto !important;
+}
+
+/* 外观设置:指针光标(悬停可交互元素时显示 pointer)。 */
+.pointer-cursor button:not(:disabled),
+.pointer-cursor a,
+.pointer-cursor label,
+.pointer-cursor summary,
+.pointer-cursor [role="button"]:not([aria-disabled="true"]) {
+  cursor: pointer;
+}
