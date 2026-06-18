@@ -126,7 +126,13 @@ export default function SettingsPanel() {
     setDetecting(true);
     setDetectError(null);
     try {
-      const raw = await listModels(form, apiKey || undefined);
+      // 编辑已保存供应商且未重新输入 Key 时,补回确定性的 credentialRef,让后端能从
+      // Keychain 取回密钥探测(否则会因无 Key 而被供应商 401 拒绝)。
+      const probe =
+        apiKey || !form.id
+          ? form
+          : ({ ...form, credentialRef: `provider:${form.id}` } as ProviderConfig);
+      const raw = await listModels(probe, apiKey || undefined);
       // 兼容返回 string[] 或 { id?/name? }[] 两种形态，归一化为字符串数组。
       const ids = (raw as unknown[])
         .map((m) =>

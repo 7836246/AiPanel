@@ -188,8 +188,10 @@ function ModelPicker({
     try {
       await setProviderModel(provider.id, m);
       onChanged();
-    } catch {
-      /* 失败时静默:下拉已关,用户可重试 */
+    } catch (e) {
+      // 持久化失败:重新打开下拉并显示原因,避免「点了没反应」。
+      setError(e && typeof e === "object" && "message" in e ? String((e as { message: unknown }).message) : String(e));
+      setOpen(true);
     }
   };
 
@@ -424,8 +426,9 @@ export default function CodexConsole() {
   const selected = servers.find((s) => s.id === selectedServerId) ?? null;
   // 当前可用于 AI 诊断的供应商：优先采用模型选择策略里的默认供应商
   // （命中且已启用时），与后端实际选用保持一致；否则回退到首个「启用且非 custom」。
+  // 与后端 candidate_providers 一致:custom 类型不参与规划,也不应作为首页激活供应商。
   const policyDefault = policy.defaultProviderId
-    ? providers.find((p) => p.id === policy.defaultProviderId && p.enabled)
+    ? providers.find((p) => p.id === policy.defaultProviderId && p.enabled && p.kind !== "custom")
     : undefined;
   const aiProvider =
     policyDefault ?? providers.find((p) => p.enabled && p.kind !== "custom") ?? null;
@@ -1219,6 +1222,7 @@ export default function CodexConsole() {
                   </div>
                   <div className="flex items-center gap-2.5">
                     <ModelPicker
+                      key={aiProvider?.id ?? "none"}
                       provider={aiProvider}
                       onChanged={() => listProviders().then(setProviders).catch(() => {})}
                       onConfigure={() => setView("settings")}
