@@ -116,14 +116,14 @@ export function CommandPalette({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center bg-black/60 p-4 pt-[12vh]"
+      className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 p-4 pt-[12vh] backdrop-blur-sm"
       role="dialog"
       aria-modal="true"
       aria-label="Command palette"
       onClick={onClose}
     >
       <div
-        className="flex max-h-[70vh] w-full max-w-lg flex-col overflow-hidden rounded-lg border border-border bg-surface-1 shadow-xl"
+        className="flex max-h-[70vh] w-full max-w-lg flex-col overflow-hidden rounded-xl border border-border bg-bg shadow-2xl"
         onClick={(e) => e.stopPropagation()}
         onKeyDown={onKeyDown}
       >
@@ -218,8 +218,8 @@ function renderItems(
         onMouseEnter={() => setActiveIndex(index)}
         onClick={() => execute(cmd)}
         className={cn(
-          "flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-sm text-fg transition-colors",
-          isActive ? "bg-selected" : "hover:bg-hover"
+          "mx-1 flex w-[calc(100%-0.5rem)] items-center gap-3 rounded-lg px-3 py-2 text-left text-sm text-fg transition-colors",
+          isActive ? "bg-selected font-medium" : "hover:bg-hover"
         )}
       >
         {/* 选中态左侧指示箭头：仅高亮项可见，避免行宽抖动用占位 */}
