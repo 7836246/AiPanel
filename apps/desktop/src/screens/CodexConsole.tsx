@@ -23,7 +23,7 @@ import {
   PanelLeft,
   PanelRight,
   Lock,
-  LockOpen,
+  ShieldCheck,
   Moon,
   Pencil as PencilIcon,
   Play as PlayIcon,
@@ -520,6 +520,8 @@ export default function CodexConsole() {
   const [titleMenuOpen, setTitleMenuOpen] = useState(false);
   // 实时监控浮层开关(从对话布局里独立出来,点按钮才开)。
   const [monitorOpen, setMonitorOpen] = useState(false);
+  // 执行模式下拉(Codex 式:底部药丸 + 上弹浮层选「标准执行 / 只读优先」)。
+  const [modeMenuOpen, setModeMenuOpen] = useState(false);
   // 最近访问的服务器 id(最近在前),供命令面板置顶。
   const [recentServers, setRecentServers] = useState<string[]>(() => readRecentServers());
   // 右键上下文菜单(侧栏服务器/运行记录):位置 + 菜单项。
@@ -1705,14 +1707,48 @@ export default function CodexConsole() {
                 />
                 <div className="flex items-center justify-between gap-2.5">
                   <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => setReadOnly((v) => !v)}
-                      title="开启后,生成的写操作步骤会被阻止"
-                      className={`inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[13px] transition-colors hover:bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/60 ${readOnlyMode ? "text-risk-medium" : "text-fg-subtle"}`}
-                    >
-                      {readOnlyMode ? <Lock size={14} /> : <LockOpen size={14} />}
-                      {readOnlyMode ? "只读优先 · 开" : "只读优先 · 关"}
-                    </button>
+                    {/* 执行模式:Codex 式底部药丸 + 上弹浮层(图标 + 标题 + 说明 + 勾选) */}
+                    <div className="relative">
+                      <button
+                        onClick={() => setModeMenuOpen((o) => !o)}
+                        title="选择 AiPanel 如何执行计划"
+                        aria-haspopup="menu"
+                        aria-expanded={modeMenuOpen}
+                        className={`inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[13px] transition-colors hover:bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/60 ${readOnlyMode ? "text-risk-medium" : "text-fg-muted"}`}
+                      >
+                        {readOnlyMode ? <Lock size={14} /> : <ShieldCheck size={14} />}
+                        {readOnlyMode ? "只读优先" : "标准执行"}
+                        {modeMenuOpen ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+                      </button>
+                      {modeMenuOpen && (
+                        <>
+                          <div className="fixed inset-0 z-40" onClick={() => setModeMenuOpen(false)} />
+                          <div className="absolute bottom-full left-0 z-50 mb-2 w-[340px] overflow-hidden rounded-xl border border-border bg-bg shadow-2xl">
+                            <div className="px-3.5 pb-1.5 pt-3 text-[12px] text-fg-subtle">AiPanel 如何执行计划?</div>
+                            {[
+                              { ro: false, icon: <ShieldCheck size={16} />, title: "标准执行", desc: "写操作需你确认,高风险需二次确认。" },
+                              { ro: true, icon: <Lock size={16} />, title: "只读优先", desc: "仅允许只读检查命令,任何写操作一律阻止;适合安全诊断。" },
+                            ].map((m) => {
+                              const active = readOnlyMode === m.ro;
+                              return (
+                                <button
+                                  key={m.title}
+                                  onClick={() => { setReadOnly(m.ro); setModeMenuOpen(false); }}
+                                  className="flex w-full items-start gap-2.5 px-3.5 py-2.5 text-left transition-colors hover:bg-hover"
+                                >
+                                  <span className="mt-0.5 flex-none text-fg-muted">{m.icon}</span>
+                                  <span className="min-w-0 flex-1">
+                                    <span className="block text-[13px] font-medium text-fg">{m.title}</span>
+                                    <span className="mt-0.5 block text-[12px] leading-relaxed text-fg-muted">{m.desc}</span>
+                                  </span>
+                                  {active && <CheckIcon size={15} className="mt-0.5 flex-none text-brand" />}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </>
+                      )}
+                    </div>
                     <button
                       onClick={diagnose}
                       disabled={!intentValue.trim() || !selectedServerId || running || !aiProvider}
