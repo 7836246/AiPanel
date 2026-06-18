@@ -39,6 +39,8 @@ export default function TerminalSession({
 }): JSX.Element {
   // 终端 DOM 挂载点
   const containerRef = useRef<HTMLDivElement>(null);
+  // 当前 xterm 实例引用,供「清屏」按钮调用 term.clear()。
+  const termRef = useRef<Terminal | null>(null);
   // 重连计数：自增即触发 effect 重跑，从而卸载并重建终端
   const [reconnectKey, setReconnectKey] = useState(0);
   // 连接 banner 状态：初始为 connecting；首批输出/打开成功后置 done；失败置 error。
@@ -102,6 +104,7 @@ export default function TerminalSession({
       theme,
     });
 
+    termRef.current = term;
     // 加载 fit 插件，挂载到容器并做一次初始 fit
     const fit = new FitAddon();
     term.loadAddon(fit);
@@ -170,6 +173,7 @@ export default function TerminalSession({
       resizeObserver.disconnect();
       if (sessionId) void terminalClose(sessionId);
       term.dispose();
+      termRef.current = null;
     };
     // reconnectKey 变化时重建终端实现「重连」
   }, [serverId, reconnectKey]);
@@ -182,17 +186,28 @@ export default function TerminalSession({
         <span className="truncate" title={serverName}>
           {serverName}
         </span>
-        <button
-          type="button"
-          // 连接中禁止重连：避免对正在建立的会话再次 dispose/重建
-          onClick={() => setReconnectKey((k) => k + 1)}
-          disabled={banner.phase === "connecting"}
-          aria-label={banner.phase === "connecting" ? "正在连接终端会话" : "断开并重新建立终端会话"}
-          title={banner.phase === "connecting" ? "正在连接…" : "断开并重新建立终端会话"}
-          className="rounded px-2 py-0.5 text-xs text-fg hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {banner.phase === "connecting" ? "连接中…" : "重连"}
-        </button>
+        <div className="flex flex-none items-center gap-1">
+          <button
+            type="button"
+            onClick={() => termRef.current?.clear()}
+            aria-label="清屏"
+            title="清屏(仅清空显示,不影响远端会话)"
+            className="rounded px-2 py-0.5 text-xs text-fg hover:bg-surface-2"
+          >
+            清屏
+          </button>
+          <button
+            type="button"
+            // 连接中禁止重连：避免对正在建立的会话再次 dispose/重建
+            onClick={() => setReconnectKey((k) => k + 1)}
+            disabled={banner.phase === "connecting"}
+            aria-label={banner.phase === "connecting" ? "正在连接终端会话" : "断开并重新建立终端会话"}
+            title={banner.phase === "connecting" ? "正在连接…" : "断开并重新建立终端会话"}
+            className="rounded px-2 py-0.5 text-xs text-fg hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {banner.phase === "connecting" ? "连接中…" : "重连"}
+          </button>
+        </div>
       </div>
 
       {/* 连接 banner：连接中(spinner) / 失败(红色原因)；done 时不渲染 */}
