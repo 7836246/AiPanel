@@ -22,8 +22,15 @@ const SCHEMA_VERSION: i64 = 3;
 
 impl Store {
     /// 打开（并迁移）位于 `path` 的数据库。
+    ///
+    /// 启用 **WAL + busy_timeout**:GUI 进程与 `aipanel mcp-server` 子进程会**并发**访问
+    /// 同一个数据库文件(诊断时 mcp-server 写审计、GUI 同时读写)。WAL 允许「多读 + 单写」
+    /// 跨进程并发,busy_timeout 在短暂写锁竞争时等待而非立刻 "database is locked"。
     pub fn open(path: &std::path::Path) -> AppResult<Self> {
         let conn = Connection::open(path)?;
+        conn.execute_batch(
+            "PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;",
+        )?;
         let store = Store { conn: Mutex::new(conn) };
         store.migrate()?;
         Ok(store)
