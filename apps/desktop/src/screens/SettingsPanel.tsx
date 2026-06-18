@@ -39,11 +39,13 @@ import {
   writeUpdateAutoCheck,
 } from "./settingsKeys";
 import {
-  ACCENT_PRESETS,
   readAppearance,
   setAppearance,
   normalizeHex,
+  DEFAULT_LIGHT,
+  DEFAULT_DARK,
   type AppearancePrefs,
+  type ThemeColors,
   type ThemeMode,
   type MotionPref,
 } from "../lib/appearance";
@@ -77,15 +79,124 @@ function ThemePreview({ mode }: { mode: ThemeMode }): JSX.Element {
   );
 }
 
-// 外观设置:主题模式 / 强调色 / 减少动态效果 / 指针光标。即时应用 + 持久化(localStorage)。
+// 单个颜色字段:label + 右侧(原生取色器色块 + 可编辑 hex)。
+function ColorField({ label, value, onChange }: { label: string; value: string; onChange: (hex: string) => void }): JSX.Element {
+  const [hex, setHex] = useState(value);
+  useEffect(() => setHex(value), [value]); // 外部值变化(切主题/重置)时同步
+  const commit = (v: string) => {
+    const n = normalizeHex(v);
+    if (n) onChange(n);
+    else setHex(value);
+  };
+  return (
+    <div className="flex items-center justify-between py-2">
+      <span className="text-[13px] text-fg">{label}</span>
+      <label className="flex items-center gap-2 rounded-full border border-border bg-surface-2 px-2 py-1">
+        <span className="relative h-4 w-4 overflow-hidden rounded-full border border-border" style={{ background: value }}>
+          <input
+            type="color"
+            value={normalizeHex(value) ?? "#000000"}
+            onChange={(e) => onChange(e.target.value)}
+            className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+            aria-label={`${label}取色`}
+          />
+        </span>
+        <input
+          value={hex}
+          onChange={(e) => setHex(e.target.value)}
+          onBlur={() => commit(hex)}
+          onKeyDown={(e) => { if (e.key === "Enter") commit(hex); }}
+          className="w-20 bg-transparent font-mono text-[12px] uppercase outline-none"
+          aria-label={label}
+        />
+      </label>
+    </div>
+  );
+}
+
+// 字体字段:label + font-family 文本输入。
+function FontField({ label, value, placeholder, onChange }: { label: string; value: string; placeholder?: string; onChange: (v: string) => void }): JSX.Element {
+  const [v, setV] = useState(value);
+  useEffect(() => setV(value), [value]);
+  const commit = () => onChange(v.trim() || value);
+  return (
+    <div className="flex items-center justify-between gap-3 py-2">
+      <span className="flex-none text-[13px] text-fg">{label}</span>
+      <input
+        value={v}
+        placeholder={placeholder}
+        onChange={(e) => setV(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => { if (e.key === "Enter") commit(); }}
+        className="min-w-0 flex-1 truncate rounded-md border border-border bg-surface-2 px-2 py-1 font-mono text-[12px] text-fg-muted outline-none focus:border-brand"
+      />
+    </div>
+  );
+}
+
+// 单个主题(浅/深)的编辑器:强调色/背景/前景/UI 字体/代码字体/半透明侧栏/对比度。
+function ThemeEditor({ title, value, defaults, onChange, onReset, cardCls }: {
+  title: string;
+  value: ThemeColors;
+  defaults: ThemeColors;
+  onChange: (patch: Partial<ThemeColors>) => void;
+  onReset: () => void;
+  cardCls: string;
+}): JSX.Element {
+  const isDefault = JSON.stringify(value) === JSON.stringify(defaults);
+  return (
+    <div className={cardCls}>
+      <div className="mb-1 flex items-center justify-between">
+        <span className="text-[13px] font-semibold">{title}</span>
+        <button
+          type="button"
+          onClick={onReset}
+          disabled={isDefault}
+          className="text-[12px] text-fg-subtle transition-colors hover:text-fg disabled:opacity-40"
+        >
+          重置为默认
+        </button>
+      </div>
+      <ColorField label="强调色" value={value.accent} onChange={(v) => onChange({ accent: v })} />
+      <ColorField label="背景" value={value.bg} onChange={(v) => onChange({ bg: v })} />
+      <ColorField label="前景" value={value.fg} onChange={(v) => onChange({ fg: v })} />
+      <FontField label="UI 字体" value={value.uiFont} placeholder="-apple-system, …" onChange={(v) => onChange({ uiFont: v })} />
+      <FontField label="代码字体" value={value.codeFont} placeholder="ui-monospace, …" onChange={(v) => onChange({ codeFont: v })} />
+      <label className="flex items-center justify-between py-2 text-[13px] text-fg">
+        半透明侧边栏
+        <input
+          type="checkbox"
+          checked={value.translucentSidebar}
+          onChange={(e) => onChange({ translucentSidebar: e.target.checked })}
+        />
+      </label>
+      <div className="flex items-center gap-3 py-2">
+        <span className="text-[13px] text-fg">对比度</span>
+        <input
+          type="range"
+          min={0}
+          max={100}
+          value={value.contrast}
+          onChange={(e) => onChange({ contrast: Number(e.target.value) })}
+          className="ml-auto w-40 accent-[var(--color-brand)]"
+          aria-label={`${title}对比度`}
+        />
+        <span className="w-7 text-right font-mono text-[12px] text-fg-muted">{value.contrast}</span>
+      </div>
+    </div>
+  );
+}
+
+// 外观设置:主题模式 + 浅/深主题各自配置 + 减少动态效果 + 指针光标。即时应用 + 持久化。
 function AppearanceSection({ cardCls }: { cardCls: string }): JSX.Element {
   const [prefs, setPrefs] = useState<AppearancePrefs>(() => readAppearance());
-  const [hex, setHex] = useState(prefs.accent ?? "");
-  const update = (patch: Partial<AppearancePrefs>) => {
-    const next = { ...prefs, ...patch };
+  const apply = (next: AppearancePrefs) => {
     setPrefs(next);
     setAppearance(next); // 应用到 <html> + 持久化 + 派发同步事件
   };
+  const update = (patch: Partial<AppearancePrefs>) => apply({ ...prefs, ...patch });
+  const updateTheme = (which: "light" | "dark", patch: Partial<ThemeColors>) =>
+    apply({ ...prefs, [which]: { ...prefs[which], ...patch } });
   const MODES: { id: ThemeMode; label: string }[] = [
     { id: "system", label: "系统" },
     { id: "light", label: "浅色" },
@@ -126,56 +237,28 @@ function AppearanceSection({ cardCls }: { cardCls: string }): JSX.Element {
         ))}
       </div>
 
-      <div className={cardCls}>
-        {/* 强调色 */}
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="mr-1 text-[13px] text-fg">强调色</span>
-          {ACCENT_PRESETS.map((a) => {
-            const active = (prefs.accent ?? null) === a.value;
-            return (
-              <button
-                key={a.id}
-                type="button"
-                onClick={() => {
-                  update({ accent: a.value });
-                  setHex(a.value ?? "");
-                }}
-                title={a.label}
-                aria-label={`强调色 ${a.label}`}
-                className={`flex h-6 w-6 items-center justify-center rounded-full border transition-transform hover:scale-110 ${
-                  active ? "ring-2 ring-offset-1 ring-offset-surface-1 ring-fg" : "border-border"
-                }`}
-                style={{
-                  // 默认色用「跟随主题」的渐变示意;预设用其颜色。
-                  background: a.value ?? "linear-gradient(135deg,#1a1a1c 50%,#ededf0 50%)",
-                }}
-              >
-                {active && a.value && <Check size={12} className="text-white" />}
-              </button>
-            );
-          })}
-          {/* 自定义 hex */}
-          <input
-            value={hex}
-            onChange={(e) => setHex(e.target.value)}
-            onBlur={() => {
-              const n = normalizeHex(hex);
-              if (n) update({ accent: n });
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                const n = normalizeHex(hex);
-                if (n) update({ accent: n });
-              }
-            }}
-            placeholder="#自定义"
-            className="h-7 w-24 rounded-md border border-border bg-surface-2 px-2 font-mono text-[12px] outline-none focus:border-brand"
-          />
-        </div>
-        <p className="mt-1.5 text-[12px] text-fg-subtle">应用于按钮、链接与高亮;「默认」跟随主题(近黑 / 近白)。</p>
+      {/* 浅色 / 深色主题各自的颜色、字体、侧栏、对比度 */}
+      <ThemeEditor
+        title="浅色主题"
+        value={prefs.light}
+        defaults={DEFAULT_LIGHT}
+        cardCls={cardCls}
+        onChange={(p) => updateTheme("light", p)}
+        onReset={() => updateTheme("light", DEFAULT_LIGHT)}
+      />
+      <div className="h-2.5" />
+      <ThemeEditor
+        title="深色主题"
+        value={prefs.dark}
+        defaults={DEFAULT_DARK}
+        cardCls={cardCls}
+        onChange={(p) => updateTheme("dark", p)}
+        onReset={() => updateTheme("dark", DEFAULT_DARK)}
+      />
 
-        {/* 减少动态效果 */}
-        <div className="mt-4 flex items-center gap-2">
+      {/* 减少动态效果 + 指针光标 */}
+      <div className={`mt-2.5 ${cardCls}`}>
+        <div className="flex items-center gap-2">
           <span className="text-[13px] text-fg">减少动态效果</span>
           <div className="ml-auto inline-flex rounded-md border border-border p-0.5">
             {MOTIONS.map((m) => (
@@ -192,8 +275,6 @@ function AppearanceSection({ cardCls }: { cardCls: string }): JSX.Element {
             ))}
           </div>
         </div>
-
-        {/* 指针光标 */}
         <label className="mt-3 flex items-center gap-2 text-[13px] text-fg">
           <input type="checkbox" checked={prefs.pointer} onChange={(e) => update({ pointer: e.target.checked })} />
           悬停可交互元素时使用指针光标

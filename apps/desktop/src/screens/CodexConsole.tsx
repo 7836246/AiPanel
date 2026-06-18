@@ -1234,7 +1234,7 @@ export default function CodexConsole() {
     <div className="flex h-screen w-screen overflow-hidden bg-bg text-fg" style={{ fontFamily: "var(--font-sans)" }}>
       {/* 侧栏(可由顶栏左侧开关折叠) */}
       {sidebarOpen && (
-      <aside className="flex w-64 flex-none flex-col border-r border-border bg-surface-2">
+      <aside data-sidebar className="flex w-64 flex-none flex-col border-r border-border bg-surface-2">
         {/* 给 macOS 红绿灯(Overlay 标题栏)让出顶部空间,并作为窗口拖拽区 */}
         <div data-tauri-drag-region className="h-7 flex-none" />
         <div className="flex items-center gap-2.5 px-3.5 py-3">
