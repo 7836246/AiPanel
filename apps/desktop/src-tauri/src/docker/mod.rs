@@ -885,11 +885,42 @@ mod tests {
                 "{:?} 不应在 .env heredoc 里直接展开 openssl，避免失败时写出空密码",
                 app
             );
+            // 安全回归:写含密码的 .env 前必须 umask 077,避免落地为世界可读(0644)。
+            assert!(
+                any_cmd_contains(&p, "umask 077"),
+                "{:?} 写 .env 前应 umask 077,避免凭据文件世界可读",
+                app
+            );
         }
         // 不需要敏感值的应用不应写 .env。
         for app in [AppTemplate::UptimeKuma, AppTemplate::N8n, AppTemplate::Redis] {
             let p = deploy_plan_ok("s1", app, &DeployOptions::default());
             assert!(!any_cmd_contains(&p, "openssl rand"), "{:?} 不应生成密码", app);
+        }
+    }
+
+    #[test]
+    // 安全回归:容器名预检在 docker 查询本身失败(未装/daemon 未运行/无权限)时必须报错退出,
+    // 而非静默通过(空结果当作「无冲突」)。
+    fn container_name_precheck_fails_when_docker_query_fails() {
+        for app in [AppTemplate::WordPress, AppTemplate::Postgres, AppTemplate::Redis] {
+            let p = deploy_plan_ok("s1", app, &DeployOptions::default());
+            for name in app.container_names() {
+                let filter = format!("name=^{name}$");
+                let check = p
+                    .steps
+                    .iter()
+                    .find(|s| s.command.contains(&filter))
+                    .unwrap_or_else(|| panic!("{:?} 应有容器名预检 {name}", app));
+                // 命令子串失败应被 `|| { ...; exit 1; }` 捕获(而非忽略错误继续)。
+                assert!(
+                    check.command.contains("无法查询 docker") && check.command.contains("exit 1"),
+                    "预检应在 docker 查询失败时报错退出: {}",
+                    check.command
+                );
+                // 仍是只读 Low(不得因加固引入重定向等被升级)。
+                assert_eq!(check.risk, RiskLevel::Low, "容器名预检应为 Low: {}", check.command);
+            }
         }
     }
 
