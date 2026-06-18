@@ -98,42 +98,39 @@ function Ring({
   const clamped = Math.min(100, Math.max(0, value));
   const dash = (clamped / 100) * circ;
   const color = pctColor(clamped);
+  // 环心文字:数字大、单位(%)小,贴近传统面板。SVG <text> 在旋转坐标系下定位不可靠,
+  // 改用绝对居中的 HTML 覆盖层(保持正向、稳定渲染)。
+  const isPct = centerText.trim().endsWith("%");
+  const num = isPct ? centerText.trim().slice(0, -1) : centerText.trim();
+  const unit = isPct ? "%" : "";
 
   return (
     <div className="flex flex-col items-center gap-2 rounded-md border border-border bg-surface-1 px-3 py-4">
-      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="-rotate-90">
-        {/* 底环：浅灰轨道。 */}
-        <circle
-          cx={size / 2}
-          cy={size / 2}
-          r={r}
-          fill="none"
-          stroke="var(--color-surface-2)"
-          strokeWidth={stroke}
-        />
-        {/* 进度环：按阈值着色，圆头线帽。 */}
-        <circle
-          cx={size / 2}
-          cy={size / 2}
-          r={r}
-          fill="none"
-          stroke={color.stroke}
-          strokeWidth={stroke}
-          strokeLinecap="round"
-          strokeDasharray={`${dash} ${circ - dash}`}
-          style={{ transition: "stroke-dasharray 0.4s ease, stroke 0.4s ease" }}
-        />
-        {/* 环心大字：反向旋转抵消父级 -90°，保持正向。 */}
-        <text
-          x="50%"
-          y="50%"
-          dominantBaseline="central"
-          textAnchor="middle"
-          className={`rotate-90 origin-center fill-current font-mono text-[17px] font-semibold ${color.text}`}
-        >
-          {centerText}
-        </text>
-      </svg>
+      <div className="relative" style={{ width: size, height: size }}>
+        <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="-rotate-90">
+          {/* 底环：浅灰轨道。 */}
+          <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--color-surface-2)" strokeWidth={stroke} />
+          {/* 进度环：按阈值着色，圆头线帽。 */}
+          <circle
+            cx={size / 2}
+            cy={size / 2}
+            r={r}
+            fill="none"
+            stroke={color.stroke}
+            strokeWidth={stroke}
+            strokeLinecap="round"
+            strokeDasharray={`${dash} ${circ - dash}`}
+            style={{ transition: "stroke-dasharray 0.4s ease, stroke 0.4s ease" }}
+          />
+        </svg>
+        {/* 环心:绝对居中的正向文字(数字 + 小号单位) */}
+        <div className="absolute inset-0 flex items-center justify-center">
+          <span className={`flex items-baseline font-mono font-semibold ${color.text}`}>
+            <span className="text-[19px] leading-none">{num}</span>
+            {unit && <span className="ml-0.5 text-[11px] leading-none">{unit}</span>}
+          </span>
+        </div>
+      </div>
       <div className="text-center">
         <div className="text-[12px] font-semibold text-fg">{title}</div>
         <div className="mt-0.5 text-[11px] text-fg-subtle">{subtitle}</div>
