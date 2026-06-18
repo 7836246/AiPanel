@@ -880,3 +880,65 @@ export async function appVersion(): Promise<string> {
   if (!isTauri()) return "0.1.0-dev";
   return invoke<string>("app_version");
 }
+
+// ---- 在线更新(Tauri updater 插件 + GitHub Releases)-----------------------------
+
+import type { Update } from "@tauri-apps/plugin-updater";
+
+/** 检查到的可用更新信息(精简,供 UI 展示)。 */
+export interface UpdateInfo {
+  version: string;
+  currentVersion: string;
+  notes: string;
+  date?: string;
+}
+
+// 在 checkUpdate 与 downloadAndInstall 之间暂存 Update 句柄(下载需要它)。
+let pendingUpdate: Update | null = null;
+
+/**
+ * 检查是否有新版本(读 tauri.conf 的 updater endpoint = GitHub Releases latest.json)。
+ * 有则返回 UpdateInfo 并暂存句柄;无则 null;浏览器/无网络下安全返回 null(不影响使用)。
+ */
+export async function checkUpdate(): Promise<UpdateInfo | null> {
+  if (!isTauri()) return null;
+  const { check } = await import("@tauri-apps/plugin-updater");
+  const update = await check();
+  pendingUpdate = update;
+  if (!update) return null;
+  return {
+    version: update.version,
+    currentVersion: update.currentVersion,
+    notes: update.body ?? "",
+    date: update.date,
+  };
+}
+
+/**
+ * 下载并安装上一次 checkUpdate 暂存的更新;onProgress 回报已下载/总字节。
+ * 完成后用 process 插件重启应用。需先成功 checkUpdate 拿到句柄。
+ */
+export async function downloadAndInstallUpdate(
+  onProgress?: (downloaded: number, total: number | null) => void,
+): Promise<void> {
+  if (!isTauri() || !pendingUpdate) return;
+  let total: number | null = null;
+  let downloaded = 0;
+  await pendingUpdate.downloadAndInstall((e) => {
+    switch (e.event) {
+      case "Started":
+        total = e.data.contentLength ?? null;
+        onProgress?.(0, total);
+        break;
+      case "Progress":
+        downloaded += e.data.chunkLength;
+        onProgress?.(downloaded, total);
+        break;
+      case "Finished":
+        onProgress?.(total ?? downloaded, total);
+        break;
+    }
+  });
+  const { relaunch } = await import("@tauri-apps/plugin-process");
+  await relaunch();
+}

@@ -55,11 +55,12 @@ import EditServerDialog from "./EditServerDialog";
 import ServerOverview from "./ServerOverview";
 import ServerMonitor from "./ServerMonitor";
 import CommandPalette, { type PaletteCommand } from "./CommandPalette";
-import { READONLY_DEFAULT_KEY } from "./settingsKeys";
+import { READONLY_DEFAULT_KEY, readUpdateAutoCheck } from "./settingsKeys";
 import {
   isTauri,
   cancelRun,
   checkSshConnection,
+  checkUpdate,
   createPlan,
   getModelSelectionPolicy,
   setServerFavorite,
@@ -598,6 +599,16 @@ export default function CodexConsole() {
     void loadServers();
     listProviders().then(setProviders).catch((e) => push("danger", `加载模型供应商失败: ${errMsg(e)}`));
     getModelSelectionPolicy().then(setPolicy).catch((e) => push("danger", `加载模型策略失败: ${errMsg(e)}`));
+    // 启动时静默检查更新(可在设置关闭):有新版给一条非打扰提示;失败/无网络静默忽略,不影响使用。
+    if (readUpdateAutoCheck()) {
+      checkUpdate()
+        .then((info) => {
+          if (info) push("info", `发现新版本 v${info.version},可在「设置 · 在线更新」中一键更新`);
+        })
+        .catch(() => {
+          /* 静默:更新检查失败不打扰用户 */
+        });
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

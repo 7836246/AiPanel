@@ -3,6 +3,7 @@ import { Badge, Button, Input, Spinner, ToastViewport, useToasts } from "@aipane
 import {
   Check,
   Cpu,
+  DownloadCloud,
   Pencil,
   Plus,
   RefreshCw,
@@ -13,8 +14,11 @@ import {
   X,
 } from "lucide-react";
 import {
+  appVersion,
+  checkUpdate,
   credentialBackend,
   deleteProvider,
+  downloadAndInstallUpdate,
   getModelSelectionPolicy,
   listModels,
   listProviders,
@@ -26,8 +30,13 @@ import {
   type ProviderInput,
   type ProviderKind,
   type ProviderTestResult,
+  type UpdateInfo,
 } from "../lib/api";
-import { READONLY_DEFAULT_KEY } from "./settingsKeys";
+import {
+  READONLY_DEFAULT_KEY,
+  readUpdateAutoCheck,
+  writeUpdateAutoCheck,
+} from "./settingsKeys";
 
 // 从后端错误或任意异常中提取可展示的错误文本。
 const errMsg = (e: unknown): string =>
@@ -78,6 +87,15 @@ export default function SettingsPanel() {
   const [detectError, setDetectError] = useState<string | null>(null);
   // 通用区块：默认只读优先（持久化到 localStorage，供主界面读取）。
   const [readonlyDefault, setReadonlyDefault] = useState<boolean>(true);
+  // 在线更新区块。
+  const [version, setVersion] = useState<string>("");
+  const [autoCheck, setAutoCheck] = useState<boolean>(true);
+  // 更新状态机:idle 空闲 / checking 检查中 / latest 已最新 / available 有新版 / downloading 下载安装中 / error 出错。
+  const [updPhase, setUpdPhase] = useState<"idle" | "checking" | "latest" | "available" | "downloading" | "error">("idle");
+  const [updInfo, setUpdInfo] = useState<UpdateInfo | null>(null);
+  const [updError, setUpdError] = useState<string | null>(null);
+  // 下载进度(0–100;total 未知时为 null,展示忙碌态)。
+  const [updPct, setUpdPct] = useState<number | null>(null);
   const { toasts, push, dismiss } = useToasts();
 
   // 与后端 candidate_providers 一致：默认供应商只允许选择已启用且可用于规划的 provider；
@@ -101,6 +119,8 @@ export default function SettingsPanel() {
   useEffect(() => {
     refresh().catch(() => push("danger", "加载设置失败"));
     setReadonlyDefault(readReadonlyDefault());
+    setAutoCheck(readUpdateAutoCheck());
+    appVersion().then(setVersion).catch(() => setVersion("?"));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -222,6 +242,48 @@ export default function SettingsPanel() {
     setReadonlyDefault(value);
     writeReadonlyDefault(value);
     push("info", value ? "已设为默认只读优先(下次启动新会话生效)" : "已关闭默认只读优先(下次启动新会话生效)");
+  }
+
+  // 切换「启动检查更新」并持久化。
+  function toggleAutoCheck(value: boolean) {
+    setAutoCheck(value);
+    writeUpdateAutoCheck(value);
+  }
+
+  // 手动检查更新:成功后区分「已最新」与「有新版」;失败给可读错误,不影响 app 使用。
+  async function runCheckUpdate() {
+    setUpdPhase("checking");
+    setUpdError(null);
+    setUpdInfo(null);
+    try {
+      const info = await checkUpdate();
+      if (info) {
+        setUpdInfo(info);
+        setUpdPhase("available");
+      } else {
+        setUpdPhase("latest");
+      }
+    } catch (e) {
+      setUpdError(errMsg(e));
+      setUpdPhase("error");
+    }
+  }
+
+  // 下载并安装当前可用更新,完成后自动重启(由 api 内部 relaunch)。
+  async function runInstallUpdate() {
+    setUpdPhase("downloading");
+    setUpdError(null);
+    setUpdPct(0);
+    try {
+      await downloadAndInstallUpdate((downloaded, total) => {
+        setUpdPct(total && total > 0 ? Math.min(100, Math.round((downloaded / total) * 100)) : null);
+      });
+      // 正常情况下会自动重启;若未重启(如平台差异),给出提示。
+      push("success", "更新已安装,请重启应用以生效");
+    } catch (e) {
+      setUpdError(errMsg(e));
+      setUpdPhase("error");
+    }
   }
 
   const field = "mb-2 flex flex-col gap-1";
@@ -520,6 +582,85 @@ export default function SettingsPanel() {
           </label>
           <p className="mt-1 text-[12px] text-fg-subtle">
             开启后主界面默认进入只读模式，仅允许检查类命令；执行写操作前需手动关闭。建议保持开启。
+          </p>
+        </div>
+
+        {/* 在线更新 */}
+        <h2 className="mb-3 mt-8 flex items-center gap-1.5 text-sm font-semibold">
+          <DownloadCloud size={15} strokeWidth={1.75} className="text-fg-muted" />
+          在线更新
+        </h2>
+        <div className={cardCls}>
+          {/* 当前版本 + 检查按钮 */}
+          <div className="flex items-center gap-2">
+            <span className="text-[13px] text-fg">当前版本</span>
+            <span className="font-mono text-[12.5px] text-fg-muted">v{version || "…"}</span>
+            <Button
+              variant="secondary"
+              size="sm"
+              className="ml-auto"
+              onClick={() => void runCheckUpdate()}
+              disabled={updPhase === "checking" || updPhase === "downloading"}
+              title="向 GitHub Releases 检查是否有新版本"
+            >
+              {updPhase === "checking" ? <Spinner size="sm" /> : <RefreshCw size={13} />}{" "}
+              {updPhase === "checking" ? "检查中…" : "检查更新"}
+            </Button>
+          </div>
+
+          {/* 状态:已最新 */}
+          {updPhase === "latest" && (
+            <div className="mt-2.5 flex items-center gap-1.5 rounded bg-risk-low-soft px-2.5 py-1.5 text-[12px] text-risk-low">
+              <Check size={13} /> 已是最新版本。
+            </div>
+          )}
+
+          {/* 状态:出错(降级,不影响使用)*/}
+          {updPhase === "error" && (
+            <div className="mt-2.5 rounded bg-risk-blocked-soft px-2.5 py-1.5 text-[12px] text-risk-blocked">
+              检查/更新失败：{updError}（不影响正常使用,可稍后重试）
+            </div>
+          )}
+
+          {/* 状态:有新版 / 下载安装中 */}
+          {(updPhase === "available" || updPhase === "downloading") && updInfo && (
+            <div className="mt-2.5 rounded-md border border-border bg-surface-2 p-3">
+              <div className="flex items-center gap-2">
+                <Badge tone="success">新版本 v{updInfo.version}</Badge>
+                <span className="text-[11px] text-fg-subtle">当前 v{updInfo.currentVersion}</span>
+              </div>
+              {updInfo.notes && (
+                <pre className="mt-2 max-h-40 overflow-y-auto whitespace-pre-wrap text-[12px] leading-relaxed text-fg-muted">
+                  {updInfo.notes}
+                </pre>
+              )}
+              {updPhase === "downloading" ? (
+                <div className="mt-2.5">
+                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface-1">
+                    <div
+                      className="h-full rounded-full bg-brand transition-[width]"
+                      style={{ width: updPct === null ? "100%" : `${updPct}%` }}
+                    />
+                  </div>
+                  <div className="mt-1 text-[11px] text-fg-subtle">
+                    {updPct === null ? "正在下载…" : `下载中 ${updPct}%`}（完成后将自动重启）
+                  </div>
+                </div>
+              ) : (
+                <Button variant="primary" size="sm" className="mt-2.5" onClick={() => void runInstallUpdate()}>
+                  <DownloadCloud size={13} /> 下载并安装
+                </Button>
+              )}
+            </div>
+          )}
+
+          {/* 启动检查开关 */}
+          <label className="mt-3 flex items-center gap-2 text-[13px] text-fg">
+            <input type="checkbox" checked={autoCheck} onChange={(e) => toggleAutoCheck(e.target.checked)} />
+            启动时自动检查更新
+          </label>
+          <p className="mt-1 text-[12px] text-fg-subtle">
+            通过 GitHub Releases 分发,更新包经签名校验后才会安装。关闭后仅在此处手动检查。
           </p>
         </div>
       </div>
