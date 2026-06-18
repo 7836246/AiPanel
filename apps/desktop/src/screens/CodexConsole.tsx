@@ -1093,7 +1093,7 @@ export default function CodexConsole() {
                     <IconButton aria-label="编辑服务器" size="sm" className="opacity-0 transition-opacity group-hover:opacity-100" onClick={(e) => { e.stopPropagation(); setEditing(srv); }}>
                       <PencilIcon size={12} />
                     </IconButton>
-                    <span className={`h-1.5 w-1.5 rounded-full ${statusDot(srv.status)}`} />
+                    <span role="img" aria-label={srv.status === "online" ? "在线" : srv.status === "offline" ? "离线" : "未知/未检测"} title={srv.status === "online" ? "在线" : srv.status === "offline" ? "离线" : "未知/未检测"} className={`h-1.5 w-1.5 rounded-full ${statusDot(srv.status)}`} />
                   </div>
                   {isSel && (
                     <div className="flex flex-col gap-px pl-3.5">

@@ -367,7 +367,7 @@ export default function FileBrowser({ serverId, serverName }: { serverId: string
                       <IconButton
                         aria-label="下载"
                         size="sm"
-                        className="flex-none opacity-0 transition-opacity group-hover:opacity-100"
+                        className="flex-none opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100"
                         onClick={(e) => { e.stopPropagation(); void handleDownload(entry); }}
                         title="下载到本地"
                       >

@@ -126,16 +126,21 @@ export function ServerOverview({
           >
             {server.username}@{server.host}:{server.port}
           </span>
-          {/* 连接/重连：与「只读体检」并排，二者各自独立的 loading 状态 */}
+          {/* 连通性检测:AiPanel 不持久驻留连接(每条命令现连),故已在线时按钮表意为「重新检测」。 */}
           <Button
             variant="secondary"
             size="sm"
             className="ml-auto"
             onClick={() => void handleConnect(server.id)}
             disabled={conn === "checking"}
+            title="检测到该服务器的 SSH 连通性"
           >
             {conn === "checking" ? <Spinner size="sm" /> : <PlugZap size={13} />}{" "}
-            {conn === "checking" ? "连接中…" : "连接/重连"}
+            {conn === "checking"
+              ? "检测中…"
+              : conn === "online" || server.status === "online"
+                ? "重新检测"
+                : "连接检测"}
           </Button>
           <Button
             variant="secondary"

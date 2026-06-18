@@ -166,6 +166,9 @@ export default function EditServerDialog({
             <label className={labelCls}>端口</label>
             <Input
               type="number"
+              min={1}
+              max={65535}
+              step={1}
               value={port}
               onChange={(e) => setPort(e.target.value)}
             />
