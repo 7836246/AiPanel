@@ -85,11 +85,14 @@ function Ring({
   centerText,
   title,
   subtitle,
+  detail,
 }: {
   value: number;
   centerText: string;
   title: string;
   subtitle: string;
+  /** 鼠标悬停显示的多行详细信息(原生 title,滚动浮层里不会被裁切)。 */
+  detail?: string;
 }): JSX.Element {
   const size = 116;
   const stroke = 9;
@@ -105,7 +108,10 @@ function Ring({
   const unit = isPct ? "%" : "";
 
   return (
-    <div className="flex flex-col items-center gap-2 rounded-md border border-border bg-surface-1 px-3 py-4">
+    <div
+      className="flex cursor-default flex-col items-center gap-2 rounded-md border border-border bg-surface-1 px-3 py-4 transition-colors hover:border-border-strong"
+      title={detail}
+    >
       <div className="relative" style={{ width: size, height: size }}>
         <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="-rotate-90">
           {/* 底环：浅灰轨道。 */}
@@ -232,13 +238,19 @@ function CountCard({
   icon,
   value,
   label,
+  detail,
 }: {
   icon: JSX.Element;
   value: number;
   label: string;
+  /** 鼠标悬停的说明(原生 title)。 */
+  detail?: string;
 }): JSX.Element {
   return (
-    <div className="flex items-center gap-3 rounded-md border border-border bg-surface-1 px-3.5 py-3">
+    <div
+      className="flex cursor-default items-center gap-3 rounded-md border border-border bg-surface-1 px-3.5 py-3 transition-colors hover:border-border-strong"
+      title={detail}
+    >
       <span className="flex h-9 w-9 flex-none items-center justify-center rounded-md bg-surface-2 text-fg-muted">
         {icon}
       </span>
@@ -411,10 +423,10 @@ export default function ServerMonitor({ serverId }: { serverId: string }): JSX.E
       <section>
         <SectionTitle icon={<Boxes size={14} className="text-fg-muted" />} text="概览" />
         <div className="grid grid-cols-2 gap-2.5 md:grid-cols-4">
-          <CountCard icon={<Boxes size={17} />} value={latest.containers} label="容器" />
-          <CountCard icon={<Plug size={17} />} value={latest.services} label="运行服务" />
-          <CountCard icon={<Network size={17} />} value={latest.listeningPorts} label="监听端口" />
-          <CountCard icon={<Activity size={17} />} value={latest.procs} label="进程" />
+          <CountCard icon={<Boxes size={17} />} value={latest.containers} label="容器" detail={`运行中的 Docker 容器数(docker ps):${latest.containers}\n运行时长:${formatUptime(latest.uptimeSecs)}`} />
+          <CountCard icon={<Plug size={17} />} value={latest.services} label="运行服务" detail={`running 状态的 systemd 服务数:${latest.services}`} />
+          <CountCard icon={<Network size={17} />} value={latest.listeningPorts} label="监听端口" detail={`监听中的 TCP/UDP 端口数(ss -ltun):${latest.listeningPorts}`} />
+          <CountCard icon={<Activity size={17} />} value={latest.procs} label="进程" detail={`进程总数(ps -e):${latest.procs}`} />
         </div>
       </section>
 
@@ -427,24 +439,28 @@ export default function ServerMonitor({ serverId }: { serverId: string }): JSX.E
             centerText={latest.load1.toFixed(2)}
             title="系统负载"
             subtitle={`${latest.cpuCores} 核 · ${loadHealthy ? "运行流畅" : "负载偏高"}`}
+            detail={`平均负载(1/5/15 分钟):${latest.load1.toFixed(2)} / ${latest.load5.toFixed(2)} / ${latest.load15.toFixed(2)}\n核心数:${latest.cpuCores}\n运行时长:${formatUptime(latest.uptimeSecs)}`}
           />
           <Ring
             value={latest.cpuPercent}
             centerText={`${latest.cpuPercent.toFixed(1)}%`}
             title="CPU"
             subtitle={`${(latest.cpuPercent / 100 * latest.cpuCores).toFixed(1)}/${latest.cpuCores} 核`}
+            detail={`CPU 占用:${latest.cpuPercent.toFixed(1)}%\n核心数:${latest.cpuCores}\n约 ${(latest.cpuPercent / 100 * latest.cpuCores).toFixed(2)} 核在用`}
           />
           <Ring
             value={memPct}
             centerText={`${memPct.toFixed(0)}%`}
             title="内存"
             subtitle={`${formatBytes(latest.memUsedBytes)} / ${formatBytes(latest.memTotalBytes)}`}
+            detail={`已用:${formatBytes(latest.memUsedBytes)}\n总量:${formatBytes(latest.memTotalBytes)}\n可用:${formatBytes(Math.max(0, latest.memTotalBytes - latest.memUsedBytes))}\n交换:${formatBytes(latest.swapUsedBytes)} / ${formatBytes(latest.swapTotalBytes)}`}
           />
           <Ring
             value={diskPct}
             centerText={`${diskPct.toFixed(0)}%`}
             title="磁盘"
             subtitle={`${formatBytes(latest.diskUsedBytes)} / ${formatBytes(latest.diskTotalBytes)} · ${latest.diskPath}`}
+            detail={`已用:${formatBytes(latest.diskUsedBytes)}\n总量:${formatBytes(latest.diskTotalBytes)}\n可用:${formatBytes(Math.max(0, latest.diskTotalBytes - latest.diskUsedBytes))}\n挂载点:${latest.diskPath}`}
           />
         </div>
         {/* 交换分区（若有）：作为补充细条，避免占满状态网格。 */}
