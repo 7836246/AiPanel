@@ -218,9 +218,15 @@ export default function AuditView({
                                   </span>
                                 </div>
                                 {ex.stdout || ex.stderr ? (
-                                  <pre className="overflow-x-auto px-3 py-2 font-mono text-[11.5px] leading-relaxed text-fg">
-                                    {(ex.stdout || ex.stderr).split("\n").slice(0, 12).join("\n")}
-                                  </pre>
+                                  (() => {
+                                    const all = (ex.stdout || ex.stderr).split("\n");
+                                    return (
+                                      <pre className="overflow-x-auto px-3 py-2 font-mono text-[11.5px] leading-relaxed text-fg">
+                                        {all.slice(0, 12).join("\n")}
+                                        {all.length > 12 ? `\n…（已截断，共 ${all.length} 行）` : ""}
+                                      </pre>
+                                    );
+                                  })()
                                 ) : null}
                               </div>
                             ))}

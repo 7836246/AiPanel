@@ -54,10 +54,15 @@ export default function EditServerDialog({
       setError("名称、主机、用户名必填");
       return;
     }
+    // 端口:留空回退 22;填了就必须是 1-65535 的整数,避免静默改成 22 连错端口。
+    if (port.trim() && (!Number.isInteger(Number(port)) || Number(port) < 1 || Number(port) > 65535)) {
+      setError("端口必须是 1-65535 之间的整数");
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
-      const portNum = Number(port) || 22; // 空串/非法值提交时回退到 22
+      const portNum = Number(port) || 22; // 空串回退到 22
       const updated = await updateServer(server.id, { name, host, port: portNum, username, authKind });
       if (authKind !== "agent" && secret) {
         await setServerSecret(server.id, secret);

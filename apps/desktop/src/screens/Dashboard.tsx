@@ -114,7 +114,10 @@ function ServerTile({
               <span className="flex-none rounded bg-risk-blocked-soft px-1.5 py-0.5 text-[10px] font-medium text-risk-blocked">资源紧张</span>
             )}
           </div>
-          <div className="mt-0.5 truncate font-mono text-[11px] text-fg-subtle">
+          <div
+            className="mt-0.5 truncate font-mono text-[11px] text-fg-subtle"
+            title={`${server.username}@${server.host}:${server.port}`}
+          >
             {server.username}@{server.host}:{server.port}
           </div>
         </div>

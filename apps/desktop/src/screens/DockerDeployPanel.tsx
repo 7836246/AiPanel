@@ -48,6 +48,11 @@ export default function DockerDeployPanel({
   const current = TEMPLATES.find((t) => t.id === app);
 
   const run = async (kind: "detect" | "install" | "deploy") => {
+    // 反代选了 Caddy/Nginx 却没填域名:无法签发 HTTPS / 配置 vhost,提前拦下避免生成不可用计划。
+    if (kind === "deploy" && current?.web && proxy !== "none" && !domain.trim()) {
+      setError("已选择反向代理,请先填写域名(如 app.example.com)再生成部署计划。");
+      return;
+    }
     setBusy(kind);
     setError(null);
     try {

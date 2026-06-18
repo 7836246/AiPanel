@@ -119,7 +119,10 @@ export function ServerOverview({
             }`}
           />
           <span className="text-sm font-semibold">{server.name}</span>
-          <span className="font-mono text-[12px] text-fg-subtle">
+          <span
+            className="min-w-0 truncate font-mono text-[12px] text-fg-subtle"
+            title={`${server.username}@${server.host}:${server.port}`}
+          >
             {server.username}@{server.host}:{server.port}
           </span>
           {/* 连接/重连：与「只读体检」并排，二者各自独立的 loading 状态 */}

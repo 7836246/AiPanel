@@ -402,7 +402,7 @@ export default function FileBrowser({ serverId, serverName }: { serverId: string
                   size="sm"
                   onClick={save}
                   disabled={saving || fileLoading || truncated || !dirty}
-                  title={truncated ? "文件过大被截断,禁止保存以免数据丢失" : !dirty ? "无改动" : undefined}
+                  title={saving ? "保存中…" : fileLoading ? "读取中…" : truncated ? "文件过大被截断,禁止保存以免数据丢失" : !dirty ? "无改动" : undefined}
                 >
                   {saving ? <Spinner size="sm" /> : <Save size={13} />} 保存
                 </Button>

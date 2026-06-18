@@ -1135,7 +1135,7 @@ export default function CodexConsole() {
                           执行计划 · {(planEditing ? draftSteps! : current.plan.steps).length} 个步骤
                           {planEditing && <span className="rounded bg-brand/15 px-1.5 py-0.5 text-[11px] font-medium text-brand">编辑中</span>}
                         </div>
-                        <div className="mt-1 text-[12.5px] text-fg-muted">{current.plan.goal}</div>
+                        <div className="mt-1 line-clamp-2 break-words text-[12.5px] text-fg-muted" title={current.plan.goal}>{current.plan.goal}</div>
                       </div>
                       <div className="flex flex-none items-center gap-1.5">
                         {planEditing ? (
