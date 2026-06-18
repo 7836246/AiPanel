@@ -11,37 +11,6 @@ type ConnPhase = "idle" | "checking" | "online" | "offline";
 const statusDot = (s: ServerStatus): string =>
   s === "online" ? "bg-risk-low" : s === "offline" ? "bg-risk-blocked" : "bg-fg-subtle";
 
-// 从形如 "73%"、"使用率 85 %"、"42.5%" 的字符串中解析出百分比数值；
-// 解析不到合法百分比时返回 null（该项不渲染进度条）。
-function parsePercent(value: string): number | null {
-  const m = value.match(/(\d+(?:\.\d+)?)\s*%/);
-  if (!m) return null;
-  const n = Number(m[1]);
-  if (!Number.isFinite(n)) return null;
-  // 钳制到 0–100，避免异常输出撑坏进度条。
-  return Math.min(100, Math.max(0, n));
-}
-
-// 按阈值映射风险颜色 token：<70% 低风险、70–90% 中风险、>90% 阻断。
-function percentRisk(pct: number): { bar: string; text: string } {
-  if (pct > 90) return { bar: "bg-risk-blocked", text: "text-risk-blocked" };
-  if (pct >= 70) return { bar: "bg-risk-medium", text: "text-risk-medium" };
-  return { bar: "bg-risk-low", text: "text-risk-low" };
-}
-
-// 单条指标的进度条：按百分比着色，深色安全风格。
-function MetricBar({ pct }: { pct: number }): JSX.Element {
-  const risk = percentRisk(pct);
-  return (
-    <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-surface-2">
-      <div
-        className={`h-full rounded-full transition-[width] ${risk.bar}`}
-        style={{ width: `${pct}%` }}
-      />
-    </div>
-  );
-}
-
 /**
  * 服务器概览：展示已选服务器的结构化体检指标。
  *
@@ -125,8 +94,6 @@ export function ServerOverview({
       </div>
     );
   }
-
-  const facts = Object.entries(server.facts ?? {});
 
   return (
     <div className="flex flex-col gap-3">
@@ -232,47 +199,6 @@ export function ServerOverview({
           </div>
         )}
       </div>
-
-      {/* 指标网格：每个 fact 一张卡，含百分比者额外渲染进度条 */}
-      {facts.length > 0 ? (
-        <div className="grid grid-cols-2 gap-2.5 md:grid-cols-3">
-          {facts.map(([key, value]) => {
-            const pct = parsePercent(value);
-            const risk = pct !== null ? percentRisk(pct) : null;
-            return (
-              <div
-                key={key}
-                className="rounded-md border border-border bg-surface-1 px-3.5 py-3"
-              >
-                <div
-                  className="truncate text-[11px] uppercase tracking-wide text-fg-subtle"
-                  title={key}
-                >
-                  {key}
-                </div>
-                <div
-                  className={`mt-1 truncate font-mono text-[15px] font-semibold ${
-                    risk ? risk.text : "text-fg"
-                  }`}
-                  title={value}
-                >
-                  {value}
-                </div>
-                {pct !== null && <MetricBar pct={pct} />}
-              </div>
-            );
-          })}
-        </div>
-      ) : (
-        // 空态：图标 + 提示，垂直居中匀称留白。
-        <div className="flex flex-col items-center justify-center gap-2 rounded-md border border-dashed border-border bg-surface-1 px-4 py-8 text-center">
-          <Stethoscope size={24} strokeWidth={1.75} className="text-fg-subtle" />
-          <div className="text-[13px] text-fg-muted">暂无体检指标</div>
-          <div className="text-[12px] text-fg-subtle">
-            点上方「只读体检」做一次安全检查以采集结构化指标。
-          </div>
-        </div>
-      )}
     </div>
   );
 }

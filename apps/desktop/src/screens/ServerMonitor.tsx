@@ -293,33 +293,40 @@ export default function ServerMonitor({ serverId }: { serverId: string }): JSX.E
     // serverId 变化：清空旧服务器的样本与错误，避免串图。
     setSamples([]);
     setError(null);
-    seqRef.current += 1;
+    // 本次 effect 的「代」号:只在 serverId 变化(新 effect)时自增,用于丢弃**旧服务器**的结果。
+    // 注意:绝不要在每次 poll 时自增——否则一旦单次采集(经代理)慢于轮询间隔,后发的轮询会把
+    // 先发请求的结果判成「过期」而丢弃,导致永远不入样本、一直转圈。
+    const gen = (seqRef.current += 1);
 
-    let timer: ReturnType<typeof setInterval> | null = null;
     let cancelled = false;
+    // 在途守卫:上一轮还没回来就跳过这一轮,避免慢链路下并发 SSH 堆积。
+    let inFlight = false;
 
     const poll = async (): Promise<void> => {
-      // document.hidden 时跳过本轮拉取，省流并避免后台堆积。
+      if (cancelled || inFlight) return;
+      // document.hidden 时跳过本轮拉取,省流并避免后台堆积。
       if (typeof document !== "undefined" && document.hidden) return;
-      const mySeq = ++seqRef.current;
+      inFlight = true;
       try {
         const m = await serverMetrics(serverId);
-        // 过期结果（serverId 已切换或有更新的请求）直接丢弃。
-        if (cancelled || mySeq !== seqRef.current) return;
+        // 仅当切换到了别的服务器(更新的 effect)才丢弃;同一服务器的结果一律接受。
+        if (cancelled || gen !== seqRef.current) return;
         setError(null);
         setSamples((prev) => {
           const next = [...prev, { metrics: m, receivedAt: Date.now() }];
           return next.length > MAX_SAMPLES ? next.slice(next.length - MAX_SAMPLES) : next;
         });
       } catch (err) {
-        if (cancelled || mySeq !== seqRef.current) return;
-        // 出错保留上次数据，仅显示内联红条。
+        if (cancelled || gen !== seqRef.current) return;
+        // 出错保留上次数据,仅显示内联红条。
         setError(String(err));
+      } finally {
+        inFlight = false;
       }
     };
 
     void poll(); // 立即拉一次，避免首屏等待整个间隔。
-    timer = setInterval(() => void poll(), POLL_MS);
+    const timer = setInterval(() => void poll(), POLL_MS);
 
     // 回到前台立即补一次（暂停期间没有累积样本，先补齐再恢复节奏）。
     const onVisible = (): void => {
