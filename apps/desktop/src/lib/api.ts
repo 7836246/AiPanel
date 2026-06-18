@@ -193,6 +193,47 @@ export async function checkSshConnection(id: string): Promise<ConnCheck> {
   return invoke<ConnCheck>("check_ssh_connection", { id });
 }
 
+/** 服务器监控指标快照(SSH 只读采集,服务器零 agent)。 */
+export interface ServerMetrics {
+  cpuPercent: number;
+  cpuCores: number;
+  load1: number;
+  load5: number;
+  load15: number;
+  memUsedBytes: number;
+  memTotalBytes: number;
+  swapUsedBytes: number;
+  swapTotalBytes: number;
+  diskUsedBytes: number;
+  diskTotalBytes: number;
+  diskPath: string;
+  netRxBytes: number;
+  netTxBytes: number;
+  uptimeSecs: number;
+  containers: number;
+  services: number;
+  listeningPorts: number;
+  procs: number;
+  sampledAt: string;
+}
+
+/** 采集一份服务器监控指标(前端定时轮询;网络/磁盘速率由前端跨样本求差)。 */
+export async function serverMetrics(serverId: string): Promise<ServerMetrics> {
+  if (!isTauri()) {
+    // 浏览器演示:给一组可变的占位值。
+    const r = Math.random();
+    return {
+      cpuPercent: +(r * 30).toFixed(1), cpuCores: 4, load1: +(r * 2).toFixed(2), load5: 0.3, load15: 0.2,
+      memUsedBytes: 1.27e9, memTotalBytes: 7.38e9, swapUsedBytes: 0, swapTotalBytes: 0,
+      diskUsedBytes: 34.1e9, diskTotalBytes: 196e9, diskPath: "/",
+      netRxBytes: Math.floor(1.4e11 + r * 1e7), netTxBytes: Math.floor(1.07e12 + r * 1e7),
+      uptimeSecs: 864000, containers: 3, services: 42, listeningPorts: 12, procs: 180,
+      sampledAt: new Date().toISOString(),
+    };
+  }
+  return invoke<ServerMetrics>("server_metrics", { id: serverId });
+}
+
 export async function runReadonlyCommand(id: string, command: string): Promise<CommandExecution> {
   if (!isTauri())
     return {

@@ -435,6 +435,49 @@ pub struct DoctorReport {
 }
 
 // ---------------------------------------------------------------------------
+// Server Metrics —— 监控指标采集（SSH 只读，服务器零 agent）。
+// ---------------------------------------------------------------------------
+
+/// 一次性采集的服务器监控指标快照。全部为「绝对值/累计值」，
+/// 网络与磁盘 I/O 的**速率**由前端跨两次轮询求差（curr-prev）/dt 得到，
+/// 后端不做 sleep 测速。字段名 camelCase，与前端数据契约严格一致。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServerMetrics {
+    /// CPU 使用率百分比（0-100，保留一位小数），由两次 /proc/stat 取增量算出。
+    pub cpu_percent: f64,
+    /// CPU 逻辑核数（nproc）。
+    pub cpu_cores: u32,
+    /// 1 / 5 / 15 分钟平均负载（/proc/loadavg 前三列）。
+    pub load1: f64,
+    pub load5: f64,
+    pub load15: f64,
+    /// 内存：已用 / 总量（字节，free -b）。
+    pub mem_used_bytes: u64,
+    pub mem_total_bytes: u64,
+    /// 交换分区：已用 / 总量（字节，free -b 的 Swap 行）。
+    pub swap_used_bytes: u64,
+    pub swap_total_bytes: u64,
+    /// 根分区磁盘：已用 / 总量（字节，df -B1 -P /）。
+    pub disk_used_bytes: u64,
+    pub disk_total_bytes: u64,
+    /// 被统计的挂载点路径（始终为 "/"）。
+    pub disk_path: String,
+    /// 网络累计收发字节（所有非 loopback 网卡之和，/proc/net/dev）。
+    pub net_rx_bytes: u64,
+    pub net_tx_bytes: u64,
+    /// 系统已运行秒数（/proc/uptime 第一个数）。
+    pub uptime_secs: u64,
+    /// 运行中的容器 / 服务 / 监听 socket / 进程数量。命令缺失时为 0。
+    pub containers: u32,
+    pub services: u32,
+    pub listening_ports: u32,
+    pub procs: u32,
+    /// 采样时刻（rfc3339，后端 chrono now()）。
+    pub sampled_at: String,
+}
+
+// ---------------------------------------------------------------------------
 // Files (SFTP over SSH) —— 用户直接操作的文件管理，绝不暴露给 AI。
 // ---------------------------------------------------------------------------
 

@@ -47,6 +47,7 @@ import SettingsPanel, { READONLY_DEFAULT_KEY } from "./SettingsPanel";
 import AuditView from "./AuditView";
 import Dashboard from "./Dashboard";
 import ServerOverview from "./ServerOverview";
+import ServerMonitor from "./ServerMonitor";
 import FileBrowser from "./FileBrowser";
 import DockerDeployPanel from "./DockerDeployPanel";
 import TerminalSession from "./TerminalSession";
@@ -1383,18 +1384,22 @@ export default function CodexConsole() {
                     ) : <p className="text-[13px] text-fg-subtle">无总结</p>}
                   </div>
                 ) : (
-                  <ServerOverview
-                    key={selected?.id}
-                    server={selected}
-                    running={running}
-                    onDoctor={runDoctor}
-                    onStatus={(online) => {
-                      if (!selected) return;
-                      setServers((prev) =>
-                        prev.map((s) => (s.id === selected.id ? { ...s, status: online ? "online" : "offline" } : s))
-                      );
-                    }}
-                  />
+                  <>
+                    <ServerOverview
+                      key={selected?.id}
+                      server={selected}
+                      running={running}
+                      onDoctor={runDoctor}
+                      onStatus={(online) => {
+                        if (!selected) return;
+                        setServers((prev) =>
+                          prev.map((s) => (s.id === selected.id ? { ...s, status: online ? "online" : "offline" } : s))
+                        );
+                      }}
+                    />
+                    {/* 实时监控(SSH 只读轮询,服务器零 agent):仅在选中服务器时挂载 */}
+                    {selected && <ServerMonitor key={`mon-${selected.id}`} serverId={selected.id} />}
+                  </>
                 )}
               </div>
             </section>

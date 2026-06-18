@@ -14,6 +14,7 @@ pub mod docker;
 pub mod doctor;
 pub mod files;
 pub mod mcp;
+pub mod metrics;
 pub mod plan;
 pub mod risk;
 pub mod ssh;
@@ -78,6 +79,7 @@ pub fn run() {
             commands::run_readonly_command,
             commands::server_doctor_plan,
             commands::run_server_doctor,
+            commands::server_metrics,
             commands::stream::run_server_doctor_stream,
             commands::stream::run_confirmed_plan_stream,
             commands::stream::cancel_run,

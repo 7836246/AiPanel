@@ -151,6 +151,17 @@ pub async fn run_server_doctor(state: State<'_, AppState>, id: String) -> AppRes
     Ok(report)
 }
 
+/// 采集一份服务器监控指标快照（SSH 只读，服务器零 agent）。前端定时轮询本命令，
+/// 并跨两次结果对网络 / 磁盘累计字节求差得到速率（后端只回累计值，不做 sleep 测速）。
+#[tauri::command]
+pub async fn server_metrics(
+    state: State<'_, AppState>,
+    id: String,
+) -> AppResult<crate::core::types::ServerMetrics> {
+    let (server, secret) = load_server_and_secret(&state, &id)?;
+    crate::metrics::collect(&server, secret.as_deref()).await
+}
+
 /// 最近的审计记录（最新在前）。
 #[tauri::command]
 pub fn list_audit_records(state: State<'_, AppState>, limit: Option<u32>) -> AppResult<Vec<AuditRecord>> {
