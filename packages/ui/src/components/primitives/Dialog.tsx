@@ -46,7 +46,7 @@ export function Dialog({
   if (!open) return null;
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm"
       role="dialog"
       aria-modal="true"
       aria-label={title}
@@ -56,22 +56,22 @@ export function Dialog({
         ref={panelRef}
         tabIndex={-1}
         className={cn(
-          "w-full max-w-md rounded-lg border border-border bg-surface-1 shadow-xl outline-none",
+          "w-full max-w-md overflow-hidden rounded-xl border border-border bg-bg shadow-2xl outline-none",
           className
         )}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="border-b border-border px-4 py-3">
-          <h2 className="text-sm font-semibold text-fg">{title}</h2>
+        <div className="px-5 pb-3.5 pt-4">
+          <h2 className="text-[15px] font-semibold text-fg">{title}</h2>
           {description ? (
-            <p className="mt-1 text-xs text-fg-muted">{description}</p>
+            <p className="mt-1 text-[12.5px] leading-relaxed text-fg-muted">{description}</p>
           ) : null}
         </div>
-        {children ? <div className="px-4 py-3 text-sm text-fg">{children}</div> : null}
-        <div className="flex items-center justify-end gap-2 border-t border-border px-4 py-3">
+        {children ? <div className="px-5 pb-1 text-sm text-fg">{children}</div> : null}
+        <div className="flex items-center justify-end gap-2 px-5 pb-4 pt-3">
           {footer ?? (
             <Button variant="secondary" size="sm" onClick={onClose}>
-              Close
+              关闭
             </Button>
           )}
         </div>
