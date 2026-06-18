@@ -54,6 +54,10 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        // 在线更新:检查/下载/安装 GitHub Releases 的已签名更新(见 tauri.conf plugins.updater)。
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        // 安装更新后重启应用。
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             let dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&dir)?;
