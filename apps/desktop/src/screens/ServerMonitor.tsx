@@ -258,11 +258,13 @@ function Legend({
 export default function ServerMonitor({ serverId }: { serverId: string }): JSX.Element {
   const [samples, setSamples] = useState<Sample[]>([]);
   const [error, setError] = useState<string | null>(null);
+  // 手动「重试」计数:递增即重订阅 effect → 清空旧样本并立刻重新采集一次,用于采集失败后用户主动重试。
+  const [retryNonce, setRetryNonce] = useState(0);
   // 请求序号守卫：每次发起轮询自增，回调只接受「最新一次」的结果。
   const seqRef = useRef(0);
 
   useEffect(() => {
-    // serverId 变化：清空旧服务器的样本与错误，避免串图。
+    // serverId 变化(或手动重试)：清空旧服务器的样本与错误，避免串图。
     setSamples([]);
     setError(null);
     // 本次 effect 的「代」号:只在 serverId 变化(新 effect)时自增,用于丢弃**旧服务器**的结果。
@@ -311,18 +313,31 @@ export default function ServerMonitor({ serverId }: { serverId: string }): JSX.E
       if (timer) clearInterval(timer);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [serverId]);
+  }, [serverId, retryNonce]);
 
-  // 首样本前：居中 Spinner。
+  // 首样本前:无错误时显示采集 Spinner;若已出错(持续采集失败)则显示明确的错误态 + 重试,
+  // 而不是一个会让人误以为「仍在加载」的常转 Spinner。
   if (samples.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center gap-3 rounded-md border border-border bg-surface-1 px-4 py-16 text-center">
-        <Spinner size="md" />
-        <div className="text-[13px] text-fg-muted">正在采集服务器指标…</div>
-        {error && (
-          <div className="flex items-center gap-1.5 text-[12px] text-risk-blocked">
-            <AlertCircle size={13} /> {error}
-          </div>
+        {error ? (
+          <>
+            <AlertCircle size={22} className="text-risk-blocked" />
+            <div className="text-[13px] text-fg-muted">采集服务器指标失败</div>
+            <div className="max-w-md text-[12px] text-risk-blocked">{error}</div>
+            <button
+              type="button"
+              onClick={() => setRetryNonce((n) => n + 1)}
+              className="mt-1 rounded-md border border-border px-3 py-1 text-[12px] text-fg-muted transition-colors hover:border-border-strong hover:text-fg"
+            >
+              重试
+            </button>
+          </>
+        ) : (
+          <>
+            <Spinner size="md" />
+            <div className="text-[13px] text-fg-muted">正在采集服务器指标…</div>
+          </>
         )}
       </div>
     );
@@ -379,6 +394,13 @@ export default function ServerMonitor({ serverId }: { serverId: string }): JSX.E
       {error && (
         <div className="flex items-center gap-1.5 rounded-md bg-risk-blocked-soft px-3 py-2 text-[12px] text-risk-blocked">
           <AlertCircle size={13} className="flex-none" /> 指标刷新失败：{error}（展示上次数据）
+          <button
+            type="button"
+            onClick={() => setRetryNonce((n) => n + 1)}
+            className="ml-auto flex-none rounded border border-risk-blocked/40 px-2 py-0.5 text-[11px] transition-colors hover:bg-risk-blocked/10"
+          >
+            重试
+          </button>
         </div>
       )}
 
