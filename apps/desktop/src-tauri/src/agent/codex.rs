@@ -155,6 +155,20 @@ pub fn classify(v: &Value) -> Msg {
                 Msg::Error(error_message(&params))
             }
         }
+        // ---- 对**我方请求**(initialize/thread/start/turn/start)的响应(带 id、无 method)----
+        // 关键:turn/start 的**错误**响应若被当作 Other 忽略,回路会一直等到超时(挂起)。
+        // 故响应里含 error 立即上报为 Msg::Error;成功响应(result)回路靠后续通知推进,无需处理。
+        (None, Some(_)) => {
+            if let Some(err) = v.get("error") {
+                let msg = err
+                    .get("message")
+                    .and_then(|m| m.as_str())
+                    .unwrap_or("未知错误");
+                Msg::Error(format!("codex 请求失败: {msg}"))
+            } else {
+                Msg::Other
+            }
+        }
         _ => Msg::Other,
     }
 }
@@ -302,9 +316,11 @@ pub fn drive_turn(
             Incoming::Timeout => return Err(AppError::Provider("codex turn 响应超时".into())),
             Incoming::Line(v) => match classify(&v) {
                 Msg::ToolCall { id, tool, args } => {
+                    // 防御纵深:工具结果在回灌给 codex(AI)前再脱敏一次。SSH 输出虽已在 ssh 模块
+                    // 脱敏,这里对所有工具结果统一兜底,确保「发送给 AI 前脱敏」的边界不依赖单一调用点。
                     let (success, text) = match on_tool(&tool, &args) {
-                        Ok(v) => (true, v.to_string()),
-                        Err(e) => (false, e.to_string()),
+                        Ok(v) => (true, crate::core::sanitize::sanitize(&v.to_string())),
+                        Err(e) => (false, crate::core::sanitize::sanitize(&e.to_string())),
                     };
                     send(json!({
                         "id": id,
@@ -1041,6 +1057,48 @@ mod tests {
         assert_eq!(sent.len(), 1);
         assert_eq!(sent[0]["id"], 22);
         assert_eq!(sent[0]["result"]["decision"], "denied"); // 原生 shell 审批被硬拒绝
+    }
+
+    #[test]
+    fn drive_turn_surfaces_request_error_response_instead_of_hanging() {
+        // turn/start 的**错误响应**(带 id、含 error,无 method)以前被当作 Other 忽略 → 挂起到超时。
+        // 现在应立即作为错误返回(回路不再卡住)。
+        let events = vec![Incoming::Line(
+            json!({"id": 2, "error": {"code": -32000, "message": "model unavailable"}}),
+        )];
+        let err = drive_turn(
+            |_v| Ok(()),
+            scripted(events),
+            |_, _| Ok(json!(null)),
+            Duration::from_secs(5),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("model unavailable"), "应上报真实错误: {err}");
+    }
+
+    #[test]
+    fn drive_turn_sanitizes_tool_result_before_returning_to_codex() {
+        // 工具结果回灌给 codex 前应脱敏(防御纵深):IP 等敏感信息不得原样发给 AI。
+        let events = vec![
+            Incoming::Line(
+                json!({"id": 9, "method": "item/tool/call", "params": {"tool": "ssh.run_readonly", "arguments": {}}}),
+            ),
+            Incoming::Line(json!({"method": "turn/completed", "params": {}})),
+        ];
+        let mut sent: Vec<Value> = vec![];
+        drive_turn(
+            |v| {
+                sent.push(v);
+                Ok(())
+            },
+            scripted(events),
+            |_, _| Ok(json!({ "out": "host 10.0.0.4 ok" })),
+            Duration::from_secs(5),
+        )
+        .unwrap();
+        let text = sent[0]["result"]["contentItems"][0]["text"].as_str().unwrap();
+        assert!(text.contains("[redacted-ip]"), "IP 应被脱敏: {text}");
+        assert!(!text.contains("10.0.0.4"));
     }
 
     #[test]

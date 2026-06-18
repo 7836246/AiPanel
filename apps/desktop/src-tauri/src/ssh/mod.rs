@@ -10,7 +10,7 @@
 //! - stdout/stderr 离开本模块前都会经过脱敏；
 //! - 私钥被写入仅本次调用使用的 0600 权限临时文件，调用结束立即删除。
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::process::Stdio;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -44,6 +44,10 @@ struct CancelEntry {
 
 static CANCEL_REGISTRY: OnceLock<Mutex<HashMap<String, CancelEntry>>> = OnceLock::new();
 
+/// 「待取消」集合:在句柄尚未 [`register`] 之前就收到的取消请求(例如前端在拿到 run_id 后、
+/// 流真正启动前点了「停止」)记在这里;[`register`] 时若命中则立刻触发,确保早到的取消不丢失。
+static PENDING_CANCEL: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+
 /// 取回（必要时初始化）全局取消注册表。
 fn registry() -> &'static Mutex<HashMap<String, CancelEntry>> {
     CANCEL_REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
@@ -53,42 +57,72 @@ fn registry_lock() -> Option<std::sync::MutexGuard<'static, HashMap<String, Canc
     registry().lock().ok()
 }
 
+fn pending_lock() -> Option<std::sync::MutexGuard<'static, HashSet<String>>> {
+    PENDING_CANCEL.get_or_init(|| Mutex::new(HashSet::new())).lock().ok()
+}
+
 /// 为一次运行登记取消句柄并返回它。流式命令在开始执行前调用，把返回的
 /// [`Notify`] 传给可取消的流式执行器；运行结束后必须调用 [`unregister`]。
-pub fn register(run_id: &str, server_id: Option<&str>) -> Arc<Notify> {
-    let notify = Arc::new(Notify::new());
-    if let Some(mut guard) = registry_lock() {
-        guard.insert(
-            run_id.to_string(),
-            CancelEntry {
-                server_id: server_id.map(str::to_string),
-                notify: notify.clone(),
-            },
-        );
-    } else {
-        eprintln!("[ssh] cancel registry lock poisoned; run cancellation disabled for {run_id}");
+///
+/// `run_id` 必须**非空且未被占用**:复用同一 run_id 会覆盖前一次的取消句柄,并使其
+/// [`unregister`] 误删他人句柄(取消串台),故此处直接拒绝。若该 run_id 已被预先请求取消
+/// (在 [`PENDING_CANCEL`] 中),登记成功后立即触发取消,避免早到的取消丢失。
+pub fn register(run_id: &str, server_id: Option<&str>) -> AppResult<Arc<Notify>> {
+    if run_id.trim().is_empty() {
+        return Err(AppError::Validation("run_id 不能为空".into()));
     }
-    notify
+    let notify = Arc::new(Notify::new());
+    let mut guard = registry_lock()
+        .ok_or_else(|| AppError::Ssh("取消注册表锁中毒,无法登记运行".into()))?;
+    if guard.contains_key(run_id) {
+        return Err(AppError::Validation(format!("run_id 已在使用: {run_id}")));
+    }
+    guard.insert(
+        run_id.to_string(),
+        CancelEntry {
+            server_id: server_id.map(str::to_string),
+            notify: notify.clone(),
+        },
+    );
+    drop(guard);
+    // 登记前已请求取消?立即触发(并清除待取消标记)。
+    if pending_lock().map(|mut p| p.remove(run_id)).unwrap_or(false) {
+        notify.notify_one();
+    }
+    Ok(notify)
 }
 
 /// 注销一次运行的取消句柄。无论成功、失败还是被取消都应调用，避免句柄泄漏。
+/// 同时清掉可能残留的「待取消」标记。
 pub fn unregister(run_id: &str) {
     if let Some(mut guard) = registry_lock() {
         guard.remove(run_id);
     }
+    if let Some(mut p) = pending_lock() {
+        p.remove(run_id);
+    }
 }
 
-/// 请求取消指定运行。若该 `run_id` 仍在注册表中，唤醒其 [`Notify`]。
-/// 找不到（已结束 / 从未登记）时静默忽略。
+/// 请求取消指定运行。若该 `run_id` 仍在注册表中，唤醒其 [`Notify`]；否则记入
+/// [`PENDING_CANCEL`],待其 [`register`] 时立即生效(覆盖「取消请求早于句柄登记」的竞态)。
 ///
 /// 用 `notify_one` 而非 `notify_waiters`：前者会在当前没有等待者时**存下一个许可**，
 /// 这样即便取消请求恰好落在流式循环两次迭代之间（此刻没有 `.notified()` 在等待），
 /// 下一次 `.notified()` 也会立刻返回，不会漏掉取消。
 pub fn cancel(run_id: &str) {
-    if let Some(notify) = registry_lock()
-        .and_then(|guard| guard.get(run_id).map(|entry| entry.notify.clone()))
-    {
-        notify.notify_one();
+    if run_id.trim().is_empty() {
+        return;
+    }
+    let notify = registry_lock()
+        .and_then(|guard| guard.get(run_id).map(|entry| entry.notify.clone()));
+    match notify {
+        Some(notify) => notify.notify_one(),
+        // 句柄尚未登记:记下待取消,register 时会立即触发。
+        None => {
+            if let Some(mut p) = pending_lock() {
+                p.insert(run_id.to_string());
+            }
+        }
     }
 }
 
@@ -295,6 +329,13 @@ fn spawn_child(inv: &Invocation) -> AppResult<tokio::process::Child> {
 
 /// 在服务器上执行一条原始命令。风险审查由调用方负责——任何由 Agent 驱动
 /// 或来自不可信输入的命令，都应使用 [`run_readonly`]。
+///
+/// 超时行为(已知局限):非流式执行**不分配 tty**(保持 stdout/stderr 分离、输出干净,
+/// 供 metrics/doctor/文件读写解析)。因此超时(或 drop)时 `kill_on_drop` 只杀**本地** ssh,
+/// 远端命令不会收到 SIGHUP,可能成为孤儿继续执行。对需要「取消/超时即终止远端」的长任务
+/// (确认计划执行、流式体检),请走流式可取消执行器 [`run_command_streamed_cancellable`] /
+/// [`run_readonly_streamed_cancellable`]——它们用 `-tt` 分配伪终端,本地断开时远端收 SIGHUP
+/// 而真正中断。UI 的计划执行与体检均走流式路径,故此局限只影响短命的非流式调用。
 pub async fn run_command(
     server: &ServerProfile,
     secret: Option<&str>,
@@ -863,5 +904,29 @@ mod tests {
             vec!["run-1".to_string(), "run-4".to_string()]
         );
         assert!(matching_run_ids(entries, "missing").is_empty());
+    }
+
+    #[test]
+    fn register_rejects_empty_and_duplicate_run_ids() {
+        assert!(register("", None).is_err(), "空 run_id 必须拒绝");
+        // 用独特 id 避免与其它测试共享的全局注册表串扰。
+        let id = "test-register-dup-9f3a2c";
+        let _n = register(id, None).expect("首次登记应成功");
+        assert!(register(id, None).is_err(), "重复 run_id 必须拒绝(避免覆盖/串台)");
+        unregister(id);
+        assert!(register(id, None).is_ok(), "注销后同名 run_id 可再次登记");
+        unregister(id);
+    }
+
+    #[tokio::test]
+    async fn cancel_before_register_still_triggers_after_register() {
+        let id = "test-early-cancel-7b1e4d";
+        // 句柄尚未登记就取消 → 记入 pending;登记时应立即触发。
+        cancel(id);
+        let notify = register(id, None).expect("登记应成功");
+        tokio::time::timeout(Duration::from_millis(500), notify.notified())
+            .await
+            .expect("登记前到达的取消应在登记后立即生效,而不是丢失");
+        unregister(id);
     }
 }

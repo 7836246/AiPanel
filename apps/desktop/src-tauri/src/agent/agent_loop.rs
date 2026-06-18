@@ -4,7 +4,8 @@
 //! ssh.run_readonly、task.plan、task.review）。它能调用这些工具收集事实再做总结
 //! ——但绝不能借此修改服务器：写/执行类工具不会暴露给自主回路，因此任何变更
 //! 仍走显式的 计划 → 用户确认 → 执行 链路（见 docs/SECURITY_MODEL.zh-Hans.md）。
-//! 工具结果已由 `tools::dispatch` 完成脱敏 + 审计。
+//! 脱敏分层:SSH 输出在 `ssh` 模块离开前即脱敏;本回路在把工具结果回灌给模型前再统一
+//! `sanitize` 一次(见下方 dispatch 调用处),`tools::dispatch` 本身不负责脱敏。审计由各工具策略记录。
 //!
 //! 使用异步 reqwest 客户端（回路需 await 异步的工具分发），与 provider 那套
 //! 阻塞式的一次性调用相互独立。

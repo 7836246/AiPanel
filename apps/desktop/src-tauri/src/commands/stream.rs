@@ -42,7 +42,7 @@ pub async fn run_server_doctor_stream(
     // 取出服务器及其 SSH 密钥（若其认证方式存有密钥）。
     let server = state.store.get_server(&id)?;
     // 登记取消句柄；无论成功/失败/取消都要注销，这里用一个 drop guard 兜底。
-    let cancel = crate::ssh::register(&run_id, Some(&server.id));
+    let cancel = crate::ssh::register(&run_id, Some(&server.id))?;
     let _guard = RunGuard(run_id.clone());
 
     let secret = match &server.credential_ref {
@@ -122,7 +122,7 @@ pub async fn run_confirmed_plan_stream(
     // 取出服务器及其 SSH 密钥（若其认证方式存有密钥）。
     let server = state.store.get_server(&server_id)?;
     // 登记取消句柄；RunGuard 在任意退出路径上注销它。
-    let cancel = crate::ssh::register(&run_id, Some(&server.id));
+    let cancel = crate::ssh::register(&run_id, Some(&server.id))?;
     let _guard = RunGuard(run_id.clone());
 
     let secret = match &server.credential_ref {
