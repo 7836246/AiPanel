@@ -57,7 +57,11 @@ pub trait AgentProvider: Send + Sync {
 pub fn build_provider(config: &ProviderConfig, api_key: Option<String>) -> Box<dyn AgentProvider> {
     match config.kind {
         ProviderKind::CodexAppServer => Box::new(CodexAppServerProvider {
-            codex_path: config.codex_path.clone().unwrap_or_else(|| "codex".to_string()),
+            // 始终解析打包的 codex-app-server;base/key/model 复用该供应商配置(走 responses 线协议)。
+            program: codex::resolve_codex_bin(config.codex_path.as_deref()),
+            base_url: config.base_url.clone(),
+            api_key,
+            model: config.model.clone(),
         }),
         ProviderKind::OpenAiCompatible => {
             Box::new(OpenAiCompatibleProvider { config: config.clone(), api_key })
@@ -258,23 +262,21 @@ fn make_step(summary: String, command: String, risk: crate::core::types::RiskLev
 // ---------------------------------------------------------------------------
 
 pub struct CodexAppServerProvider {
-    pub codex_path: String,
+    /// 解析好的 codex-app-server 二进制路径(见 codex::resolve_codex_bin)。
+    pub program: String,
+    pub base_url: Option<String>,
+    pub api_key: Option<String>,
+    pub model: Option<String>,
 }
 
 impl CodexAppServerProvider {
-    /// 跑 `<codex> --version` 确认二进制存在且能运行。
-    fn version(&self) -> AppResult<String> {
-        let output = std::process::Command::new(&self.codex_path)
-            .arg("--version")
-            .output()
-            .map_err(|e| AppError::Provider(format!("无法启动 codex（{}）: {e}", self.codex_path)))?;
-        if output.status.success() {
-            Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
-        } else {
-            Err(AppError::Provider(format!(
-                "codex --version 退出码 {}",
-                output.status.code().unwrap_or(-1)
-            )))
+    /// 用当前配置构造一次启动参数。
+    fn launch_cfg(&self) -> codex::CodexLaunch {
+        codex::CodexLaunch {
+            program: self.program.clone(),
+            base_url: self.base_url.clone(),
+            api_key: self.api_key.clone(),
+            model: self.model.clone(),
         }
     }
 
@@ -285,7 +287,7 @@ impl CodexAppServerProvider {
     /// `tools::dispatch`(没有 `AppState`),因此一旦 agent 试图调用工具,就把错误
     /// 回灌给它——服务器能力只在带状态的自动诊断回路里开放(接入 run_agent_turn)。
     fn run_text_turn(&self, user_msg: &str) -> AppResult<String> {
-        let mut client = codex::CodexClient::start(&self.codex_path)?;
+        let mut client = codex::CodexClient::launch(&self.launch_cfg())?;
         client.initialize()?;
         client.run_turn(
             user_msg,
@@ -351,24 +353,17 @@ impl AgentProvider for CodexAppServerProvider {
         Ok(vec![AgentEvent::Token { text: reply }, AgentEvent::Done])
     }
     fn test(&self) -> ProviderTestResult {
-        let version = match self.version() {
-            Ok(v) => v,
-            Err(e) => return ProviderTestResult { ok: false, message: e.to_string(), detail: None },
-        };
-        // 不止确认「二进制存在」：真正启动 app-server 并完成 initialize 握手，
-        // 同时声明 AiPanel Tools 能力清单。
-        match codex::CodexClient::start(&self.codex_path)
-            .and_then(|mut c| c.initialize())
-        {
+        // 真正启动打包的 codex-app-server 并完成 initialize 握手(隔离 CODEX_HOME)。
+        match codex::CodexClient::launch(&self.launch_cfg()).and_then(|mut c| c.initialize()) {
             Ok(_) => ProviderTestResult {
                 ok: true,
-                message: format!("codex 可用并完成 initialize：{version}"),
-                detail: Some("turn / 工具回路开发中".into()),
+                message: "codex-app-server 可用并完成 initialize".into(),
+                detail: Some(format!("二进制:{}", self.program)),
             },
             Err(e) => ProviderTestResult {
                 ok: false,
-                message: format!("codex 已找到（{version}）但 app-server initialize 失败：{e}"),
-                detail: None,
+                message: format!("codex-app-server initialize 失败:{e}"),
+                detail: Some("先运行 scripts/fetch-codex.sh 取得二进制".into()),
             },
         }
     }
@@ -486,7 +481,12 @@ mod tests {
     fn codex_chat_errors_without_binary() {
         // 无 codex 二进制的测试环境:run_turn 在启动子进程阶段失败,返回 provider 错误。
         // (turn / 工具回路本身由 codex.rs 的 drive_turn 单测对模拟事件流覆盖。)
-        let p = CodexAppServerProvider { codex_path: "definitely-not-a-real-codex-binary".into() };
+        let p = CodexAppServerProvider {
+            program: "definitely-not-a-real-codex-binary".into(),
+            base_url: None,
+            api_key: None,
+            model: None,
+        };
         assert_eq!(p.chat(&[ChatMessage { role: "user".into(), content: "hi".into() }]).unwrap_err().code(), "provider");
     }
 

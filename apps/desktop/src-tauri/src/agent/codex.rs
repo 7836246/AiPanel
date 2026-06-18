@@ -216,17 +216,96 @@ fn isolated_codex_home() -> std::path::PathBuf {
     home
 }
 
+/// codex 读取 API Key 的环境变量名(配进 model_providers.env_key,密钥经 env 传入、不进 argv)。
+const KEY_ENV: &str = "AIPANEL_OAI_KEY";
+
+/// 启动 codex-app-server 所需的配置。base/key/model 复用用户的 OpenAI 兼容供应商配置。
+pub struct CodexLaunch {
+    /// 解析好的二进制路径(见 [`resolve_codex_bin`])。
+    pub program: String,
+    pub base_url: Option<String>,
+    pub api_key: Option<String>,
+    pub model: Option<String>,
+}
+
+/// 当前运行平台的 target triple(用于定位打包的 sidecar 文件名)。
+fn target_triple() -> String {
+    let arch = std::env::consts::ARCH; // aarch64 / x86_64
+    if cfg!(target_os = "macos") {
+        format!("{arch}-apple-darwin")
+    } else if cfg!(target_os = "windows") {
+        format!("{arch}-pc-windows-msvc")
+    } else {
+        format!("{arch}-unknown-linux-musl")
+    }
+}
+
+/// 解析要用的 codex-app-server 二进制路径(始终优先用打包的那份):
+/// 1) 显式配置且存在;2) `AIPANEL_CODEX_BIN` 环境变量;3) 与主程序同目录的 sidecar;
+/// 4) 开发期 `src-tauri/binaries/`;5) 回退 PATH 上的 `codex-app-server`。
+pub fn resolve_codex_bin(configured: Option<&str>) -> String {
+    use std::path::Path;
+    if let Some(p) = configured {
+        if !p.is_empty() && Path::new(p).exists() {
+            return p.to_string();
+        }
+    }
+    if let Ok(p) = std::env::var("AIPANEL_CODEX_BIN") {
+        if Path::new(&p).exists() {
+            return p;
+        }
+    }
+    let triple = target_triple();
+    let exe_name = if cfg!(target_os = "windows") {
+        format!("codex-app-server-{triple}.exe")
+    } else {
+        format!("codex-app-server-{triple}")
+    };
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            for name in [exe_name.as_str(), "codex-app-server", "codex-app-server.exe"] {
+                let c = dir.join(name);
+                if c.exists() {
+                    return c.display().to_string();
+                }
+            }
+        }
+    }
+    let dev = Path::new(env!("CARGO_MANIFEST_DIR")).join("binaries").join(&exe_name);
+    if dev.exists() {
+        return dev.display().to_string();
+    }
+    "codex-app-server".to_string()
+}
+
 impl CodexClient {
-    /// 启动打包的 `codex-app-server` 二进制(它**直接**就是 app-server,无需子命令),
-    /// 并开始读取其 stdout。用隔离的 `CODEX_HOME` 防止加载用户 `~/.codex` 配置/MCP。
-    pub fn start(codex_path: &str) -> AppResult<Self> {
-        let mut child = Command::new(codex_path)
-            .env("CODEX_HOME", isolated_codex_home())
+    /// 启动打包的 `codex-app-server`(它**直接**就是 app-server,无需子命令),并开始读取
+    /// 其 stdout。用隔离的 `CODEX_HOME` 防止加载用户 `~/.codex`;把用户的 OpenAI 兼容
+    /// base/key/model 配成 codex 的 `model_providers`(0.141 仅支持 `responses` 线协议),
+    /// 密钥经环境变量传入(不进 argv)。
+    pub fn launch(cfg: &CodexLaunch) -> AppResult<Self> {
+        let mut cmd = Command::new(&cfg.program);
+        cmd.env("CODEX_HOME", isolated_codex_home());
+        if let Some(base) = &cfg.base_url {
+            cmd.arg("-c").arg("model_providers.aipanel.name=\"AiPanel\"");
+            cmd.arg("-c").arg(format!("model_providers.aipanel.base_url=\"{base}\""));
+            cmd.arg("-c").arg(format!("model_providers.aipanel.env_key=\"{KEY_ENV}\""));
+            cmd.arg("-c").arg("model_providers.aipanel.wire_api=\"responses\"");
+            cmd.arg("-c").arg("model_providers.aipanel.requires_openai_auth=false");
+            cmd.arg("-c").arg("model_provider=\"aipanel\"");
+        }
+        if let Some(model) = &cfg.model {
+            cmd.arg("-c").arg(format!("model=\"{model}\""));
+        }
+        if let Some(key) = &cfg.api_key {
+            cmd.env(KEY_ENV, key);
+        }
+        let mut child = cmd
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn()
-            .map_err(|e| AppError::Provider(format!("无法启动 codex-app-server（{codex_path}）: {e}")))?;
+            .map_err(|e| AppError::Provider(format!("无法启动 codex-app-server（{}）: {e}", cfg.program)))?;
 
         let stdin = child.stdin.take().ok_or_else(|| AppError::Provider("no stdin".into()))?;
         let stdout = child.stdout.take().ok_or_else(|| AppError::Provider("no stdout".into()))?;
