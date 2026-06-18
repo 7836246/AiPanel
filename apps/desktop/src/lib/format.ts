@@ -30,6 +30,16 @@ export function formatRate(bytesPerSec: number): string {
   return `${n.toFixed(n >= 100 ? 0 : 1)} ${units[i]}`;
 }
 
+/**
+ * 由累计字节数与时间差(毫秒)算速率(字节/秒)。
+ * 监控的网络/磁盘计数是只增的累计值,速率 = (curr-prev)/Δt。
+ * Δt<=0(同帧/时钟异常)或计数器回绕(curr<prev,如重启)时一律钳为 0,避免出现负速率。
+ */
+export function byteRate(prevBytes: number, currBytes: number, deltaMs: number): number {
+  if (!(deltaMs > 0)) return 0;
+  return Math.max(0, (currBytes - prevBytes) / (deltaMs / 1000));
+}
+
 /** 把秒数格式化成「Xd Yh Zm」运行时长。 */
 export function formatUptime(secs: number): string {
   if (!Number.isFinite(secs) || secs <= 0) return "—";

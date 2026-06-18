@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formatBytes, formatRate, formatUptime } from "./format";
+import { byteRate, formatBytes, formatRate, formatUptime } from "./format";
 
 describe("formatBytes", () => {
   it("0 / 负数 / 非有限数 → 0 B", () => {
@@ -27,6 +27,20 @@ describe("formatRate", () => {
   it(">=100 时不带小数,会进位到 MB/s", () => {
     expect(formatRate(1024 * 1024)).toBe("1.0 MB/s");
     expect(formatRate(1024 * 200)).toBe("200 KB/s"); // >=100 → 0 位小数
+  });
+});
+
+describe("byteRate", () => {
+  it("(curr-prev)/秒", () => {
+    expect(byteRate(0, 2000, 1000)).toBe(2000); // 2000 B / 1s
+    expect(byteRate(1000, 3000, 2000)).toBe(1000); // 2000 B / 2s
+  });
+  it("Δt<=0 → 0", () => {
+    expect(byteRate(0, 5000, 0)).toBe(0);
+    expect(byteRate(0, 5000, -10)).toBe(0);
+  });
+  it("计数器回绕(curr<prev) → 0(不出现负速率)", () => {
+    expect(byteRate(9000, 100, 1000)).toBe(0);
   });
 });
 

@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import { Spinner } from "@aipanel/ui";
 import { serverMetrics, type ServerMetrics } from "../lib/api";
-import { formatBytes, formatRate, formatUptime } from "../lib/format";
+import { byteRate, formatBytes, formatRate, formatUptime } from "../lib/format";
 
 // 轮询间隔（毫秒）。后端只回累计值，速率由前端跨样本求差，故无需后端 sleep 测速。
 const POLL_MS = 3000;
@@ -345,20 +345,15 @@ export default function ServerMonitor({ serverId }: { serverId: string }): JSX.E
 
   const latest = samples[samples.length - 1].metrics;
 
-  // 计算各序列速率：相邻样本 (curr - prev) / Δt（秒）。net 计数器只增，回绕/负值钳为 0。
+  // 计算各序列速率：相邻样本经 byteRate(累计字节 + Δt) 求差。计数器回绕/Δt<=0 由 byteRate 钳 0。
   const rxSeries: number[] = [];
   const txSeries: number[] = [];
   for (let i = 1; i < samples.length; i += 1) {
     const a = samples[i - 1];
     const b = samples[i];
-    const dt = (b.receivedAt - a.receivedAt) / 1000;
-    if (dt <= 0) {
-      rxSeries.push(0);
-      txSeries.push(0);
-      continue;
-    }
-    rxSeries.push(Math.max(0, (b.metrics.netRxBytes - a.metrics.netRxBytes) / dt));
-    txSeries.push(Math.max(0, (b.metrics.netTxBytes - a.metrics.netTxBytes) / dt));
+    const dtMs = b.receivedAt - a.receivedAt;
+    rxSeries.push(byteRate(a.metrics.netRxBytes, b.metrics.netRxBytes, dtMs));
+    txSeries.push(byteRate(a.metrics.netTxBytes, b.metrics.netTxBytes, dtMs));
   }
   // 即时速率：取最后一个差分；不足两样本时为 0。
   const rxNow = rxSeries.length > 0 ? rxSeries[rxSeries.length - 1] : 0;
