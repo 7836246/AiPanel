@@ -19,6 +19,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- Simplified provider setup (Codex-style): new providers default to OpenAI-compatible
+  — you only configure a base URL + API key. Models are auto-discovered via
+  `GET {base}/models` instead of typed by hand: pick from a dropdown in settings, and
+  switch the active model right from the home composer (persisted per provider). The
+  Codex app-server / custom kinds remain available but are no longer the default.
 - Foreground health monitoring: while the app is visible it polls server
   connectivity every 60s; the 概览 nav shows a red badge counting servers needing
   attention (offline, or last doctor's disk/memory >90%), and cards flag "资源紧张".

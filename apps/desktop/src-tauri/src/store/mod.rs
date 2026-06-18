@@ -276,6 +276,23 @@ impl Store {
         Ok(())
     }
 
+    /// 仅更新某个供应商的激活模型（model 列）与 updated_at，不触碰其它列
+    /// （凭据引用、base_url、enabled 等）。`model` 为 None 时把该列置 NULL。
+    /// 返回更新后的 ProviderConfig；供应商不存在则返回 NotFound。
+    pub fn set_provider_model(&self, id: &str, model: Option<&str>) -> AppResult<ProviderConfig> {
+        {
+            let conn = self.conn.lock().unwrap();
+            let n = conn.execute(
+                "UPDATE provider_configs SET model=?2, updated_at=?3 WHERE id=?1",
+                params![id, model, now().to_rfc3339()],
+            )?;
+            if n == 0 {
+                return Err(AppError::NotFound(format!("provider {id}")));
+            }
+        }
+        self.get_provider(id)
+    }
+
     /// 删除一条供应商配置，不存在则返回 NotFound。
     pub fn delete_provider(&self, id: &str) -> AppResult<()> {
         let conn = self.conn.lock().unwrap();

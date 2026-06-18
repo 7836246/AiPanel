@@ -16,6 +16,7 @@ import {
   Pencil as PencilIcon,
   Play as PlayIcon,
   Plus as PlusIcon,
+  RefreshCw,
   ScrollText,
   Server as ServerIconLucide,
   Settings as SettingsIcon,
@@ -60,6 +61,8 @@ import {
   runServerDoctorStream,
   serverDoctorPlan,
   listProviders,
+  listModels,
+  setProviderModel,
   listServers,
   listTasks,
   saveTask,
@@ -129,6 +132,104 @@ function NavItem({ icon, label, kbd, active, onClick, badge }: {
           {badge}
         </span>
       ) : kbd ? <span className="text-[11.5px] text-fg-subtle">{kbd}</span> : null}
+    </div>
+  );
+}
+
+/**
+ * 首页模型选择器:展示当前激活模型,点开后自动探测 {base}/models 列表,选中即生效
+ * (set_provider_model 持久化 + onChanged 刷新)。未配置供应商时引导去设置。
+ */
+function ModelPicker({
+  provider,
+  onChanged,
+  onConfigure,
+}: {
+  provider: ProviderConfig | null;
+  onChanged: () => void;
+  onConfigure: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [models, setModels] = useState<string[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  if (!provider) {
+    return (
+      <button onClick={onConfigure} className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[12.5px] text-fg-muted transition-colors hover:bg-hover" title="模型供应商设置">
+        未配置模型 · 去设置
+      </button>
+    );
+  }
+
+  const probe = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const list = await listModels(provider);
+      setModels(list);
+      if (!list.length) setError("未探测到模型");
+    } catch (e) {
+      setError(e && typeof e === "object" && "message" in e ? String((e as { message: unknown }).message) : String(e));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const toggle = () => {
+    const next = !open;
+    setOpen(next);
+    if (next && models.length === 0) void probe();
+  };
+
+  const pick = async (m: string) => {
+    setOpen(false);
+    if (m === provider.model) return;
+    try {
+      await setProviderModel(provider.id, m);
+      onChanged();
+    } catch {
+      /* 失败时静默:下拉已关,用户可重试 */
+    }
+  };
+
+  return (
+    <div className="relative">
+      <button onClick={toggle} className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[12.5px] text-fg-muted transition-colors hover:bg-hover" title="选择模型(点开自动探测)">
+        <span className="max-w-[180px] truncate">{provider.model ? `${provider.name} · ${provider.model}` : `${provider.name} · 选择模型`}</span>
+        <ChevronDown size={13} className="flex-none" />
+      </button>
+      {open && (
+        <>
+          {/* 点击空白关闭 */}
+          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
+          <div className="absolute bottom-full right-0 z-20 mb-1 max-h-72 w-60 overflow-y-auto rounded-md border border-border bg-surface-1 py-1 shadow-lg">
+            <div className="flex items-center justify-between px-2.5 py-1 text-[11px] text-fg-subtle">
+              <span>模型</span>
+              <button onClick={() => void probe()} disabled={loading} className="inline-flex items-center gap-1 rounded px-1 hover:bg-hover disabled:opacity-50" title="重新探测">
+                {loading ? <Spinner size="sm" /> : <RefreshCw size={11} />} 探测
+              </button>
+            </div>
+            {error && <div className="px-2.5 py-1.5 text-[12px] text-risk-blocked">{error}</div>}
+            {!loading && !error && models.length === 0 && (
+              <div className="px-2.5 py-1.5 text-[12px] text-fg-subtle">点「探测」获取模型列表</div>
+            )}
+            {models.map((m) => (
+              <button
+                key={m}
+                onClick={() => void pick(m)}
+                className={`flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-[12.5px] transition-colors hover:bg-hover ${m === provider.model ? "text-fg" : "text-fg-muted"}`}
+              >
+                {m === provider.model ? <CheckIcon size={13} className="flex-none text-brand" /> : <span className="w-[13px] flex-none" />}
+                <span className="truncate">{m}</span>
+              </button>
+            ))}
+            <div className="mt-1 border-t border-border pt-1">
+              <button onClick={onConfigure} className="w-full px-2.5 py-1.5 text-left text-[12px] text-fg-subtle hover:bg-hover">供应商设置…</button>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -1117,9 +1218,11 @@ export default function CodexConsole() {
                     </button>
                   </div>
                   <div className="flex items-center gap-2.5">
-                    <button onClick={() => setView("settings")} className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[12.5px] text-fg-muted transition-colors hover:bg-hover" title="模型供应商设置">
-                      {aiProvider ? `${aiProvider.name}${aiProvider.model ? " · " + aiProvider.model : ""}` : "未配置模型 · 去设置"}
-                    </button>
+                    <ModelPicker
+                      provider={aiProvider}
+                      onChanged={() => listProviders().then(setProviders).catch(() => {})}
+                      onConfigure={() => setView("settings")}
+                    />
                     <button aria-label="发送" onClick={generatePlan} className="flex h-[30px] w-[30px] flex-none items-center justify-center rounded-full bg-brand text-brand-fg transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/60 disabled:opacity-40" disabled={!intentValue.trim() || !selectedServerId || running}>
                       <ArrowUp size={16} strokeWidth={2} />
                     </button>

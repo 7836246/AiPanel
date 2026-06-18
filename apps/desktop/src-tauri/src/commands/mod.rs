@@ -326,6 +326,37 @@ pub fn list_tools() -> Vec<crate::tools::ToolSpec> {
     crate::tools::registry()
 }
 
+/// 探测某个供应商可用的模型列表。API Key 优先取本次调用入参（用户正在表单里
+/// 输入的 key），否则从凭据库取已保存 provider 的密钥。仅 OpenAI 兼容供应商支持。
+#[tauri::command]
+pub async fn list_models(
+    state: State<'_, AppState>,
+    config: ProviderConfig,
+    api_key: Option<String>,
+) -> AppResult<Vec<String>> {
+    let key = api_key.or_else(|| {
+        config
+            .credential_ref
+            .as_ref()
+            .and_then(|r| state.credentials.get_secret(r).ok().flatten())
+    });
+    // 探测是阻塞式 HTTP —— 放到 UI 线程之外。
+    tokio::task::spawn_blocking(move || crate::agent::list_models(&config, key))
+        .await
+        .map_err(|e| AppError::Provider(format!("探测任务失败: {e}")))?
+}
+
+/// 设置某个供应商的激活模型（model 为 None 时清空），返回更新后的 ProviderConfig。
+/// 只更新 model 列，不触碰凭据等其它配置。
+#[tauri::command]
+pub fn set_provider_model(
+    state: State<'_, AppState>,
+    id: String,
+    model: Option<String>,
+) -> AppResult<ProviderConfig> {
+    state.store.set_provider_model(&id, model.as_deref())
+}
+
 // ----- provider / 模型选择 -----------------------------------------------
 
 #[tauri::command]

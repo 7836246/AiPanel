@@ -732,6 +732,38 @@ export async function testProvider(input: ProviderInput, apiKey?: string): Promi
   return invoke<ProviderTestResult>("test_provider", { config, apiKey: apiKey ?? null });
 }
 
+/**
+ * 探测供应商可用模型(OpenAI 格式 GET {base}/models)。
+ * 传 ProviderInput(设置页未保存表单)或 ProviderConfig(已保存供应商,首页)均可:
+ * 已保存供应商带 credentialRef → 后端读 Keychain 里的 key;设置页临时探测则传 apiKey。
+ */
+export async function listModels(input: ProviderInput | ProviderConfig, apiKey?: string): Promise<string[]> {
+  if (!isTauri()) return [];
+  const anyIn = input as ProviderConfig;
+  const config: ProviderConfig = {
+    id: anyIn.id ?? "probe",
+    name: input.name,
+    kind: input.kind,
+    baseUrl: input.baseUrl,
+    model: input.model,
+    codexPath: input.codexPath,
+    credentialRef: anyIn.credentialRef,
+    enabled: input.enabled,
+    createdAt: anyIn.createdAt ?? new Date().toISOString(),
+    updatedAt: anyIn.updatedAt ?? new Date().toISOString(),
+  };
+  return invoke<string[]>("list_models", { config, apiKey: apiKey ?? null });
+}
+
+/** 设置某供应商当前激活的模型(首页切换即用);model 为 null 清空。 */
+export async function setProviderModel(id: string, model: string | null): Promise<ProviderConfig | null> {
+  if (!isTauri()) {
+    mockProviders = mockProviders.map((p) => (p.id === id ? { ...p, model: model ?? undefined } : p));
+    return mockProviders.find((p) => p.id === id) ?? null;
+  }
+  return invoke<ProviderConfig>("set_provider_model", { id, model });
+}
+
 /** 返回当前凭据存储后端标识（如 "mock" 表示开发期内存存储）。 */
 export async function credentialBackend(): Promise<string> {
   if (!isTauri()) return "mock";

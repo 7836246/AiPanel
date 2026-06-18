@@ -365,6 +365,49 @@ pub fn test_provider(config: &ProviderConfig, api_key: Option<String>) -> Provid
     build_provider(config, api_key).test()
 }
 
+/// 探测供应商可用的模型列表（阻塞式 HTTP）。
+///
+/// 对 OpenAI 兼容供应商：GET `{base_url}/models`（base_url 处理与 chat 一致——
+/// chat 用 `{base}/chat/completions`，这里就是 `{base}/models`），带
+/// `Authorization: Bearer {key}`；解析形如 `{"data":[{"id":"..."}]}` 的响应，
+/// 收集所有 `id`，去重 + 排序后返回。请求 / 解析失败返回清晰的 `AppError::Provider`。
+/// 非 OpenAI 兼容（codex / custom）不支持模型探测，返回 Provider 错误。
+pub fn list_models(config: &ProviderConfig, api_key: Option<String>) -> AppResult<Vec<String>> {
+    if !matches!(config.kind, ProviderKind::OpenAiCompatible) {
+        return Err(AppError::Provider("该供应商类型不支持模型探测".into()));
+    }
+    // 复用 OpenAI 兼容 provider 的 base_url / client 处理，确保与 chat 一致。
+    let provider = OpenAiCompatibleProvider { config: config.clone(), api_key };
+    let base = provider.base()?;
+    let url = format!("{base}/models");
+    let mut req = OpenAiCompatibleProvider::client()?.get(&url);
+    if let Some(key) = &provider.api_key {
+        req = req.bearer_auth(key);
+    }
+    let resp = req.send().map_err(|e| AppError::Provider(format!("请求失败: {e}")))?;
+    let status = resp.status();
+    let text = resp.text().map_err(|e| AppError::Provider(e.to_string()))?;
+    if !status.is_success() {
+        return Err(AppError::Provider(format!(
+            "HTTP {status}: {}",
+            crate::core::sanitize::sanitize(&text)
+        )));
+    }
+    let v: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|e| AppError::Provider(format!("响应解析失败: {e}")))?;
+    let data = v["data"]
+        .as_array()
+        .ok_or_else(|| AppError::Provider("响应缺少 data 数组".into()))?;
+    let mut ids: Vec<String> = data
+        .iter()
+        .filter_map(|item| item["id"].as_str().map(|s| s.to_string()))
+        .collect();
+    // 去重 + 排序，便于前端稳定展示。
+    ids.sort();
+    ids.dedup();
+    Ok(ids)
+}
+
 /// 用配置好的 provider 生成计划：构建对应 provider 并调用其 plan。
 pub fn plan_with_provider(
     config: &ProviderConfig,

@@ -91,6 +91,8 @@ pub fn run() {
             commands::create_plan,
             commands::execute_confirmed_plan,
             commands::test_provider,
+            commands::list_models,
+            commands::set_provider_model,
             commands::run_agent_turn,
             commands::list_tools,
             commands::list_providers,

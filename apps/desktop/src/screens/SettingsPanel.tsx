@@ -5,6 +5,7 @@ import {
   Cpu,
   Pencil,
   Plus,
+  RefreshCw,
   Server,
   ShieldCheck,
   SlidersHorizontal,
@@ -15,6 +16,7 @@ import {
   credentialBackend,
   deleteProvider,
   getModelSelectionPolicy,
+  listModels,
   listProviders,
   saveModelSelectionPolicy,
   saveProvider,
@@ -32,13 +34,13 @@ const errMsg = (e: unknown): string =>
 
 // 供应商类型到中文标签的映射。
 const KIND_LABEL: Record<ProviderKind, string> = {
-  codex_app_server: "Codex app-server",
   openai_compatible: "OpenAI 兼容",
+  codex_app_server: "Codex app-server",
   custom: "自定义",
 };
 
-// 新增供应商表单的初始空值。
-const EMPTY: ProviderInput = { name: "", kind: "codex_app_server", enabled: true };
+// 新增供应商表单的初始空值。默认类型为 OpenAI 兼容（贴近 Codex：只需配 Base URL + Key，模型自动探测）。
+const EMPTY: ProviderInput = { name: "", kind: "openai_compatible", enabled: true };
 
 /**
  * 「默认只读优先」开关的 localStorage 键名。
@@ -76,6 +78,10 @@ export default function SettingsPanel() {
   const [testResult, setTestResult] = useState<ProviderTestResult | null>(null);
   const [testing, setTesting] = useState(false);
   const [busy, setBusy] = useState(false);
+  // 模型探测：从 OpenAI 兼容供应商拉取可用模型列表（仅本地 state，供下拉选择）。
+  const [models, setModels] = useState<string[]>([]);
+  const [detecting, setDetecting] = useState(false);
+  const [detectError, setDetectError] = useState<string | null>(null);
   // 通用区块：默认只读优先（持久化到 localStorage，供主界面读取）。
   const [readonlyDefault, setReadonlyDefault] = useState<boolean>(true);
   const { toasts, push, dismiss } = useToasts();
@@ -108,6 +114,43 @@ export default function SettingsPanel() {
     });
     setApiKey("");
     setTestResult(null);
+    // 回填已保存模型，作为下拉初始候选；探测状态清空。
+    setModels(p.model ? [p.model] : []);
+    setDetecting(false);
+    setDetectError(null);
+  }
+
+  // 探测模型：调用 OpenAI 兼容接口拉取可用模型列表，成功后写入本地 state 供下拉选择。
+  async function detectModels() {
+    if (!form) return;
+    setDetecting(true);
+    setDetectError(null);
+    try {
+      const raw = await listModels(form, apiKey || undefined);
+      // 兼容返回 string[] 或 { id?/name? }[] 两种形态，归一化为字符串数组。
+      const ids = (raw as unknown[])
+        .map((m) =>
+          typeof m === "string"
+            ? m
+            : m && typeof m === "object"
+              ? String((m as { id?: unknown; name?: unknown }).id ?? (m as { name?: unknown }).name ?? "")
+              : "",
+        )
+        .filter((s) => s.length > 0);
+      // 去重并保留已选模型（即便未在返回列表中），避免下拉丢失当前值。
+      const merged = Array.from(new Set([...(form.model ? [form.model] : []), ...ids]));
+      setModels(merged);
+      if (ids.length === 0) {
+        setDetectError("未探测到任何模型，请检查 Base URL / API Key 后重试。");
+      } else if (!form.model) {
+        // 未选过模型时，默认选中第一个探测结果。
+        setForm({ ...form, model: ids[0] });
+      }
+    } catch (e) {
+      setDetectError(`探测失败: ${errMsg(e)}`);
+    } finally {
+      setDetecting(false);
+    }
   }
 
   // 保存表单（API Key 留空则不修改），成功后关闭表单并刷新列表。
@@ -119,6 +162,9 @@ export default function SettingsPanel() {
       setForm(null);
       setApiKey("");
       setTestResult(null);
+      setModels([]);
+      setDetecting(false);
+      setDetectError(null);
       await refresh();
       push("success", "供应商已保存");
     } catch (e) {
@@ -254,13 +300,22 @@ export default function SettingsPanel() {
               <label className={labelCls}>类型</label>
               <select
                 value={form.kind}
-                onChange={(e) => setForm({ ...form, kind: e.target.value as ProviderKind })}
+                onChange={(e) => {
+                  // 切换类型时清空模型探测结果（不同类型字段语义不同）。
+                  setForm({ ...form, kind: e.target.value as ProviderKind });
+                  setModels(form.model ? [form.model] : []);
+                  setDetectError(null);
+                }}
                 className="h-9 rounded-md border border-border bg-surface-2 px-2 text-sm text-fg outline-none focus-visible:border-brand"
               >
+                {/* OpenAI 兼容为首选/默认，放在第一项 */}
+                <option value="openai_compatible">OpenAI 兼容（推荐）</option>
                 <option value="codex_app_server">Codex app-server</option>
-                <option value="openai_compatible">OpenAI 兼容</option>
                 <option value="custom">自定义</option>
               </select>
+              {form.kind === "openai_compatible" ? (
+                <span className="text-[12px] text-fg-subtle">只需填写 Base URL 与 API Key，模型可一键探测后下拉选择。</span>
+              ) : null}
             </div>
             {form.kind === "codex_app_server" ? (
               <div className={field}>
@@ -287,10 +342,56 @@ export default function SettingsPanel() {
                 </div>
               </>
             )}
-            <div className={field}>
-              <label className={labelCls}>模型</label>
-              <Input value={form.model ?? ""} onChange={(e) => setForm({ ...form, model: e.target.value })} placeholder="gpt-5-codex" />
-            </div>
+            {form.kind === "openai_compatible" ? (
+              // OpenAI 兼容：探测 + 下拉选择模型（贴近 Codex 体验），并保留手填兜底。
+              <div className={field}>
+                <label className={labelCls}>模型</label>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    className="gap-1.5"
+                    onClick={detectModels}
+                    disabled={detecting}
+                  >
+                    {detecting ? <Spinner size="sm" /> : <RefreshCw size={14} />}
+                    {detecting ? "探测中…" : "探测模型"}
+                  </Button>
+                  <select
+                    value={form.model ?? ""}
+                    onChange={(e) => setForm({ ...form, model: e.target.value || undefined })}
+                    disabled={detecting || models.length === 0}
+                    className="h-9 min-w-0 flex-1 rounded-md border border-border bg-surface-2 px-2 text-sm text-fg outline-none focus-visible:border-brand disabled:opacity-60"
+                  >
+                    <option value="">{models.length === 0 ? "（请先探测模型）" : "（选择模型）"}</option>
+                    {models.map((m) => (
+                      <option key={m} value={m}>
+                        {m}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                {/* 探测失败内联红条提示 */}
+                {detectError ? (
+                  <div className="mt-1 rounded-md border border-risk-blocked/40 bg-risk-blocked-soft px-2.5 py-1.5 text-[12px] text-risk-blocked">
+                    {detectError}
+                  </div>
+                ) : null}
+                {/* 手填兜底：探测不可用时仍可直接输入模型名 */}
+                <Input
+                  className="mt-1"
+                  value={form.model ?? ""}
+                  onChange={(e) => setForm({ ...form, model: e.target.value || undefined })}
+                  placeholder="或手填模型名，如 gpt-5-codex"
+                />
+              </div>
+            ) : (
+              // Codex / 自定义：保留最简手填模型字段。
+              <div className={field}>
+                <label className={labelCls}>模型</label>
+                <Input value={form.model ?? ""} onChange={(e) => setForm({ ...form, model: e.target.value })} placeholder="gpt-5-codex" />
+              </div>
+            )}
             <label className="mb-3 flex items-center gap-2 text-[13px] text-fg">
               <input type="checkbox" checked={form.enabled} onChange={(e) => setForm({ ...form, enabled: e.target.checked })} />
               启用
@@ -331,6 +432,9 @@ export default function SettingsPanel() {
                   setForm(null);
                   setTestResult(null);
                   setTesting(false);
+                  setModels([]);
+                  setDetecting(false);
+                  setDetectError(null);
                 }}
               >
                 取消
@@ -338,7 +442,7 @@ export default function SettingsPanel() {
             </div>
           </div>
         ) : (
-          <Button variant="secondary" size="sm" className="mt-3 gap-1.5" onClick={() => { setForm({ ...EMPTY }); setApiKey(""); setTestResult(null); }}>
+          <Button variant="secondary" size="sm" className="mt-3 gap-1.5" onClick={() => { setForm({ ...EMPTY }); setApiKey(""); setTestResult(null); setModels([]); setDetecting(false); setDetectError(null); }}>
             <Plus size={14} />
             添加供应商
           </Button>
