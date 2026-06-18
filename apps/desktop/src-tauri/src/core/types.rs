@@ -221,6 +221,14 @@ pub struct ProviderTestResult {
     pub detail: Option<String>,
 }
 
+/// SSH 连通性检查结果:`ok` 是否连上,`message` 失败时的可读原因(认证/超时/host key…)。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnCheck {
+    pub ok: bool,
+    pub message: String,
+}
+
 // ---------------------------------------------------------------------------
 // Plans / tasks
 // ---------------------------------------------------------------------------

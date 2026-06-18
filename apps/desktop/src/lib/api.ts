@@ -182,9 +182,15 @@ export interface CommandExecution {
   startedAt: string;
 }
 
-export async function checkSshConnection(id: string): Promise<boolean> {
-  if (!isTauri()) return Math.random() > 0.3; // 仅用于演示
-  return invoke<boolean>("check_ssh_connection", { id });
+/** SSH 连通性检查结果:ok 是否连上,message 为失败时的可读原因。 */
+export interface ConnCheck {
+  ok: boolean;
+  message: string;
+}
+
+export async function checkSshConnection(id: string): Promise<ConnCheck> {
+  if (!isTauri()) return { ok: Math.random() > 0.3, message: "(浏览器 mock)" }; // 仅用于演示
+  return invoke<ConnCheck>("check_ssh_connection", { id });
 }
 
 export async function runReadonlyCommand(id: string, command: string): Promise<CommandExecution> {

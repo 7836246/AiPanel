@@ -96,15 +96,17 @@ pub fn review_plan(plan: Plan, read_only_mode: bool) -> RiskReview {
 
 /// 测试 SSH 连通性 + 认证，并把结果缓存为该服务器的状态。
 #[tauri::command]
-pub async fn check_ssh_connection(state: State<'_, AppState>, id: String) -> AppResult<bool> {
+pub async fn check_ssh_connection(
+    state: State<'_, AppState>,
+    id: String,
+) -> AppResult<crate::core::types::ConnCheck> {
     let (server, secret) = load_server_and_secret(&state, &id)?;
-    let ok = matches!(
-        crate::ssh::check_connection(&server, secret.as_deref()).await,
-        Ok(true)
-    );
-    let status = if ok { ServerStatus::Online } else { ServerStatus::Offline };
+    let check = crate::ssh::check_connection(&server, secret.as_deref())
+        .await
+        .unwrap_or_else(|e| crate::core::types::ConnCheck { ok: false, message: e.to_string() });
+    let status = if check.ok { ServerStatus::Online } else { ServerStatus::Offline };
     state.store.set_server_status(&id, status, None)?;
-    Ok(ok)
+    Ok(check)
 }
 
 /// 执行单条只读命令（受风险审查器把关）。这是开发/诊断入口；面向用户的流程
@@ -546,10 +548,10 @@ pub async fn refresh_all_servers(state: State<'_, AppState>) -> AppResult<Vec<Se
     let mut set = tokio::task::JoinSet::new();
     for (id, server, secret) in prepared {
         set.spawn(async move {
-            let online = matches!(
-                crate::ssh::check_connection(&server, secret.as_deref()).await,
-                Ok(true)
-            );
+            let online = crate::ssh::check_connection(&server, secret.as_deref())
+                .await
+                .map(|c| c.ok)
+                .unwrap_or(false);
             (id, online)
         });
     }

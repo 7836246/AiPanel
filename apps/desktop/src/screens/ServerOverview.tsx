@@ -79,10 +79,11 @@ export function ServerOverview({
     setConn("checking");
     setConnMsg(null);
     try {
-      const ok = await checkSshConnection(id);
-      setConn(ok ? "online" : "offline");
-      setConnMsg(ok ? "连接成功" : "连接失败：无法建立 SSH 连接");
-      onStatus?.(ok);
+      const r = await checkSshConnection(id);
+      setConn(r.ok ? "online" : "offline");
+      // 失败时展示后端归类出的真实原因(认证/超时/连接被拒/host key/未装 sshpass…)。
+      setConnMsg(r.ok ? "连接成功" : `连接失败:${r.message}`);
+      onStatus?.(r.ok);
     } catch (err) {
       // 调用本身抛错（如后端异常）：按离线处理并展示原因。
       setConn("offline");

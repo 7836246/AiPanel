@@ -570,10 +570,46 @@ async fn stream_child(
     }))
 }
 
-/// 连通性 + 认证探测。当一条简单的远程命令执行成功时返回 Ok(true)。
-pub async fn check_connection(server: &ServerProfile, secret: Option<&str>) -> AppResult<bool> {
-    let exec = run_command(server, secret, "true", Duration::from_secs(CONNECT_TIMEOUT_SECS + 5)).await?;
-    Ok(exec.exit_code == 0)
+/// 连通性 + 认证探测。返回 [`ConnCheck`]:连上则 `ok=true`,否则 `message` 给出
+/// 可读原因(认证失败 / 超时 / 连接被拒 / host key / 解析失败 / 未装 sshpass 等)。
+pub async fn check_connection(
+    server: &ServerProfile,
+    secret: Option<&str>,
+) -> AppResult<crate::core::types::ConnCheck> {
+    use crate::core::types::ConnCheck;
+    match run_command(server, secret, "true", Duration::from_secs(CONNECT_TIMEOUT_SECS + 5)).await {
+        Ok(exec) if exec.exit_code == 0 => Ok(ConnCheck { ok: true, message: "连接成功".into() }),
+        Ok(exec) => Ok(ConnCheck { ok: false, message: classify_ssh_failure(&exec.stderr, exec.exit_code) }),
+        // run_command 本身报错(如未装 sshpass、无密钥、spawn 失败):错误信息本就可操作,直接透出。
+        Err(e) => Ok(ConnCheck { ok: false, message: e.to_string() }),
+    }
+}
+
+/// 把 ssh 的 stderr/退出码归类成一句可读的中文原因(stderr 已脱敏)。
+fn classify_ssh_failure(stderr: &str, exit_code: i32) -> String {
+    let s = stderr.to_lowercase();
+    let hit = |needles: &[&str]| needles.iter().any(|n| s.contains(n));
+    if hit(&["permission denied", "authentication failed", "too many authentication"]) {
+        "认证失败:用户名 / 密码 / 私钥 不正确,或服务器不接受该认证方式(可在「编辑服务器」更新凭据)".into()
+    } else if hit(&["timed out", "timeout", "operation timed out"]) {
+        "连接超时:网络不通、被防火墙拦截,或本机代理 / VPN 拦截了到该服务器的连接".into()
+    } else if hit(&["connection refused"]) {
+        "连接被拒绝:目标端口未开放 SSH(检查端口与 SSH 服务是否在运行)".into()
+    } else if hit(&["host key verification failed", "remote host identification has changed"]) {
+        "主机密钥校验失败:服务器密钥已变更(可能换机或中间人;确认无误后清理 known_hosts)".into()
+    } else if hit(&["could not resolve", "name or service not known", "nodename nor servname"]) {
+        "无法解析主机名:检查 Host 是否填写正确".into()
+    } else if hit(&["no route to host", "network is unreachable"]) {
+        "无法路由到主机:网络不可达".into()
+    } else {
+        let detail = stderr.trim();
+        if detail.is_empty() {
+            format!("SSH 连接失败(退出码 {exit_code})")
+        } else {
+            let short: String = detail.chars().take(160).collect();
+            format!("SSH 连接失败:{short}")
+        }
+    }
 }
 
 /// 在 PATH 中定位可执行文件（用于探测可选的 `sshpass`）。

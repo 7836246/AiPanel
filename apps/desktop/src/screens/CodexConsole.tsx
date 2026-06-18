@@ -533,8 +533,8 @@ export default function CodexConsole() {
     if (!selectedServerId || !isTauri()) return;
     const id = selectedServerId;
     checkSshConnection(id)
-      .then((ok) =>
-        setServers((prev) => prev.map((s) => (s.id === id ? { ...s, status: ok ? "online" : "offline" } : s)))
+      .then((r) =>
+        setServers((prev) => prev.map((s) => (s.id === id ? { ...s, status: r.ok ? "online" : "offline" } : s)))
       )
       .catch(() => {});
   }, [selectedServerId]);
