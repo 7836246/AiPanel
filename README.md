@@ -63,9 +63,17 @@ the local audit trail.
 - [x] Command risk review (Low / Medium / High / Blocked) with confirm / second
       confirm before write actions + local audit log
 - [x] Live streaming command/doctor output
-- [x] Model provider manager; Codex app-server JSON-RPC bridge (transport + handshake)
-- [ ] Codex app-server tool-call loop (turns)
-- [ ] Docker app deployment workflows
+- [x] Model provider manager (configure just a base URL + API key; models are
+      auto-discovered via `/v1/models` and picked from the home composer)
+- [x] Interactive SSH terminal + file manager (SFTP), Codex-style 3-pane workspace
+- [x] Multi-server dashboard with favorites and foreground health monitoring
+- [x] Codex app-server tool-call loop (turns) — `thread/start` → `turn/start` →
+      event stream → tool dispatch/relay; preferred runtime with OpenAI fallback;
+      covered by simulated JSON-RPC event-stream tests (pending end-to-end validation
+      against an installed `codex` binary)
+- [x] Docker app deployment workflows — detect/install, Compose deploy, Caddy/Nginx
+      reverse proxy + HTTPS, post-deploy health checks; Uptime Kuma / n8n / WordPress /
+      PostgreSQL / Redis templates, each a risk-reviewed Plan
 
 ## Documentation
 

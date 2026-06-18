@@ -112,7 +112,7 @@ audit.write
 
 **实现状态**：工具层已落地在 `apps/desktop/src-tauri/src/tools/`，当前为**内部 JSON-RPC 形态**的 `dispatch(name, args)`（MCP 适配后置）。每个工具声明权限（ReadOnly/Write）与是否审计；`ssh.run_readonly` 受 Risk Reviewer 门控（仅 Low 可过），`task.execute_confirmed` 在缺少用户确认时拒绝执行。
 
-供应商侧：**OpenAI 兼容供应商已真实接通**（`agent/` 中的 `OpenAiCompatibleProvider`：真实 `/chat/completions` 做 chat/规划/总结，规划用结构化 JSON 输出，风险由 AiPanel 重判）；`agent/agent_loop.rs` 是只读自动诊断回路（OpenAI function-calling，只暴露只读工具）。Codex app-server 走 `agent/codex.rs` 的 JSON-RPC/stdio transport（spawn + initialize，只广告 AiPanel Tools 工具面），turn/工具回路开发中。
+供应商侧：**OpenAI 兼容供应商已真实接通**（`agent/` 中的 `OpenAiCompatibleProvider`：真实 `/chat/completions` 做 chat/规划/总结，规划用结构化 JSON 输出，风险由 AiPanel 重判）；`agent/agent_loop.rs` 是只读自动诊断回路（OpenAI function-calling，只暴露只读工具）。Codex app-server 走 `agent/codex.rs` 的 JSON-RPC/stdio transport（spawn + initialize，只广告 AiPanel Tools 工具面）**之上的 turn / 工具调用回路已接通**：`CodexClient::run_turn`（`thread/start` → `turn/start` → 事件流）配合传输无关的 `drive_turn`/`classify_event`（`tool_call` → 经 `on_tool` 分发 → `tool/result` 回灌），`CodexAppServerProvider` 的 chat/plan/summarize/stream_events 据此工作,并作为**首选 Agent Runtime**、OpenAI 兼容为回退。该回路以**模拟 JSON-RPC 事件流单测**覆盖（tool call/result/final/错误/超时/子进程退出/写工具未确认即拒绝），尚待对实际安装的 `codex` 二进制做端到端验证。另外 Docker 应用部署工作流见 `agent`/`docker` 模块:`docker/` 生成结构化部署 Plan（检测/安装、Compose、Caddy/Nginx 反代 + HTTPS、健康检查、5 个模板），统一经 Risk Reviewer + 确认 + 执行。
 
 ## 目标架构
 
