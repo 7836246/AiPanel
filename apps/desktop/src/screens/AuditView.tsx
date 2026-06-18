@@ -1,6 +1,6 @@
 import { useEffect, useState, type JSX } from "react";
 import { Button, Input, Spinner } from "@aipanel/ui";
-import { ChevronDown, ChevronRight, Download, ScrollText, Search } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Copy, Download, ScrollText, Search } from "lucide-react";
 import {
   listAuditRecords,
   searchAuditRecords,
@@ -8,6 +8,32 @@ import {
   type AuditRecord,
 } from "../lib/api";
 import { formatRelativeTime } from "../lib/time";
+
+// 复制按钮:点击把文本写入剪贴板,短暂显示对勾反馈。用于审计里快速复制命令。
+function CopyBtn({ text, className = "" }: { text: string; className?: string }): JSX.Element {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      title="复制命令"
+      aria-label="复制命令"
+      onClick={() => {
+        navigator.clipboard
+          ?.writeText(text)
+          .then(() => {
+            setCopied(true);
+            setTimeout(() => setCopied(false), 1200);
+          })
+          .catch(() => {
+            /* 剪贴板不可用时静默忽略 */
+          });
+      }}
+      className={`flex-none rounded p-0.5 text-fg-subtle transition-colors hover:text-fg ${className}`}
+    >
+      {copied ? <Check size={12} className="text-risk-low" /> : <Copy size={12} />}
+    </button>
+  );
+}
 
 // 任务状态到中文标签的映射（与控制台保持一致）。
 const STATUS_LABEL: Record<string, string> = {
@@ -234,9 +260,10 @@ export default function AuditView({
                             {r.executions.map((ex, i) => (
                               <div key={i} className="rounded-md bg-bg">
                                 <div className="flex items-center gap-2 border-b border-border px-3 py-1.5 font-mono text-[11.5px] text-fg-subtle">
-                                  <span>$ {ex.command}</span>
+                                  <span className="min-w-0 truncate" title={ex.command}>$ {ex.command}</span>
+                                  <CopyBtn text={ex.command} className="ml-auto" />
                                   <span
-                                    className={`ml-auto ${ex.exitCode === 0 ? "text-risk-low" : "text-risk-blocked"}`}
+                                    className={ex.exitCode === 0 ? "text-risk-low" : "text-risk-blocked"}
                                   >
                                     {executionStatusLabel(ex)}
                                   </span>
