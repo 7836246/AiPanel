@@ -1522,7 +1522,7 @@ export default function CodexConsole() {
           </Suspense>
         ) : view === "settings" ? (
           <Suspense fallback={<PanelLoading label="加载设置" />}>
-            <SettingsPanel />
+            <SettingsPanel onBack={() => setView("console")} />
           </Suspense>
         ) : view === "deploy" ? (
           selected ? (

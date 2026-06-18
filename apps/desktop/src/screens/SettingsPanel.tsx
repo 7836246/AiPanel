@@ -1,6 +1,7 @@
 import { useEffect, useState, type JSX } from "react";
 import { Badge, Button, Input, Spinner, ToastViewport, useToasts } from "@aipanel/ui";
 import {
+  ArrowLeft,
   Check,
   Cpu,
   DownloadCloud,
@@ -316,8 +317,13 @@ function writeReadonlyDefault(value: boolean) {
   }
 }
 
-// 设置面板：管理模型供应商（增删改、连接测试）、模型选择策略、凭据后端提示与通用偏好。
-export default function SettingsPanel() {
+// 设置分类(Codex 式:左侧独立分类导航,右侧只显示选中分类)。
+type SettingsNav = "providers" | "appearance" | "general" | "update";
+
+// 设置面板:左侧分类导航 + 右侧对应面板(返回应用 / 搜索 / 分组),不再全堆一页。
+export default function SettingsPanel({ onBack }: { onBack?: () => void }) {
+  const [nav, setNav] = useState<SettingsNav>("providers");
+  const [navQuery, setNavQuery] = useState("");
   const [providers, setProviders] = useState<ProviderConfig[]>([]);
   const [policy, setPolicy] = useState<ModelSelectionPolicy>({ auto: true });
   const [backend, setBackend] = useState<string>("");
@@ -536,12 +542,56 @@ export default function SettingsPanel() {
   const labelCls = "text-[12px] font-medium text-fg-muted";
   const cardCls = "rounded-md border border-border bg-surface-1 p-4";
 
+  const NAV_ITEMS: { id: SettingsNav; label: string; icon: JSX.Element }[] = [
+    { id: "providers", label: "模型供应商", icon: <Server size={15} strokeWidth={1.75} /> },
+    { id: "appearance", label: "外观", icon: <Palette size={15} strokeWidth={1.75} /> },
+    { id: "general", label: "通用", icon: <SlidersHorizontal size={15} strokeWidth={1.75} /> },
+    { id: "update", label: "在线更新", icon: <DownloadCloud size={15} strokeWidth={1.75} /> },
+  ];
+  const navShown = NAV_ITEMS.filter((i) => !navQuery.trim() || i.label.includes(navQuery.trim()));
   return (
-    <section className="cx-scroll min-h-0 flex-1 overflow-y-auto">
+    <section className="flex min-h-0 flex-1">
+      {/* 左侧:返回应用 + 搜索 + 分类导航(Codex 式独立设置页) */}
+      <nav className="flex w-56 flex-none flex-col gap-1 overflow-y-auto border-r border-border bg-surface-2 px-2.5 py-3">
+        <button
+          type="button"
+          onClick={() => onBack?.()}
+          className="mb-1 flex items-center gap-1.5 rounded-md px-2 py-1.5 text-[13px] text-fg-muted transition-colors hover:bg-hover hover:text-fg"
+        >
+          <ArrowLeft size={15} /> 返回应用
+        </button>
+        <input
+          value={navQuery}
+          onChange={(e) => setNavQuery(e.target.value)}
+          placeholder="搜索设置…"
+          className="mb-2 w-full rounded-md border border-border bg-bg px-2.5 py-1.5 text-[12.5px] outline-none focus:border-brand"
+        />
+        <div className="px-2 pb-1 text-[11px] uppercase tracking-wide text-fg-subtle">个人</div>
+        {navShown.map((it) => (
+          <button
+            key={it.id}
+            type="button"
+            onClick={() => setNav(it.id)}
+            aria-current={nav === it.id}
+            className={`flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] transition-colors ${
+              nav === it.id ? "bg-selected font-medium text-fg" : "text-fg-muted hover:bg-hover hover:text-fg"
+            }`}
+          >
+            <span className={nav === it.id ? "text-brand" : "text-fg-subtle"}>{it.icon}</span>
+            {it.label}
+          </button>
+        ))}
+        {navShown.length === 0 && <div className="px-2 py-2 text-[12px] text-fg-subtle">无匹配设置</div>}
+      </nav>
+
+      {/* 右侧:仅渲染选中分类的面板 */}
+      <div className="cx-scroll min-h-0 flex-1 overflow-y-auto">
       <div className="mx-auto max-w-[680px] px-6 pb-8 pt-5">
+        {nav === "providers" && (
+        <>
         <h2 className="mb-3 flex items-center gap-1.5 text-sm font-semibold">
           <Server size={15} strokeWidth={1.75} className="text-fg-muted" />
-          设置 · 模型供应商
+          模型供应商
         </h2>
 
         {/* 凭据后端提示：mock 给出警告样式，keychain 给出安全提示 */}
@@ -812,11 +862,16 @@ export default function SettingsPanel() {
           )}
         </div>
 
+        </>
+        )}
+
         {/* 外观 */}
-        <AppearanceSection cardCls={cardCls} />
+        {nav === "appearance" && <AppearanceSection cardCls={cardCls} />}
 
         {/* 通用偏好 */}
-        <h2 className="mb-3 mt-8 flex items-center gap-1.5 text-sm font-semibold">
+        {nav === "general" && (
+        <>
+        <h2 className="mb-3 flex items-center gap-1.5 text-sm font-semibold">
           <SlidersHorizontal size={15} strokeWidth={1.75} className="text-fg-muted" />
           通用
         </h2>
@@ -833,9 +888,13 @@ export default function SettingsPanel() {
             开启后主界面默认进入只读模式，仅允许检查类命令；执行写操作前需手动关闭。建议保持开启。
           </p>
         </div>
+        </>
+        )}
 
         {/* 在线更新 */}
-        <h2 className="mb-3 mt-8 flex items-center gap-1.5 text-sm font-semibold">
+        {nav === "update" && (
+        <>
+        <h2 className="mb-3 flex items-center gap-1.5 text-sm font-semibold">
           <DownloadCloud size={15} strokeWidth={1.75} className="text-fg-muted" />
           在线更新
         </h2>
@@ -912,6 +971,9 @@ export default function SettingsPanel() {
             通过 GitHub Releases 分发,更新包经签名校验后才会安装。关闭后仅在此处手动检查。
           </p>
         </div>
+        </>
+        )}
+      </div>
       </div>
 
       {/* 瞬时反馈浮层 */}
