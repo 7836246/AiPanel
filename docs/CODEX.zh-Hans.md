@@ -30,10 +30,14 @@ dev 首次构建前、发布 CI 打包前各跑一次。
 
 `tauri.conf.json` 的 `bundle.externalBin: ["binaries/codex-app-server"]` 会把 `binaries/codex-app-server-<triple>` 打进安装包。**构建前置**:先跑 `scripts/fetch-codex.sh` 取得二进制(否则 `pnpm tauri:dev` / `tauri build` 会报 externalBin 缺文件)。`pnpm build` / `cargo test` 不受影响。
 
-## 当前状态与下一步
+## 当前状态
 
-- ✅ **规划路径已可用**:`CodexAppServerProvider.plan/chat/summarize` 经真实 turn 工作(无需服务器工具),Codex 为 `create_plan` 首选、OpenAI 兼容回退。配好 Responses 端点 + key 即可端到端。
-- ⬜ **工具驱动的自动诊断(下一阶段)**:让 codex 调用 AiPanel 的 server-ops 工具,需通过 **MCP** 暴露——`codex app-server` 导出的协议里没有可用的「客户端动态工具」注册位,而 MCP 是 codex 官方支持的工具面(`mcp_servers` 配置 + `mcpServer/tool/call`)。计划:`aipanel mcp-server` 子命令复用 `tools::dispatch`(跨进程共享 SQLite/Keychain),经 `-c mcp_servers` 注入。在此之前,自动诊断仍走 OpenAI function-calling 回路(它已有只读工具)。
+- ✅ **规划路径**:`CodexAppServerProvider.plan/chat/summarize` 经真实 turn 工作(无需服务器工具),Codex 为 `create_plan` 首选、OpenAI 兼容回退。
+- ✅ **工具驱动的自动诊断**:`aipanel mcp-server`(`src/mcp/mod.rs`)以 stdio MCP 暴露**只读** server-ops 工具,复用 `tools::dispatch`(跨进程共享 SQLite/Keychain,经 `AIPANEL_DATA_DIR`);`launch()` 把它注入 codex 的 `mcp_servers`(`default_tools_approval_mode=auto` 自动批准只读工具),`run_agent_turn` 优先 Codex、失败回退 OpenAI function-calling 回路。写/执行类工具绝不暴露、即便被调也拒绝。
+- 已验证(无需真实 turn):codex 0.141 握手 / `model_providers` 配置接受 / `CODEX_HOME` 隔离 / `aipanel mcp-server` 真实子进程(initialize、tools/list 仅只读、tools/call 分发、写工具拒绝)。
+- ⏳ **待你的 key 验证**:配一个 Codex 供应商(Responses 兼容 base + key + model)后真跑一轮 `turn/start`,即可端到端确认 codex 经 MCP 调工具诊断。
+
+> 工具桥仅在 codex 用 **Responses** 端点时生效(0.141 限制);chat-only 第三方端点继续用 AiPanel 既有 OpenAI 回路。
 
 ## 代码位置
 
