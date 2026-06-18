@@ -35,6 +35,16 @@ echo '##CPU2'; grep '^cpu ' /proc/stat";
 pub async fn collect(server: &ServerProfile, secret: Option<&str>) -> AppResult<ServerMetrics> {
     // 命令里含 `sleep 1`，整体耗时略高于 1s；用 DEFAULT_TIMEOUT（30s）足够宽裕。
     let exec = crate::ssh::run_command(server, secret, COLLECT_CMD, crate::ssh::DEFAULT_TIMEOUT).await?;
+    // 命令未产生预期输出(空/被中断/远端 shell 异常/代理拦截)→ 明确报错,
+    // 避免把空输出静默解析成「全 0」误导用户。期望至少含首个分段标记 ##LOAD。
+    if !exec.stdout.contains("##LOAD") {
+        let reason = if exec.stderr.trim().is_empty() {
+            format!("采集命令无输出(退出码 {})", exec.exit_code)
+        } else {
+            exec.stderr.trim().chars().take(200).collect::<String>()
+        };
+        return Err(crate::core::error::AppError::Ssh(format!("监控采集失败:{reason}")));
+    }
     Ok(parse_metrics(&exec.stdout))
 }
 

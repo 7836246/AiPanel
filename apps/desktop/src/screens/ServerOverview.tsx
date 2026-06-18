@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type JSX } from "react";
-import { CheckCircle2, PlugZap, Server, Stethoscope, XCircle } from "lucide-react";
+import { Activity, CheckCircle2, PlugZap, Server, Stethoscope, XCircle } from "lucide-react";
 import { Button, Spinner } from "@aipanel/ui";
 import { checkSshConnection, type ServerProfile, type ServerStatus } from "../lib/api";
 
@@ -56,12 +56,15 @@ export function ServerOverview({
   running,
   onDoctor,
   onStatus,
+  onMonitor,
 }: {
   server: ServerProfile | null;
   running: boolean;
   onDoctor: () => void;
   // 可选回调：手动连接/重连得到结果后回传在线与否，供上层（CodexConsole）更新 servers 状态。
   onStatus?: (online: boolean) => void;
+  // 可选回调：打开实时监控浮层(由上层渲染,避免占用对话布局)。
+  onMonitor?: () => void;
 }): JSX.Element {
   // 手动连接探测的本地阶段与内联文案；切换服务器时由 key/重渲染重置（见 hooks 写法）。
   const [conn, setConn] = useState<ConnPhase>("idle");
@@ -192,6 +195,11 @@ export function ServerOverview({
           >
             {running ? <Spinner size="sm" /> : <Stethoscope size={13} />} 只读体检
           </Button>
+          {onMonitor && (
+            <Button variant="secondary" size="sm" onClick={onMonitor} title="打开实时监控(SSH 只读,服务器零 agent)">
+              <Activity size={13} /> 实时监控
+            </Button>
+          )}
         </div>
 
         {/* 内联连接状态提示：toast 风格的细条，仅在非 idle 时渲染 */}

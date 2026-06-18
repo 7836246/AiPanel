@@ -4,6 +4,7 @@ import {
   Check as CheckIcon,
   ChevronDown,
   ChevronUp,
+  Activity,
   Boxes,
   ClipboardList,
   Copy as CopyIcon,
@@ -442,6 +443,8 @@ export default function CodexConsole() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   // 顶栏标题旁的「···」菜单开关(Codex 式:新建/重命名/删除当前运行)。
   const [titleMenuOpen, setTitleMenuOpen] = useState(false);
+  // 实时监控浮层开关(从对话布局里独立出来,点按钮才开)。
+  const [monitorOpen, setMonitorOpen] = useState(false);
   // 右键上下文菜单(侧栏服务器/运行记录):位置 + 菜单项。
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; items: CtxItem[] } | null>(null);
   const openCtx = (e: ReactMouseEvent, items: CtxItem[]) => {
@@ -1000,12 +1003,14 @@ export default function CodexConsole() {
     ...servers.map((s) => ({ id: `srv-${s.id}`, label: `切换到 ${s.name}`, hint: s.host, group: "服务器", run: () => setSelectedServerId(s.id) })),
   ];
 
-  // 全局快捷键：⌘K / Ctrl-K 打开命令面板。
+  // 全局快捷键：⌘K / Ctrl-K 打开命令面板;Esc 关闭监控浮层。
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
         setPaletteOpen((o) => !o);
+      } else if (e.key === "Escape") {
+        setMonitorOpen(false);
       }
     };
     window.addEventListener("keydown", onKey);
@@ -1402,22 +1407,19 @@ export default function CodexConsole() {
                     ) : <p className="text-[13px] text-fg-subtle">无总结</p>}
                   </div>
                 ) : (
-                  <>
-                    <ServerOverview
-                      key={selected?.id}
-                      server={selected}
-                      running={running}
-                      onDoctor={runDoctor}
-                      onStatus={(online) => {
-                        if (!selected) return;
-                        setServers((prev) =>
-                          prev.map((s) => (s.id === selected.id ? { ...s, status: online ? "online" : "offline" } : s))
-                        );
-                      }}
-                    />
-                    {/* 实时监控(SSH 只读轮询,服务器零 agent):仅在选中服务器时挂载 */}
-                    {selected && <ServerMonitor key={`mon-${selected.id}`} serverId={selected.id} />}
-                  </>
+                  <ServerOverview
+                    key={selected?.id}
+                    server={selected}
+                    running={running}
+                    onDoctor={runDoctor}
+                    onMonitor={() => setMonitorOpen(true)}
+                    onStatus={(online) => {
+                      if (!selected) return;
+                      setServers((prev) =>
+                        prev.map((s) => (s.id === selected.id ? { ...s, status: online ? "online" : "offline" } : s))
+                      );
+                    }}
+                  />
                 )}
               </div>
             </section>
@@ -1554,6 +1556,29 @@ export default function CodexConsole() {
       {/* 命令面板（⌘K）：可搜索/键盘可达的快捷操作 */}
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} commands={paletteCommands} />
       {ctxMenu && <ContextMenu x={ctxMenu.x} y={ctxMenu.y} items={ctxMenu.items} onClose={() => setCtxMenu(null)} />}
+      {/* 实时监控浮层:从对话布局独立,点「实时监控」按钮才开;点遮罩/Esc 关闭 */}
+      {monitorOpen && selected && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6" onClick={() => setMonitorOpen(false)}>
+          <div
+            className="flex max-h-[88vh] w-full max-w-[960px] flex-col overflow-hidden rounded-xl border border-border bg-bg shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex flex-none items-center justify-between border-b border-border px-5 py-3">
+              <div className="flex min-w-0 items-center gap-2">
+                <Activity size={16} className="flex-none text-fg-muted" />
+                <span className="truncate text-sm font-semibold">实时监控 · {selected.name}</span>
+                <span className="hidden truncate font-mono text-[12px] text-fg-subtle sm:inline">{selected.username}@{selected.host}</span>
+              </div>
+              <IconButton aria-label="关闭监控" size="lg" title="关闭 (Esc)" onClick={() => setMonitorOpen(false)}>
+                <XIcon size={16} />
+              </IconButton>
+            </div>
+            <div className="cx-scroll min-h-0 flex-1 overflow-y-auto px-5 py-4">
+              <ServerMonitor key={`mon-${selected.id}`} serverId={selected.id} />
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 全局通知层（错误/成功提示），固定在右下角 */}
       <ToastViewport toasts={toasts} onDismiss={dismiss} />
