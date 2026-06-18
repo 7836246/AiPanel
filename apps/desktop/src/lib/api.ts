@@ -524,6 +524,44 @@ export async function serverDoctorPlan(id: string): Promise<Plan> {
   return invoke<Plan>("server_doctor_plan", { id });
 }
 
+// ---- Docker 部署工作流(只生成结构化 Plan,执行仍走 审查→确认→执行)--------------
+
+/** 内置应用部署模板。 */
+export type AppTemplate = "uptimeKuma" | "n8n" | "wordPress" | "postgres" | "redis";
+/** 反向代理选择。 */
+export type ReverseProxy = "none" | "caddy" | "nginx";
+
+const mockDockerPlan = (serverId: string, goal: string): Plan => ({
+  id: "mock-docker-plan",
+  serverId,
+  goal,
+  steps: [],
+  createdAt: new Date().toISOString(),
+});
+
+/** 只读探测目标服务器的 Docker 环境(是否已装/在 docker 组等)。 */
+export async function dockerDetectPlan(serverId: string): Promise<Plan> {
+  if (!isTauri()) return mockDockerPlan(serverId, "检测 Docker 环境");
+  return invoke<Plan>("docker_detect_plan", { serverId });
+}
+
+/** 生成安装 Docker 的计划(写操作,需确认)。 */
+export async function dockerInstallPlan(serverId: string): Promise<Plan> {
+  if (!isTauri()) return mockDockerPlan(serverId, "安装 Docker");
+  return invoke<Plan>("docker_install_plan", { serverId });
+}
+
+/** 生成部署某应用模板的计划(compose + 可选反代/HTTPS + 健康检查)。 */
+export async function dockerDeployPlan(
+  serverId: string,
+  app: AppTemplate,
+  domain?: string,
+  reverseProxy: ReverseProxy = "none",
+): Promise<Plan> {
+  if (!isTauri()) return mockDockerPlan(serverId, `部署 ${app}`);
+  return invoke<Plan>("docker_deploy_plan", { serverId, app, domain: domain ?? null, reverseProxy });
+}
+
 /** 只读体检运行期间流式推送的事件。 */
 export type DoctorStreamEvent =
   | { type: "step"; index: number; total: number; summary: string; status: "running" | "done" | "failed" }

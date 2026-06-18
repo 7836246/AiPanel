@@ -10,6 +10,7 @@ pub mod agent;
 pub mod audit;
 pub mod commands;
 pub mod credentials;
+pub mod docker;
 pub mod doctor;
 pub mod files;
 pub mod plan;
@@ -79,6 +80,9 @@ pub fn run() {
             commands::files::fs_write,
             commands::files::fs_upload,
             commands::files::fs_download,
+            commands::docker::docker_detect_plan,
+            commands::docker::docker_install_plan,
+            commands::docker::docker_deploy_plan,
             commands::tasks::list_tasks,
             commands::tasks::get_task,
             commands::tasks::save_task,

@@ -475,37 +475,20 @@ pub fn classify_command(command: &str) -> Classification {
     // 匹配子命令，避免 `docker ps --format ...` 因 "format" 含 "rm" 子串被误判。
     if invokes(&c, "docker") || invokes(&c, "docker-compose") {
         let toks: Vec<&str> = c.split_whitespace().collect();
-        // docker / docker-compose 之后的第一个非 flag token 即子命令；compose 再向后取一层。
-        let mut sub = "";
-        let mut after = false;
-        for t in &toks {
-            if !after {
-                if *t == "docker" || *t == "docker-compose" {
-                    after = true;
-                }
-                continue;
-            }
-            if t.starts_with('-') {
-                continue;
-            }
-            sub = t;
-            break;
-        }
-        if sub == "compose" {
-            sub = toks
-                .iter()
-                .skip_while(|t| **t != "compose")
-                .skip(1)
-                .find(|t| !t.starts_with('-'))
-                .copied()
-                .unwrap_or("");
-        }
         const CHANGING: &[&str] = &[
             "run", "start", "stop", "restart", "rm", "kill", "pull", "push", "exec", "up", "down",
             "prune", "build", "create", "load", "import", "rename", "update", "commit", "tag",
         ];
-        if CHANGING.contains(&sub) {
-            return mk(RiskLevel::Medium, "container", "changes container/image state (docker)");
+        // 之前「取第一个非 flag token 作子命令」的做法会被**带值的全局选项**坑到:
+        // `docker compose -f <file> up -d` 里 `-f` 的取值(文件路径)会被当成子命令,
+        // 使写操作 `up` 被漏判为 Low,从而绕过确认。这里改为扫描 docker/docker-compose
+        // 之后的所有 token,只要**精确**出现任一「状态变更类」子命令(token 相等,
+        // 避免 up.yml / name=up 之类子串误伤)即判 Medium。安全方向:宁可多一次确认,
+        // 也绝不把写操作漏成只读。
+        if let Some(h) = toks.iter().position(|t| *t == "docker" || *t == "docker-compose") {
+            if toks.iter().skip(h + 1).any(|t| CHANGING.contains(t)) {
+                return mk(RiskLevel::Medium, "container", "changes container/image state (docker)");
+            }
         }
     }
     // 改变服务运行状态：必须是 systemctl 在执行。
@@ -649,6 +632,9 @@ mod tests {
         assert_eq!(lvl("docker pull nginx:latest"), RiskLevel::Medium);
         assert_eq!(lvl("systemctl restart nginx"), RiskLevel::Medium);
         assert_eq!(lvl("docker compose down"), RiskLevel::Medium);
+        // 回归:带值的全局选项(-f 文件)不得把写子命令 up 漏判为 Low。
+        assert_eq!(lvl("docker compose -f /opt/aipanel/app/docker-compose.yml up -d"), RiskLevel::Medium);
+        assert_eq!(lvl("docker -H tcp://127.0.0.1:2375 run --rm alpine echo hi"), RiskLevel::Medium);
         assert_eq!(lvl("echo hi > /tmp/app.conf"), RiskLevel::Medium);
         assert_eq!(lvl("sudo whoami"), RiskLevel::Medium);
     }
