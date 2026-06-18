@@ -14,6 +14,8 @@ export {
 } from "./components/primitives/Card";
 export { IconButton, type IconButtonProps } from "./components/primitives/IconButton";
 export { Input, type InputProps } from "./components/primitives/Input";
+export { Switch, type SwitchProps } from "./components/primitives/Switch";
+export { Select, type SelectProps, type SelectOption } from "./components/primitives/Select";
 export { Textarea, type TextareaProps } from "./components/primitives/Textarea";
 export { Spinner, type SpinnerProps } from "./components/primitives/Spinner";
 export { CodeBlock, type CodeBlockProps } from "./components/primitives/CodeBlock";

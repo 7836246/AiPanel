@@ -1,5 +1,5 @@
 import { useEffect, useState, type JSX } from "react";
-import { Badge, Button, Input, Spinner, ToastViewport, useToasts } from "@aipanel/ui";
+import { Badge, Button, Input, Select, Spinner, Switch, ToastViewport, useToasts, type SelectOption } from "@aipanel/ui";
 import {
   ArrowLeft,
   Check,
@@ -163,14 +163,14 @@ function ThemeEditor({ title, value, defaults, onChange, onReset, cardCls }: {
       <ColorField label="前景" value={value.fg} onChange={(v) => onChange({ fg: v })} />
       <FontField label="UI 字体" value={value.uiFont} placeholder="-apple-system, …" onChange={(v) => onChange({ uiFont: v })} />
       <FontField label="代码字体" value={value.codeFont} placeholder="ui-monospace, …" onChange={(v) => onChange({ codeFont: v })} />
-      <label className="flex items-center justify-between py-2 text-[13px] text-fg">
+      <div className="flex items-center justify-between py-2 text-[13px] text-fg">
         半透明侧边栏
-        <input
-          type="checkbox"
+        <Switch
           checked={value.translucentSidebar}
-          onChange={(e) => onChange({ translucentSidebar: e.target.checked })}
+          onChange={(v) => onChange({ translucentSidebar: v })}
+          aria-label="半透明侧边栏"
         />
-      </label>
+      </div>
       <div className="flex items-center gap-3 py-2">
         <span className="text-[13px] text-fg">对比度</span>
         <input
@@ -276,10 +276,10 @@ function AppearanceSection({ cardCls }: { cardCls: string }): JSX.Element {
             ))}
           </div>
         </div>
-        <label className="mt-3 flex items-center gap-2 text-[13px] text-fg">
-          <input type="checkbox" checked={prefs.pointer} onChange={(e) => update({ pointer: e.target.checked })} />
+        <div className="mt-3 flex items-center justify-between gap-2 text-[13px] text-fg">
           悬停可交互元素时使用指针光标
-        </label>
+          <Switch checked={prefs.pointer} onChange={(v) => update({ pointer: v })} aria-label="指针光标" />
+        </div>
       </div>
     </>
   );
@@ -690,17 +690,17 @@ export default function SettingsPanel({ onBack }: { onBack?: () => void }) {
                 disabled={clearApiKey}
               />
               {form.id ? (
-                <label className="mt-1 flex items-center gap-2 text-[12px] text-fg-muted">
-                  <input
-                    type="checkbox"
+                <div className="mt-1.5 flex items-center gap-2 text-[12px] text-fg-muted">
+                  <Switch
                     checked={clearApiKey}
-                    onChange={(e) => {
-                      setClearApiKey(e.target.checked);
-                      if (e.target.checked) setApiKey("");
+                    onChange={(v) => {
+                      setClearApiKey(v);
+                      if (v) setApiKey("");
                     }}
+                    aria-label="清除已保存 API Key"
                   />
                   清除已保存 API Key
-                </label>
+                </div>
               ) : null}
             </div>
             {/* 探测 + 下拉选择模型（贴近 Codex 体验），并保留手填兜底。 */}
@@ -718,22 +718,18 @@ export default function SettingsPanel({ onBack }: { onBack?: () => void }) {
                   {detecting ? <Spinner size="sm" /> : <RefreshCw size={14} />}
                   {detecting ? "探测中…" : "探测模型"}
                 </Button>
-                <select
+                {/* 占位文案三态:探测中 / 探测前或失败 / 已有结果 */}
+                <Select
+                  className="min-w-0 flex-1"
                   value={form.model ?? ""}
-                  onChange={(e) => setForm({ ...form, model: e.target.value || undefined })}
+                  onChange={(v) => setForm({ ...form, model: v || undefined })}
                   disabled={detecting || models.length === 0}
-                  className="h-9 min-w-0 flex-1 rounded-md border border-border bg-surface-2 px-2 text-sm text-fg outline-none focus-visible:border-brand disabled:opacity-60"
-                >
-                  {/* 占位文案三态：探测中 / 探测前或失败 / 已有结果，与按钮状态保持一致 */}
-                  <option value="">
-                    {detecting ? "（探测中…）" : models.length === 0 ? "（请先探测模型）" : "（选择模型）"}
-                  </option>
-                  {models.map((m) => (
-                    <option key={m} value={m}>
-                      {m}
-                    </option>
-                  ))}
-                </select>
+                  placeholder={detecting ? "（探测中…）" : models.length === 0 ? "（请先探测模型）" : "（选择模型）"}
+                  searchable={models.length > 8}
+                  searchPlaceholder="搜索模型…"
+                  aria-label="模型"
+                  options={models.map((m) => ({ value: m, label: m }))}
+                />
               </div>
               {/* 探测失败内联红条提示 */}
               {detectError ? (
@@ -751,10 +747,10 @@ export default function SettingsPanel({ onBack }: { onBack?: () => void }) {
                 />
               )}
             </div>
-            <label className="mb-3 flex items-center gap-2 text-[13px] text-fg">
-              <input type="checkbox" checked={form.enabled} onChange={(e) => setForm({ ...form, enabled: e.target.checked })} />
+            <div className="mb-3 flex items-center gap-2 text-[13px] text-fg">
+              <Switch checked={form.enabled} onChange={(v) => setForm({ ...form, enabled: v })} aria-label="启用供应商" />
               启用
-            </label>
+            </div>
             {/* 测试连接结果：测试中显示 Spinner，成功/失败用不同语气色 + detail 文案 */}
             {testing ? (
               <div className="mb-3 flex items-center gap-2 text-[12.5px] text-fg-muted">
@@ -820,41 +816,33 @@ export default function SettingsPanel({ onBack }: { onBack?: () => void }) {
           模型选择
         </h2>
         <div className={cardCls}>
-          <label className="flex items-center gap-2 text-[13px] text-fg">
-            <input
-              type="checkbox"
-              checked={policy.auto}
-              onChange={(e) => updatePolicy({ ...policy, auto: e.target.checked })}
-            />
+          <div className="flex items-center justify-between gap-2 text-[13px] text-fg">
             自动按任务选择模型
-          </label>
+            <Switch checked={policy.auto} onChange={(v) => updatePolicy({ ...policy, auto: v })} aria-label="自动按任务选择模型" />
+          </div>
           <p className="mt-1 text-[12px] text-fg-subtle">
             开启后由 AiPanel 按任务在已启用供应商间自动选择；关闭后固定使用下方默认供应商。
           </p>
           {!policy.auto && (
             <div className="mt-3 flex flex-col gap-1">
               <label className={labelCls}>默认供应商</label>
-              <select
+              <Select
                 value={policy.defaultProviderId ?? ""}
-                onChange={(e) => updatePolicy({ ...policy, defaultProviderId: e.target.value || undefined })}
-                className="h-9 rounded-md border border-border bg-surface-2 px-2 text-sm text-fg outline-none focus-visible:border-brand"
-              >
-                <option value="">（未选择）</option>
-                {/* 默认指向一个已禁用/不存在/不可规划的供应商时，额外渲染一个禁用 option
-                    保留该陈旧选择的可见性，避免下拉静默空白。 */}
-                {policy.defaultProviderId &&
-                !selectableProviders.some((p) => p.id === policy.defaultProviderId) ? (
-                  <option value={policy.defaultProviderId} disabled>
-                    {(providers.find((p) => p.id === policy.defaultProviderId)?.name ??
-                      policy.defaultProviderId) + "（已停用/不存在/不可用于规划）"}
-                  </option>
-                ) : null}
-                {selectableProviders.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
+                onChange={(v) => updatePolicy({ ...policy, defaultProviderId: v || undefined })}
+                placeholder="（未选择）"
+                searchable={selectableProviders.length > 8}
+                aria-label="默认供应商"
+                options={[
+                  // 陈旧默认(已停用/不存在/不可规划)仍列出,避免下拉静默空白。
+                  ...(policy.defaultProviderId && !selectableProviders.some((p) => p.id === policy.defaultProviderId)
+                    ? [{
+                        value: policy.defaultProviderId,
+                        label: (providers.find((p) => p.id === policy.defaultProviderId)?.name ?? policy.defaultProviderId) + "（已停用/不存在/不可用于规划）",
+                      } as SelectOption]
+                    : []),
+                  ...selectableProviders.map((p) => ({ value: p.id, label: p.name }) as SelectOption),
+                ]}
+              />
               {selectableProviders.length === 0 ? (
                 <span className="text-[12px] text-fg-subtle">暂无可用于规划的已启用供应商，请先添加并启用 OpenAI 兼容供应商。</span>
               ) : null}
@@ -876,14 +864,10 @@ export default function SettingsPanel({ onBack }: { onBack?: () => void }) {
           通用
         </h2>
         <div className={cardCls}>
-          <label className="flex items-center gap-2 text-[13px] text-fg">
-            <input
-              type="checkbox"
-              checked={readonlyDefault}
-              onChange={(e) => toggleReadonlyDefault(e.target.checked)}
-            />
+          <div className="flex items-center justify-between gap-2 text-[13px] text-fg">
             默认只读优先
-          </label>
+            <Switch checked={readonlyDefault} onChange={toggleReadonlyDefault} aria-label="默认只读优先" />
+          </div>
           <p className="mt-1 text-[12px] text-fg-subtle">
             开启后主界面默认进入只读模式，仅允许检查类命令；执行写操作前需手动关闭。建议保持开启。
           </p>
@@ -963,10 +947,10 @@ export default function SettingsPanel({ onBack }: { onBack?: () => void }) {
           )}
 
           {/* 启动检查开关 */}
-          <label className="mt-3 flex items-center gap-2 text-[13px] text-fg">
-            <input type="checkbox" checked={autoCheck} onChange={(e) => toggleAutoCheck(e.target.checked)} />
+          <div className="mt-3 flex items-center justify-between gap-2 text-[13px] text-fg">
             启动时自动检查更新
-          </label>
+            <Switch checked={autoCheck} onChange={toggleAutoCheck} aria-label="启动时自动检查更新" />
+          </div>
           <p className="mt-1 text-[12px] text-fg-subtle">
             通过 GitHub Releases 分发,更新包经签名校验后才会安装。关闭后仅在此处手动检查。
           </p>
