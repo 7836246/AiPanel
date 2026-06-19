@@ -48,19 +48,52 @@ export function Select({
 }: SelectProps) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const [activeIdx, setActiveIdx] = useState(0); // 键盘高亮项索引(相对 shown)
   const ref = useRef<HTMLDivElement>(null);
   const current = options.find((o) => o.value === value);
 
+  const shown = searchable && query.trim() ? options.filter((o) => o.label.toLowerCase().includes(query.trim().toLowerCase())) : options;
+
+  // 选中并收起(点击/回车共用)。
+  const choose = (v: string) => {
+    onChange(v);
+    setOpen(false);
+    setQuery("");
+  };
+
+  // 打开或过滤结果变化时,把高亮重置到当前选中项(否则首项)。仅依赖 open/query,
+  // 避免把 shown 放进依赖导致每次渲染重置、压掉方向键移动。
+  useEffect(() => {
+    if (!open) return;
+    const i = shown.findIndex((o) => o.value === value);
+    setActiveIdx(i >= 0 ? i : 0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, query]);
+
+  // 键盘:Esc 关闭;↑↓ 移动高亮;Enter 选中高亮项(不打断既有点击流)。
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
+      if (e.key === "Escape") {
+        setOpen(false);
+      } else if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setActiveIdx((i) => Math.min(i + 1, shown.length - 1));
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setActiveIdx((i) => Math.max(i - 1, 0));
+      } else if (e.key === "Enter") {
+        const o = shown[activeIdx];
+        if (o) {
+          e.preventDefault();
+          choose(o.value);
+        }
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open]);
-
-  const shown = searchable && query.trim() ? options.filter((o) => o.label.toLowerCase().includes(query.trim().toLowerCase())) : options;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, shown, activeIdx]);
 
   return (
     <div ref={ref} className={cn("relative", className)}>
@@ -102,21 +135,20 @@ export function Select({
               {shown.length === 0 ? (
                 <div className="px-3 py-2 text-[12.5px] text-fg-subtle">无匹配项</div>
               ) : (
-                shown.map((o) => {
-                  const active = o.value === value;
+                shown.map((o, i) => {
+                  const active = o.value === value; // 当前已选中
+                  const highlighted = i === activeIdx; // 键盘高亮
                   return (
                     <button
                       key={o.value}
                       type="button"
                       role="option"
                       aria-selected={active}
-                      onClick={() => {
-                        onChange(o.value);
-                        setOpen(false);
-                        setQuery("");
-                      }}
+                      onMouseEnter={() => setActiveIdx(i)}
+                      onClick={() => choose(o.value)}
                       className={cn(
                         "flex w-full items-center gap-2 px-3 py-1.5 text-left text-[13px] transition-colors hover:bg-hover",
+                        highlighted && "bg-hover",
                         active ? "text-fg" : "text-fg-muted",
                       )}
                     >
