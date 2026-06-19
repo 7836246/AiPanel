@@ -3,7 +3,7 @@
 <p align="center"><b>本地运行、通过 SSH 管理服务器的 AI 运维客户端</b></p>
 
 <p align="center">
-  <a href="#"><img src="https://img.shields.io/badge/项目状态-规划中-0F766E" alt="项目状态"></a>
+  <a href="#"><img src="https://img.shields.io/badge/项目状态-桌面%20MVP-0F766E" alt="项目状态"></a>
   <a href="#"><img src="https://img.shields.io/badge/平台-macOS%20%7C%20Windows%20%7C%20Linux-0284C7" alt="平台"></a>
   <a href="#"><img src="https://img.shields.io/badge/连接方式-SSH%20优先-16A34A" alt="SSH 优先"></a>
   <a href="../LICENSE"><img src="https://img.shields.io/badge/许可证-AGPL--3.0-64748B" alt="许可证：AGPL-3.0"></a>
