@@ -15,202 +15,106 @@
 </p>
 
 ![AiPanel 预览图](../assets/preview.png)
+<p align="center"><sub>本地优先的桌面客户端——添加服务器、跑只读体检、把需求转成可审查计划，再经 SSH 执行。</sub></p>
 
 ------------------------------
 
 ## 什么是 AiPanel？
 
-AiPanel 是一个本地运行的 AI 服务器运维客户端。
+AiPanel 是一个**本地优先的 Linux 服务器 AI 运维客户端**。它运行在你自己的电脑上，通过 SSH 管理远程服务器——刻意做到**服务器上没有常驻面板进程**，也不新增公网管理入口。自然语言需求会被转成可审查的计划，确认后经 SSH 执行，全程在本地审计。
 
-传统服务器面板通常需要安装并常驻在 VPS 上，这会占用服务器资源，也会带来新的 Web 管理入口和攻击面。AiPanel 的思路不同：客户端运行在本地电脑，通过标准 SSH 连接服务器，用 AI 将自然语言需求拆解成可审计的操作计划，在用户确认后远程执行，并整理执行结果。
+核心原则:**Codex 负责 Agent / 对话运行时,AiPanel 负责服务器运维的安全边界。** AI 只产出计划——它永远不持有 SSH 凭据,也永远不跑裸 shell。
 
-- **服务器零常驻**：不要求在 VPS 上安装并长期运行面板程序，减少资源占用；
-- **SSH 优先**：使用标准 SSH 连接服务器，不默认新增公网 Web 管理入口；
-- **AI 先规划再执行**：先生成步骤、命令和风险说明，确认后再执行；
-- **只读诊断模式**：安全检查 CPU、内存、磁盘、端口、服务、Docker、Nginx、日志和防火墙；
-- **环境安装与应用部署**：规划支持 Docker、Docker Compose、反向代理、HTTPS 和常见开源应用部署；
-- **本地审计记录**：任务计划、命令、输出和总结保存在本地，方便回看和复现。
+## 亮点
+
+- 🔌 **服务器零常驻** —— 通过标准 SSH 管理,VPS 上不装、不留任何常驻进程。
+- 🧠 **AI 出计划、你来批准** —— 自然语言 → 结构化计划(目标、步骤、命令、风险等级)→ 审查 → 执行。
+- 🛡️ **默认只读** —— 安全诊断 CPU / 内存 / 磁盘 / 端口 / 服务 / Docker / Nginx / 日志 / 防火墙;写操作需明确确认,高风险需二次确认。
+- 📊 **实时监控与概览** —— 环形仪表 + 流量曲线,每 3s 走只读 SSH 采集;多服务器概览带健康角标。
+- 🖥️ **交互式工作区** —— xterm.js SSH 终端 + SFTP 文件管理,均为用户操作、绝不暴露给 AI。
+- 🐳 **部署工作流** —— 安装 Docker、部署 Compose 应用、Caddy/Nginx 反代 + HTTPS、部署后健康检查。
+- 🔑 **凭据只在本地** —— SSH 密钥、密码、API Key 只存系统 Keychain;输出在送达 AI 或写入审计前先脱敏。
+- 📝 **本地审计** —— 意图、计划、风险判定、确认、命令、退出码、脱敏输出、总结,全部留在本机。
 
 ## 为什么做 AiPanel？
 
-1Panel、宝塔等面板已经很好地解决了服务器图形化管理问题，但它们的共同特点是：管理程序通常运行在服务器上。
+1Panel、宝塔等面板已经很好地解决了服务器图形化管理问题,但它们的共同特点是:管理程序通常运行在服务器上。对于 1C1G、2C2G 等轻量 VPS,常驻面板会带来额外成本——占资源、要维护面板自身、要暴露/保护额外入口,面板本身也成为新的安全边界。
 
-对于 1C1G、2C2G 等轻量 VPS 来说，常驻面板会带来额外成本：
+AiPanel 更适合:有多台轻量服务器、不想每台装面板;习惯用自然语言描述目标而非翻插件菜单;希望先诊断、再确认、后执行;希望保留命令级审计;希望服务器默认保持干净,只在需要时执行任务。
 
-- 占用 CPU、内存和磁盘资源；
-- 需要维护面板自身的运行环境；
-- 需要暴露或保护额外的管理入口；
-- 面板本身也会成为新的安全边界；
-- 功能依赖插件和服务端生态。
+## 工作原理
 
-AiPanel 更适合这样的场景：
+```
+AiPanel Desktop   (Tauri v2 + React + TypeScript)
+      │ JSON-RPC / stdio
+Codex App Server  (Agent 运行时:多轮对话、上下文、模型选择、流式)
+      │ 工具调用
+AiPanel Tools     (server.list · server.doctor.readonly · ssh.run_readonly ·
+                   task.plan / review / execute_confirmed · audit.write)
+      │
+AiPanel Core      (风险审查 · SSH 执行 · 审计 · SQLite · Keychain)
+      │
+远程服务器
+```
 
-- 用户有多台轻量服务器，不想每台都安装面板；
-- 用户更习惯用自然语言描述目标，而不是寻找插件和菜单；
-- 用户希望先诊断、再确认、后执行；
-- 用户希望保留命令级审计记录；
-- 用户希望服务器默认保持干净，只在需要时执行任务。
+SSH 执行、风险审查、脱敏、审计都由 AiPanel 自己实现——**绝不**交给 AI。Codex 只能经 AiPanel 审核过的工具触达服务器,不暴露任何无限制 shell。
+
+## 安全边界(不可妥协)
+
+- AI 永远不持有 SSH 凭据、永远不跑裸 shell——只有 AiPanel 审核过的工具能触达服务器。
+- AI 的输出是**计划,不是事实**——必须先过风险审查才能执行。
+- **默认只读**;写操作需明确确认,破坏性操作需二次确认;`rm -rf /` 一类命令直接 **Blocked**。
+- 凭据(SSH 密钥/密码、sudo、API Key、数据库密码)只存本地 Keychain——绝不提交、记录或发给 AI。
+- IP、Token、密钥、连接串在送达 AI 或写入审计前先脱敏。
+
+权威的命令审查与风险分级见[安全模型](./SECURITY_MODEL.zh-Hans.md)。
 
 ## 快速开始
 
-AiPanel 当前处于**桌面端 MVP** 阶段——基于 Tauri v2 + React，在本地运行。
+AiPanel 当前处于**桌面端 MVP** 阶段——基于 Tauri v2 + React,在本地运行。
 
 ```sh
 pnpm install          # 安装依赖
 pnpm build:ui         # 构建 @aipanel/ui 设计系统
 pnpm tauri:dev        # 启动桌面应用（需 Rust 工具链）
-# 或 pnpm dev 仅启动前端（浏览器；后端调用回退到 mock）
+# 或 pnpm dev         # 仅启动前端（浏览器；后端调用回退到 mock）
 ```
 
-桌面端当前已覆盖：
+凭据默认走系统 Keychain(`tauri:dev` 亦然);仅做 mock 开发可设 `AIPANEL_CREDENTIAL_BACKEND=mock`。
 
-- 添加 / 编辑 / 删除服务器连接配置（凭据进系统 Keychain）；
-- SSH 连通性测试；
-- 流式只读服务器体检并输出结构化报告；
-- 自然语言转可审查计划（配置 OpenAI 兼容供应商后为真实 LLM 规划，否则本地 Mock）、风险分级、确认 / 高风险二次确认后执行；
-- 让 AI 用只读工具自动诊断并总结；
-- 本地审计记录；
-- 模型供应商配置（含 Codex app-server / OpenAI 兼容）。
-
-> 想要真实 AI 规划/诊断：在「设置」里添加一个 OpenAI 兼容供应商（Base URL + API Key + 模型），其余只读体检/SSH 能力无需模型即可使用。
+> 想要真实 AI 规划/诊断:在「设置」里添加一个 OpenAI 兼容供应商(Base URL + API Key + 模型),其余只读体检/SSH 能力无需模型即可使用。
 
 ## 质量门禁
 
-日常开发和 CI 运行不需要密钥的门禁：
-
 ```sh
-pnpm ci:check
+pnpm ci:check         # 类型检查 · 前端 vitest · Rust 测试 · Codex sidecar · Clippy(-D warnings) · 构建
 ```
 
-该命令会执行工作区类型检查、检查匹配平台的 Codex app-server sidecar、运行 Rust
-测试、执行真实 sidecar initialize 集成测试；随后运行 Rust Clippy（warnings
-视为失败）并构建前端包。若本机还没有 sidecar，先运行 `scripts/fetch-codex.sh`。
+若本机还没拉取对应平台的 Codex sidecar,先运行 `scripts/fetch-codex.sh`。发布 macOS 包前运行 `pnpm release:check`——完整门禁,会额外构建 Tauri 包并校验其使用 Developer ID Application 证书签名且有有效公证票据。
 
-发布 macOS 包前运行完整发布门禁：
+## 功能
 
-```sh
-pnpm release:check
-```
+**连接与诊断**
+- SSH 连接管理——添加服务器、连通性测试、可见的连接/重连
+- 只读服务器体检,带结构化指标 + 流式输出
+- 实时监控——环形仪表 + 流量曲线,走只读 SSH、服务器零 agent
+- 多服务器概览,支持收藏置顶与前台健康轮询
 
-该命令会检查打包的 Codex app-server sidecar，并通过真实集成测试启动它验证
-initialize 协议；随后执行工作区类型检查、运行 Rust 测试、运行 Rust Clippy（warnings
-视为失败）、构建前端、构建 Tauri 安装包，确认 app 主程序和 sidecar 都匹配目标架构，
-并验证 macOS `.app` 和 `.dmg` 均使用 Developer ID Application 证书签名且已 stapled
-有效公证票据。开发证书签名或未公证的包会被判定为不合格。
+**AI 运维**
+- 自然语言任务规划——经 OpenAI 兼容供应商真实 LLM 规划(结构化输出),离线 Mock 兜底
+- 只读自动诊断——Agent 仅用只读工具自行排查
+- 风险审查(Low / Medium / High / Blocked),写操作前确认 / 二次确认 + 本地审计
+- Codex app-server 运行时——`thread/start` → `turn/start` → 事件流 → 工具分发回灌;首选,OpenAI 回退
+- 模型供应商管理——填 Base URL + API Key,经 `/v1/models` 自动探测模型
 
-## 功能规划
+**操作**
+- 交互式 SSH 终端 + SFTP 文件管理——Codex 式三栏工作区;用户操作,不暴露给 AI
+- Docker 部署工作流——检测/安装、Compose 部署、Caddy/Nginx 反代 + HTTPS、健康检查;Uptime Kuma / n8n / WordPress / PostgreSQL / Redis 模板,每步均走风险审查
+- 应用内在线更新——GitHub Releases 签名分发(Tauri updater + minisign),`vX.Y.Z` tag 管理,检查/下载/安装 + 重启
 
-### 服务器管理
-
-- SSH 密钥、密码、端口和服务器标签管理；
-- 自动识别 Linux 发行版、架构、内核和包管理器；
-- 多服务器分组；
-- 连接状态和基础信息缓存。
-
-### AI 服务器体检
-
-- CPU、内存、磁盘、负载检查；
-- 进程、端口和监听服务检查；
-- Docker、Nginx、数据库、Redis 状态检查；
-- 防火墙、安全组和公网连通性提示；
-- 常见异常自动归因。
-
-### 环境安装
-
-- Docker / Docker Compose；
-- Nginx / Caddy；
-- Node.js / Python / Go；
-- MySQL / PostgreSQL / Redis；
-- 常见系统工具和基础安全配置。
-
-### 应用部署
-
-- Docker Compose 应用部署；
-- 环境变量管理；
-- 反向代理配置；
-- HTTPS 证书申请和续期；
-- 部署后健康检查。
-
-### 日志诊断
-
-- Docker 容器日志分析；
-- Systemd 服务日志分析；
-- Nginx / Caddy 访问日志和错误日志分析；
-- 根据错误信息自动补充检查命令。
-
-## 安全机制
-
-AiPanel 不应该只是“让 AI 执行命令”。核心安全机制会围绕计划、确认、执行和审计展开：
-
-- 执行前展示操作计划；
-- 标记命令风险等级；
-- 高风险操作强制二次确认；
-- 默认支持只读诊断模式；
-- 识别 `rm -rf`、格式化磁盘、清空数据库、覆盖配置等危险操作；
-- 支持命令白名单和任务模板；
-- 敏感信息仅保存在本地；
-- 所有命令和输出保留本地审计记录。
-
-## 技术方向
-
-当前技术选型：
-
-- 桌面端：Tauri v2 + React + TypeScript；
-- Agent Runtime：Codex app-server；
-- Agent 通信：newline-delimited JSON / stdio；
-- 模型配置：AiPanel Provider Manager；
-- 工具系统：AiPanel MCP / Core Tools；
-- SSH 执行：AiPanel 自己实现；
-- 风险审查：AiPanel 自己实现；
-- 审计记录：AiPanel 自己实现；
-- 本地存储：SQLite；
-- 密钥存储：系统 Keychain。
-
-核心原则：
-
-```text
-Codex 负责对话、理解、规划、模型和上下文
-AiPanel 负责服务器、SSH、权限、执行、安全和审计
-```
-
-核心流程：
-
-```text
-用户自然语言输入
-        |
-        v
-Codex Agent Runtime
-        |
-        v
-AiPanel Tools
-        |
-        v
-风险识别和用户确认
-        |
-        v
-AiPanel SSH Executor
-        |
-        v
-审计记录和结果总结
-```
-
-## 路线图
-
-- [x] 项目定位；
-- [x] README 标准化；
-- [x] 初始 logo 和预览图；
-- [x] gpt-image-2 生成正式品牌图；
-- [x] SSH 连接管理；
-- [x] 只读服务器体检；
-- [x] AI 任务规划；
-- [x] 命令风险审查；
-- [x] 桌面客户端；
-- [x] Docker 应用部署流程；
-- [x] 服务器实时监控（系统信息 + CPU/内存/磁盘/负载仪表 + 流量曲线,SSH 只读、服务器零 agent）；
-- [x] 应用内在线更新（GitHub Releases + minisign 签名,tag vX.Y.Z 管理版本）；
-- [x] 测试与 CI 基线（Rust 单测/集成 + 前端 vitest + Clippy + `pnpm ci:check`）；
-- [ ] Developer ID 签名、公证与可分发发布流程实测;
-- [ ] 带真实供应商 API Key 的完整模型轮次与真实服务器部署验收。
+**基础**
+- `@aipanel/ui` 设计系统——Tailwind v4 token + Codex 风格组件
+- Rust 单测/集成 + 前端 vitest、Clippy(`-D warnings`)、一站式 `pnpm ci:check`
 
 ## 项目文档
 
@@ -225,9 +129,7 @@ AiPanel SSH Executor
 
 ## 名称说明
 
-`AiPanel` 能够直接表达“AI + Panel”的方向，中文用户也容易理解。
-
-但 AiPanel 的产品定位不是安装在服务器上的传统面板，而是一个本地 AI 运维客户端。正式发布前建议继续确认 GitHub、npm、Homebrew、Docker Hub 和商标层面的名称占用情况。
+`AiPanel` 直接表达「AI + Panel」的方向,中文用户也容易理解。但它的定位不是装在服务器上的传统面板,而是一个本地 AI 运维客户端。正式发布前建议继续确认 GitHub、npm、Homebrew、Docker Hub 和商标层面的名称占用情况。
 
 ## License
 
