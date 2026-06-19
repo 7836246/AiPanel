@@ -24,6 +24,7 @@ pnpm typecheck
 
 step "Running frontend unit tests (vitest)"
 pnpm --filter @aipanel/desktop test
+pnpm --filter @aipanel/ui test
 
 TARGET_TRIPLE="$(aipanel_target_triple)"
 SIDE_CAR="$(aipanel_sidecar_path "apps/desktop/src-tauri/binaries" "$TARGET_TRIPLE")"

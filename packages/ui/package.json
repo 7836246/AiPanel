@@ -28,7 +28,8 @@
     "build:js": "tsup",
     "build:css": "tailwindcss -i ./src/styles/index.css -o ./dist/styles.css --minify",
     "dev": "concurrently \"tsup --watch\" \"tailwindcss -i ./src/styles/index.css -o ./dist/styles.css --watch\"",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "peerDependencies": {
     "react": ">=18",
@@ -41,13 +42,16 @@
   },
   "devDependencies": {
     "@tailwindcss/cli": "^4.0.0",
+    "@testing-library/react": "^16.1.0",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "concurrently": "^9.1.0",
+    "jsdom": "^29.1.1",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "tailwindcss": "^4.0.0",
     "tsup": "^8.3.5",
-    "typescript": "~5.8.3"
+    "typescript": "~5.8.3",
+    "vitest": "^4.1.9"
   }
 }
