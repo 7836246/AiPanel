@@ -6,6 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-06-19
+
+首个公开发布(桌面 MVP)。包含应用内**在线更新**(GitHub Releases + minisign 签名、`vX.Y.Z`
+tag 管理版本)、全站 **Codex 风格 UI**、**可定制外观**(主题模式 + 浅/深主题各自的强调色/背景/
+前景/字体/对比度/半透明侧栏、独立整页设置),以及下方记录的全部能力。
+
+### Added
+
+- 应用内在线更新:「设置 · 在线更新」可检查 / 下载 / 安装 / 重启;Tauri updater + minisign
+  签名,GitHub Releases 分发 `latest.json`,启动静默检查;`vX.Y.Z` tag 触发多平台构建签名发布。
+- 可定制外观:Codex 式独立整页设置(左侧分类导航);浅/深主题各自的强调色、背景、前景、UI/代码
+  字体、对比度、半透明侧栏;默认等于原始观感,仅覆写用户改动项。
+- `@aipanel/ui` 新增 Codex 风格 Switch / Select 等组件,全站统一圆角与焦点环。
+
+### Fixed (0.1.1)
+
+- 发布流水线:Linux sidecar 改取 codex 的 `*-linux-musl` 资产(此前用 `-gnu` 命名导致下载
+  404、Linux 打包失败);musl 为静态二进制,gnu 系统可直接运行。
+- 外观:默认不再用 color-mix 覆写全站 token(仅覆写用户真正改动项),修复「默认就把配色改坏」;
+  修复设置全屏整页高度塌陷导致内容显示不全。
+
 ### Fixed
 
 - Run cancellation hardened: stopping / switching server / opening history /
