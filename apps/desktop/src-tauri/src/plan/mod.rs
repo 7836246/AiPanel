@@ -137,4 +137,35 @@ mod tests {
         assert!(plan.goal.starts_with("诊断："));
         assert_eq!(plan.server_id, None);
     }
+
+    #[test]
+    fn routes_disk_memory_docker_intents() {
+        // 关键词分别路由到对应的只读探测命令。
+        let disk = MockPlanEngine.create_plan("磁盘空间不够了", Some("s")).unwrap();
+        assert!(disk.steps.iter().any(|s| s.command.starts_with("df")));
+
+        let mem = MockPlanEngine.create_plan("内存 oom 了", Some("s")).unwrap();
+        assert!(mem.steps.iter().any(|s| s.command.contains("free -m")));
+
+        let docker = MockPlanEngine.create_plan("看下 container 状态", Some("s")).unwrap();
+        assert!(docker.steps.iter().any(|s| s.command.contains("docker ps")));
+    }
+
+    #[test]
+    fn unmatched_intent_falls_back_to_generic_snapshot() {
+        // 无关键词命中 → 通用只读快照(含 uname / ss 等)。
+        let plan = MockPlanEngine.create_plan("帮我大致瞧一眼这台机器", Some("s")).unwrap();
+        let cmds: Vec<&str> = plan.steps.iter().map(|s| s.command.as_str()).collect();
+        assert!(cmds.iter().any(|c| c.contains("uname")));
+        assert!(cmds.iter().any(|c| c.contains("ss -ltn")));
+    }
+
+    #[test]
+    fn goal_truncates_long_intent_with_ellipsis() {
+        let long = "检查".repeat(50); // 100 个字符,超过 60 上限
+        let plan = MockPlanEngine.create_plan(&long, None).unwrap();
+        assert!(plan.goal.ends_with('…'));
+        // 目标 = "诊断："(3) + 截断的 60 字符 + "…"(1)
+        assert_eq!(plan.goal.chars().count(), 3 + 60 + 1);
+    }
 }
