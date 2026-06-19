@@ -32,22 +32,24 @@ const UI_FONT =
   '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, "PingFang SC", "Microsoft YaHei", sans-serif';
 const CODE_FONT = '"SF Mono", ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace';
 
+// 默认值刻意等于 packages/ui tokens.css 的原始手调色,使「默认外观」== 原始观感:
+// applyAppearance 在等于默认时清除全部内联覆写,让 token 规则,避免默认就改动全站配色。
 export const DEFAULT_LIGHT: ThemeColors = {
-  accent: "#339cff",
+  accent: "#1a1a1c",
   bg: "#ffffff",
-  fg: "#1a1c1f",
+  fg: "#1a1a1c",
   uiFont: UI_FONT,
   codeFont: CODE_FONT,
-  translucentSidebar: true,
+  translucentSidebar: false,
   contrast: 45,
 };
 export const DEFAULT_DARK: ThemeColors = {
-  accent: "#339cff",
-  bg: "#181818",
-  fg: "#ffffff",
+  accent: "#ededf0",
+  bg: "#0f0f11",
+  fg: "#ededf0",
   uiFont: UI_FONT,
   codeFont: CODE_FONT,
-  translucentSidebar: true,
+  translucentSidebar: false,
   contrast: 60,
 };
 export const DEFAULT_APPEARANCE: AppearancePrefs = {
@@ -68,7 +70,8 @@ export const ACCENT_PRESETS: { id: string; label: string; value: string }[] = [
   { id: "pink", label: "粉", value: "#e25fb0" },
 ];
 
-const KEY = "aipanel-appearance";
+// v2:旧版本默认值会把全站配色改坏,bump key 丢弃旧存储,回到干净的「默认==原始观感」。
+const KEY = "aipanel-appearance-v2";
 const LEGACY_THEME_KEY = "aipanel-theme";
 export const APPEARANCE_EVENT = "aipanel-appearance-changed";
 
@@ -185,28 +188,50 @@ export function writeAppearance(p: AppearancePrefs): void {
 
 const mix = (top: string, pct: number, base: string) => `color-mix(in srgb, ${top} ${pct}%, ${base})`;
 
-// 把单个主题的颜色/字体/派生色写到 <html> 内联样式(内联优先级最高,覆盖 @theme 与 .dark)。
-function applyThemeColors(root: HTMLElement, c: ThemeColors): void {
+const BRAND_VARS = ["--color-brand", "--color-brand-strong", "--color-brand-fg", "--color-accent", "--color-accent-strong"];
+const SURFACE_VARS = [
+  "--color-bg", "--color-fg", "--color-surface-1", "--color-surface-2", "--color-surface-3",
+  "--color-hover", "--color-selected", "--color-border", "--color-border-strong", "--color-fg-muted", "--color-fg-subtle",
+];
+
+/**
+ * 把单个主题写到 <html> 内联样式——**仅覆写用户真正改过的部分**,其余清除让 tokens.css 规则。
+ * 这样「默认外观」完全等于原始手调观感(不会默认就把全站配色换成 color-mix 派生)。
+ * - 强调色:仅当 accent ≠ 默认时覆写 brand/accent 一组,否则清除。
+ * - 字体:UI/代码字体各自仅在改动时覆写。
+ * - 背景/前景:仅当 bg/fg/对比度任一改动时,才覆写 bg/fg 并由其派生 surface/border/muted;否则全部清除。
+ */
+function applyThemeColors(root: HTMLElement, c: ThemeColors, def: ThemeColors): void {
   const set = (k: string, v: string) => root.style.setProperty(k, v);
-  set("--color-bg", c.bg);
-  set("--color-fg", c.fg);
-  set("--color-brand", c.accent);
-  set("--color-brand-strong", c.accent);
-  set("--color-brand-fg", readableOn(c.accent));
-  set("--color-accent", c.accent);
-  set("--color-accent-strong", c.accent);
-  set("--font-sans", c.uiFont);
-  set("--font-mono", c.codeFont);
-  const { border, muted } = contrastMixes(c.contrast);
-  set("--color-surface-1", mix(c.fg, 2.5, c.bg));
-  set("--color-surface-2", mix(c.fg, 5, c.bg));
-  set("--color-surface-3", mix(c.fg, 8, c.bg));
-  set("--color-hover", mix(c.fg, 6, c.bg));
-  set("--color-selected", mix(c.fg, 10, c.bg));
-  set("--color-border", mix(c.fg, border, c.bg));
-  set("--color-border-strong", mix(c.fg, border + 6, c.bg));
-  set("--color-fg-muted", mix(c.bg, muted, c.fg));
-  set("--color-fg-subtle", mix(c.bg, muted + 12, c.fg));
+  const clear = (k: string) => root.style.removeProperty(k);
+
+  if (c.accent !== def.accent) {
+    set("--color-brand", c.accent);
+    set("--color-brand-strong", c.accent);
+    set("--color-brand-fg", readableOn(c.accent));
+    set("--color-accent", c.accent);
+    set("--color-accent-strong", c.accent);
+  } else BRAND_VARS.forEach(clear);
+
+  if (c.uiFont !== def.uiFont) set("--font-sans", c.uiFont);
+  else clear("--font-sans");
+  if (c.codeFont !== def.codeFont) set("--font-mono", c.codeFont);
+  else clear("--font-mono");
+
+  if (c.bg !== def.bg || c.fg !== def.fg || c.contrast !== def.contrast) {
+    const { border, muted } = contrastMixes(c.contrast);
+    set("--color-bg", c.bg);
+    set("--color-fg", c.fg);
+    set("--color-surface-1", mix(c.fg, 2.5, c.bg));
+    set("--color-surface-2", mix(c.fg, 5, c.bg));
+    set("--color-surface-3", mix(c.fg, 8, c.bg));
+    set("--color-hover", mix(c.fg, 6, c.bg));
+    set("--color-selected", mix(c.fg, 10, c.bg));
+    set("--color-border", mix(c.fg, border, c.bg));
+    set("--color-border-strong", mix(c.fg, border + 6, c.bg));
+    set("--color-fg-muted", mix(c.bg, muted, c.fg));
+    set("--color-fg-subtle", mix(c.bg, muted + 12, c.fg));
+  } else SURFACE_VARS.forEach(clear);
 }
 
 /** 把外观偏好应用到 <html>。 */
@@ -215,8 +240,9 @@ export function applyAppearance(p: AppearancePrefs): void {
   const root = document.documentElement;
   const dark = resolveDark(p.mode);
   const c = dark ? p.dark : p.light;
+  const def = dark ? DEFAULT_DARK : DEFAULT_LIGHT;
   root.classList.toggle("dark", dark);
-  applyThemeColors(root, c);
+  applyThemeColors(root, c, def);
   root.classList.toggle("reduce-motion", resolveReduceMotion(p.motion));
   root.classList.toggle("pointer-cursor", p.pointer);
   root.classList.toggle("translucent-sidebar", c.translucentSidebar);

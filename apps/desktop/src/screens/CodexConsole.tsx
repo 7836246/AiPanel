@@ -1233,7 +1233,7 @@ export default function CodexConsole() {
   // 设置是**独立整页**(Codex 式):盖住整个 app——不显示主侧栏/顶栏,只有设置自己的分类导航 +「返回应用」。
   if (view === "settings") {
     return (
-      <div className="h-screen w-screen overflow-hidden bg-bg text-fg" style={{ fontFamily: "var(--font-sans)" }}>
+      <div className="flex h-screen w-screen overflow-hidden bg-bg text-fg" style={{ fontFamily: "var(--font-sans)" }}>
         <Suspense fallback={<PanelLoading label="加载设置" />}>
           <SettingsPanel onBack={() => setView("console")} />
         </Suspense>
