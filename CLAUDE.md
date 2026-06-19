@@ -13,7 +13,7 @@ Rust 后端按模块实现在 `apps/desktop/src-tauri/src/`（不拆独立 crate
 pnpm workspace 单仓库（`pnpm-workspace.yaml`）：
 
 - `apps/desktop` —— Tauri v2 桌面端。前端 React 19 + Vite 7 + TS（`src/`），Rust 后端在 `src-tauri/`。当前 `src/App.tsx` 是用组件库搭的演示界面。
-- `packages/ui`（`@aipanel/ui`）—— 设计系统。Tailwind v4 + 设计 token（`src/styles/tokens.css` 里的 `@theme`），用 `cva` 做变体、`cn`（clsx + tailwind-merge）合并类名。primitives（Button/IconButton/Badge/Card/Input/Textarea/Spinner/CodeBlock/Terminal/Dialog/Toast）+ 领域组件（RiskBadge/ServerCard/CommandPlan/AuditEntry）。详见 `packages/ui/README.md`。
+- `packages/ui`（`@aipanel/ui`）—— 设计系统。Tailwind v4 + 设计 token（`src/styles/tokens.css` 里的 `@theme`），用 `cva` 做变体、`cn`（clsx + tailwind-merge）合并类名。primitives（Button/IconButton/Badge/Card/Input/Textarea/Switch/Select/Spinner/CodeBlock/Terminal/Dialog/Toast）+ 领域组件（RiskBadge/ServerCard/CommandPlan/AuditEntry）。详见 `packages/ui/README.md`。
 
 样式集成方式：组件库只用 Tailwind 工具类（不写零散 CSS），桌面端通过 `@import "@aipanel/ui/tokens.css"` 共享 token，并用 `@source` 指向 `packages/ui/src` 让 Tailwind 扫到组件类。组件库 `pnpm build` 出的 `dist/`（编译后的组件 + `styles.css`）也是以后 `/design-sync` 导入时消费的产物。
 

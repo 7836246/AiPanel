@@ -36,7 +36,7 @@ The palette is dark-first and the risk scale mirrors `docs/SECURITY_MODEL.zh-Han
 
 ## Components
 
-- **Primitives**: `Button`, `Badge`, `Card` (+ `CardHeader/Title/Description/Content/Footer`), `Input`, `Textarea`, `Spinner`, `CodeBlock`, `Dialog`.
+- **Primitives**: `Button`, `IconButton`, `Badge`, `Card` (+ `CardHeader/Title/Description/Content/Footer`), `Input`, `Textarea`, `Switch`, `Select`, `Spinner`, `CodeBlock`, `Terminal`, `Dialog`, `Toast` (`useToasts` + `ToastViewport`).
 - **Domain**: `RiskBadge` (low/medium/high/blocked), `ServerCard`, `CommandPlan` (+ `PlanStep`), `AuditEntry`.
 
 Variants use `class-variance-authority`; conflicting classes resolve through `cn` (`clsx` + `tailwind-merge`). Keep components on Tailwind utility classes only — no ad-hoc CSS — so the bundle stays portable and `/design-sync`-able.
