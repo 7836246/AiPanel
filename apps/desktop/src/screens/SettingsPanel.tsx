@@ -552,7 +552,8 @@ export default function SettingsPanel({ onBack }: { onBack?: () => void }) {
   return (
     <section className="flex min-h-0 flex-1">
       {/* 左侧:返回应用 + 搜索 + 分类导航(Codex 式独立设置页) */}
-      <nav className="flex w-56 flex-none flex-col gap-1 overflow-y-auto border-r border-border bg-surface-2 px-2.5 py-3">
+      {/* pt-10:给 macOS 红绿灯窗口控件让出顶部空间,避免压住「返回应用」 */}
+      <nav className="flex w-56 flex-none flex-col gap-1 overflow-y-auto border-r border-border bg-surface-2 px-2.5 pb-3 pt-10">
         <button
           type="button"
           onClick={() => onBack?.()}
