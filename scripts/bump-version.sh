@@ -77,4 +77,4 @@ if cargo_lock.exists():
         print("  ! Cargo.lock desktop 条目未找到,跳过(下次 cargo build 会修正)")
 PY
 
-echo "版本已同步为 $VERSION。请检查 git diff,提交后打 tag:git tag v$VERSION && git push origin v$VERSION"
+echo "版本已同步为 ${VERSION}。请检查 git diff,提交后打 tag:git tag v${VERSION} && git push origin v${VERSION}"
