@@ -6,6 +6,7 @@ import {
   resolveReduceMotion,
   readableOn,
   contrastMixes,
+  applyAppearance,
   DEFAULT_APPEARANCE,
   DEFAULT_LIGHT,
   DEFAULT_DARK,
@@ -83,5 +84,38 @@ describe("parsePrefs", () => {
     expect(p.light.contrast).toBe(100); // 钳制
     expect(p.light.translucentSidebar).toBe(false);
     expect(p.light.uiFont).toBe(DEFAULT_LIGHT.uiFont); // 空字体回落
+  });
+});
+
+// 回归:之前 applyAppearance 无条件用 color-mix 覆写全站 token,默认就把配色改坏。
+// 现在只覆写用户真正改过的部分,等于默认时清除内联,让 tokens.css 规则。
+describe("applyAppearance — 默认不覆写 token,仅改动项才覆写", () => {
+  const root = () => document.documentElement;
+  const v = (k: string) => root().style.getPropertyValue(k);
+
+  it("默认偏好:清除全部内联覆写(含先前脏值)", () => {
+    root().style.setProperty("--color-brand", "#123456");
+    root().style.setProperty("--color-surface-1", "#abcabc");
+    applyAppearance(DEFAULT_APPEARANCE);
+    expect(v("--color-brand")).toBe("");
+    expect(v("--color-surface-1")).toBe("");
+    expect(v("--color-bg")).toBe("");
+    expect(v("--font-sans")).toBe("");
+  });
+
+  it("仅改强调色:覆写 brand,但不派生/覆写表层色", () => {
+    root().style.cssText = "";
+    applyAppearance({ ...DEFAULT_APPEARANCE, mode: "light", light: { ...DEFAULT_LIGHT, accent: "#10b981" } });
+    expect(v("--color-brand")).toBe("#10b981");
+    expect(v("--color-surface-1")).toBe(""); // 未改 bg/fg → 不派生
+    expect(v("--color-bg")).toBe("");
+  });
+
+  it("改背景:覆写 bg 并派生 surface;未改的强调色不覆写", () => {
+    root().style.cssText = "";
+    applyAppearance({ ...DEFAULT_APPEARANCE, mode: "light", light: { ...DEFAULT_LIGHT, bg: "#101014" } });
+    expect(v("--color-bg")).toBe("#101014");
+    expect(v("--color-surface-1")).not.toBe(""); // 已派生
+    expect(v("--color-brand")).toBe(""); // accent 未改 → 不覆写
   });
 });
