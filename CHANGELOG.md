@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- UI 细节打磨:Card 圆角统一 `rounded-xl`(概览/计划/审计/设置卡与 Dialog 一致);命令面板、
+  顶栏下拉、设置左栏、错误输出统一挂细滚动条 `cx-scroll`。
+
+### Tests / Docs
+
+- 新增 `applyAppearance` 回归测试(默认不覆写 token、仅改动项才覆写)与 MockPlanEngine 路由/
+  目标截断用例;`CLAUDE.md` 与 `packages/ui/README.md` 的 primitives 清单补全 Switch/Select 等。
+
 ## [0.1.1] - 2026-06-19
 
 首个公开发布(桌面 MVP)。包含应用内**在线更新**(GitHub Releases + minisign 签名、`vX.Y.Z`
