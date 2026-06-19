@@ -342,7 +342,7 @@ function ModelPicker({
         <>
           {/* 点击空白关闭 */}
           <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <div className="absolute bottom-full right-0 z-20 mb-1 max-h-72 w-60 overflow-y-auto rounded-md border border-border bg-surface-1 py-1 shadow-lg">
+          <div className="cx-scroll absolute bottom-full right-0 z-20 mb-1 max-h-72 w-60 overflow-y-auto rounded-md border border-border bg-surface-1 py-1 shadow-lg">
             <div className="flex items-center justify-between px-2.5 py-1 text-[11px] text-fg-subtle">
               <span>模型</span>
               <button onClick={() => void probe()} disabled={loading} className="inline-flex items-center gap-1 rounded px-1 hover:bg-hover disabled:opacity-50" title="重新探测">

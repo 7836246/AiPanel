@@ -553,7 +553,7 @@ export default function SettingsPanel({ onBack }: { onBack?: () => void }) {
     <section className="flex min-h-0 flex-1">
       {/* 左侧:返回应用 + 搜索 + 分类导航(Codex 式独立设置页) */}
       {/* pt-10:给 macOS 红绿灯窗口控件让出顶部空间,避免压住「返回应用」 */}
-      <nav className="flex w-56 flex-none flex-col gap-1 overflow-y-auto border-r border-border bg-surface-2 px-2.5 pb-3 pt-10">
+      <nav className="cx-scroll flex w-56 flex-none flex-col gap-1 overflow-y-auto border-r border-border bg-surface-2 px-2.5 pb-3 pt-10">
         <button
           type="button"
           onClick={() => onBack?.()}
@@ -923,7 +923,7 @@ export default function SettingsPanel({ onBack }: { onBack?: () => void }) {
                 <span className="text-[11px] text-fg-subtle">当前 v{updInfo.currentVersion}</span>
               </div>
               {updInfo.notes && (
-                <pre className="mt-2 max-h-40 overflow-y-auto whitespace-pre-wrap text-[12px] leading-relaxed text-fg-muted">
+                <pre className="cx-scroll mt-2 max-h-40 overflow-y-auto whitespace-pre-wrap text-[12px] leading-relaxed text-fg-muted">
                   {updInfo.notes}
                 </pre>
               )}

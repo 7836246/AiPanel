@@ -159,7 +159,7 @@ export function CommandPalette({
           id="cmd-listbox"
           role="listbox"
           aria-label="命令列表"
-          className="flex-1 overflow-y-auto p-1"
+          className="cx-scroll flex-1 overflow-y-auto p-1"
         >
           {filtered.length === 0 ? (
             <div className="flex flex-col items-center justify-center gap-2 px-3 py-8 text-center text-sm text-fg-muted">
